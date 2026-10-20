@@ -388,8 +388,41 @@ void UpdateRiskRulesFromJson(string json)
    string trailingStopStr = ExtractJsonNestedValue(json, "riskRules", "trailingStop");
    if(trailingStopStr != "") liveTrailingStop = (trailingStopStr == "true");
 
-   string trailingStopPointsStr = ExtractJsonNestedValue(json, "riskRules", "trailingStopPoints");
-   if(trailingStopPointsStr != "") liveTrailDistancePoints = (int)StringToInteger(trailingStopPointsStr);
+   string targetSymbol = (InpBrokerSymbol != "") ? InpBrokerSymbol : _Symbol;
+   string symUp = targetSymbol;
+   StringToUpper(symUp);
+   
+   string assetSpecificPoints = "";
+   if(StringFind(symUp, "XAU") >= 0 || StringFind(symUp, "GOLD") >= 0)
+      assetSpecificPoints = ExtractJsonNestedValue(json, "riskRules", "trailingStopPointsPerAsset.GOLD");
+   else if(StringFind(symUp, "NAS") >= 0 || StringFind(symUp, "USTEC") >= 0 || StringFind(symUp, "100") >= 0)
+      assetSpecificPoints = ExtractJsonNestedValue(json, "riskRules", "trailingStopPointsPerAsset.NASDAQ");
+   else if(StringFind(symUp, "SPX") >= 0 || StringFind(symUp, "US500") >= 0 || StringFind(symUp, "ES") >= 0)
+      assetSpecificPoints = ExtractJsonNestedValue(json, "riskRules", "trailingStopPointsPerAsset.SPX500");
+   else if(StringFind(symUp, "US30") >= 0 || StringFind(symUp, "DJ") >= 0 || StringFind(symUp, "DOW") >= 0)
+      assetSpecificPoints = ExtractJsonNestedValue(json, "riskRules", "trailingStopPointsPerAsset.DOW_JONES");
+   else if(StringFind(symUp, "EURUSD") >= 0)
+      assetSpecificPoints = ExtractJsonNestedValue(json, "riskRules", "trailingStopPointsPerAsset.EURUSD");
+   else if(StringFind(symUp, "GBPUSD") >= 0)
+      assetSpecificPoints = ExtractJsonNestedValue(json, "riskRules", "trailingStopPointsPerAsset.GBPUSD");
+   else if(StringFind(symUp, "USDJPY") >= 0)
+      assetSpecificPoints = ExtractJsonNestedValue(json, "riskRules", "trailingStopPointsPerAsset.USDJPY");
+
+   if(assetSpecificPoints != "")
+   {
+      double ptsVal = StringToDouble(assetSpecificPoints);
+      if(StringFind(symUp, "XAU") >= 0 || StringFind(symUp, "GOLD") >= 0)
+         liveTrailDistancePoints = (int)MathRound(ptsVal * 100);
+      else if(StringFind(symUp, "EURUSD") >= 0 || StringFind(symUp, "GBPUSD") >= 0 || StringFind(symUp, "USDJPY") >= 0)
+         liveTrailDistancePoints = (int)MathRound(ptsVal * 10);
+      else
+         liveTrailDistancePoints = (int)MathRound(ptsVal);
+   }
+   else
+   {
+      string trailingStopPointsStr = ExtractJsonNestedValue(json, "riskRules", "trailingStopPoints");
+      if(trailingStopPointsStr != "") liveTrailDistancePoints = (int)StringToInteger(trailingStopPointsStr);
+   }
    
    lastSyncTime = TimeCurrent();
 }
@@ -575,8 +608,8 @@ void FetchAndExecuteSignals()
    {
       string jsonResponse = CharArrayToString(result);
 
-      // Check for cancelled signal IDs and delete corresponding pending orders in MT5
-      int cancelPos = StringFind(jsonResponse, "\\"cancelled_ids\\":");
+      // Check for cancelled/closed signal IDs to close live market positions and delete pending orders in MT5
+      int cancelPos = StringFind(jsonResponse, "\\\"cancelled_ids\\\":");
       if(cancelPos != -1)
       {
          int arrStart = StringFind(jsonResponse, "[", cancelPos);
@@ -584,6 +617,40 @@ void FetchAndExecuteSignals()
          if(arrStart != -1 && arrEnd != -1)
          {
             string cancelArrStr = StringSubstr(jsonResponse, arrStart, arrEnd - arrStart + 1);
+
+            // 1. Close any open positions in MT5 matching cancelled/closed signals
+            for(int p = PositionsTotal() - 1; p >= 0; p--)
+            {
+               ulong posTicket = PositionGetTicket(p);
+               if(posTicket > 0 && PositionGetInteger(POSITION_MAGIC) == InpMagicNumber)
+               {
+                  string comment = PositionGetString(POSITION_COMMENT);
+                  int sigPos = StringFind(comment, "SIG-");
+                  if(sigPos != -1)
+                  {
+                     string foundSigId = StringSubstr(comment, sigPos);
+                     int spacePos = StringFind(foundSigId, " ");
+                     if(spacePos != -1) foundSigId = StringSubstr(foundSigId, 0, spacePos);
+                     int quotePos = StringFind(foundSigId, "\\\"");
+                     if(quotePos != -1) foundSigId = StringSubstr(foundSigId, 0, quotePos);
+
+                     if(StringFind(cancelArrStr, foundSigId) != -1)
+                     {
+                        trade.PositionClose(posTicket);
+                        Print("MarketAI: Position #", posTicket, " (Signal ", foundSigId, ") closed immediately via Web Terminal X-button command!");
+                        SendStatusUpdate(foundSigId, "CLOSED", "MANUAL_CLOSED", "CLOSED_VIA_TERMINAL");
+                     }
+                  }
+                  else if(activeSignalId != "" && StringFind(cancelArrStr, activeSignalId) != -1)
+                  {
+                     trade.PositionClose(posTicket);
+                     Print("MarketAI: Active Position #", posTicket, " (Signal ", activeSignalId, ") closed immediately via Web Terminal X-button!");
+                     SendStatusUpdate(activeSignalId, "CLOSED", "MANUAL_CLOSED", "CLOSED_VIA_TERMINAL");
+                  }
+               }
+            }
+
+            // 2. Delete any pending orders in MT5 matching cancelled/closed signals
             for(int i = OrdersTotal() - 1; i >= 0; i--)
             {
                ulong ticket = OrderGetTicket(i);
@@ -596,13 +663,13 @@ void FetchAndExecuteSignals()
                      string foundSigId = StringSubstr(comment, sigPos);
                      int spacePos = StringFind(foundSigId, " ");
                      if(spacePos != -1) foundSigId = StringSubstr(foundSigId, 0, spacePos);
-                     int quotePos = StringFind(foundSigId, "\\"");
+                     int quotePos = StringFind(foundSigId, "\\\"");
                      if(quotePos != -1) foundSigId = StringSubstr(foundSigId, 0, quotePos);
 
                      if(StringFind(cancelArrStr, foundSigId) != -1)
                      {
                         trade.OrderDelete(ticket);
-                        Print("MarketAI: Pending order ", ticket, " (Signal ", foundSigId, ") cancelled by server (unactivated by end of day) and deleted from MT5.");
+                        Print("MarketAI: Pending order ", ticket, " (Signal ", foundSigId, ") cancelled/deleted from MT5 via Web Terminal X-button.");
                      }
                   }
                }
@@ -873,7 +940,7 @@ void ManageActivePositions()
                double profitPoints = (bid - openPrice) / point;
                if(profitPoints >= InpTrailTriggerPoints)
                {
-                  double proposedSL = NormalizeDouble(bid - InpTrailDistancePoints * point, digits);
+                  double proposedSL = NormalizeDouble(bid - liveTrailDistancePoints * point, digits);
                   
                   // Only trail forward in profit above current SL + step
                   if(proposedSL > (currentSL + InpTrailStepPoints * point) && proposedSL > openPrice)
@@ -936,7 +1003,7 @@ void ManageActivePositions()
                double profitPoints = (openPrice - ask) / point;
                if(profitPoints >= InpTrailTriggerPoints)
                {
-                  double proposedSL = NormalizeDouble(ask + InpTrailDistancePoints * point, digits);
+                  double proposedSL = NormalizeDouble(ask + liveTrailDistancePoints * point, digits);
                   
                   // Only trail downwards in profit below current SL - step
                   if((currentSL == 0 || proposedSL < (currentSL - InpTrailStepPoints * point)) && proposedSL < openPrice)

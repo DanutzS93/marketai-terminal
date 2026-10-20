@@ -347,3 +347,187 @@ export function calculatePositionMetrics({
     lossAtSL,
   };
 }
+
+export interface TrailingStopParityConversion {
+  instrumentId: InstrumentId;
+  name: string;
+  symbol: string;
+  category: 'INDICES' | 'METALS' | 'FOREX';
+  price: number;
+  points: number;            // Converted points/distance in native unit
+  unitLabel: string;         // 'pts' | '$' | 'pips'
+  displayValue: string;      // e.g. "50.0 pts" | "$6.80" | "25.3 pips"
+  secondaryDetail: string;   // e.g. "200 ticks • $1,000/ct" or "680 pts MT5"
+  percentMove: number;       // % distance of price
+  isOverridden: boolean;     // whether user manually changed this specific parity
+  mt5Points: number;         // MT5 points
+  ticks?: number;            // Futures ticks
+  dollarValuePerUnit: number;// PnL impact per standard lot / contract
+}
+
+export interface TrailingStopConversionResult {
+  baseAsset: InstrumentId;
+  basePoints: number;
+  basePercent: number;
+  conversions: Record<InstrumentId, TrailingStopParityConversion>;
+  pointsMap: Record<InstrumentId, number>;
+}
+
+export function calculateTrailingStopConversions(params: {
+  baseAsset: InstrumentId;
+  basePoints: number;
+  quotes?: Record<string, MarketQuote>;
+  customOverrides?: Partial<Record<InstrumentId, number>>;
+}): TrailingStopConversionResult {
+  const { baseAsset, basePoints, quotes, customOverrides = {} } = params;
+  const safeBaseAsset: InstrumentId = INSTRUMENT_SPECS[baseAsset] ? baseAsset : 'NASDAQ';
+  const baseSpec = INSTRUMENT_SPECS[safeBaseAsset];
+  const safeBasePoints = Math.max(0.1, Number(basePoints) || 50);
+
+  const baseQuote = quotes ? quotes[safeBaseAsset] : undefined;
+  const basePrice = baseQuote && baseQuote.price > 0 ? baseQuote.price : baseSpec.defaultPrice;
+
+  // Convert basePoints to absolute price distance
+  let basePriceDistance = safeBasePoints;
+  if (safeBaseAsset === 'EURUSD' || safeBaseAsset === 'GBPUSD') {
+    basePriceDistance = safeBasePoints * 0.0001;
+  } else if (safeBaseAsset === 'USDJPY') {
+    basePriceDistance = safeBasePoints * 0.01;
+  }
+
+  // Calculate percentage volatility/distance
+  const basePercent = basePrice > 0 ? (basePriceDistance / basePrice) * 100 : 0.233;
+
+  const conversions: Partial<Record<InstrumentId, TrailingStopParityConversion>> = {};
+  const pointsMap: Partial<Record<InstrumentId, number>> = {};
+
+  const allKeys = Object.keys(INSTRUMENT_SPECS) as InstrumentId[];
+
+  for (const id of allKeys) {
+    const spec = INSTRUMENT_SPECS[id];
+    const liveQ = quotes ? quotes[id] : undefined;
+    const price = liveQ && liveQ.price > 0 ? liveQ.price : spec.defaultPrice;
+
+    const hasOverride = customOverrides[id] !== undefined && customOverrides[id] !== null;
+    let convertedPoints: number;
+
+    if (hasOverride) {
+      convertedPoints = Math.max(0.1, Number(customOverrides[id]));
+    } else if (id === safeBaseAsset) {
+      convertedPoints = safeBasePoints;
+    } else {
+      // Calculate equivalent price distance for this instrument
+      const targetPriceDist = price * (basePercent / 100);
+
+      if (id === 'EURUSD' || id === 'GBPUSD') {
+        convertedPoints = Number((targetPriceDist / 0.0001).toFixed(1));
+      } else if (id === 'USDJPY') {
+        convertedPoints = Number((targetPriceDist / 0.01).toFixed(1));
+      } else if (id === 'GOLD' || id === 'GC_F') {
+        convertedPoints = Number(targetPriceDist.toFixed(2));
+      } else if (id === 'NQ_F' || id === 'ES_F') {
+        convertedPoints = Number((Math.round(targetPriceDist / 0.25) * 0.25).toFixed(2));
+      } else if (id === 'SPX500' || id === 'DOW_JONES' || id === 'NASDAQ') {
+        convertedPoints = Number(targetPriceDist.toFixed(1));
+      } else {
+        convertedPoints = Number(targetPriceDist.toFixed(spec.decimals));
+      }
+    }
+
+    let unitLabel = 'pts';
+    let displayValue = `${convertedPoints} pts`;
+    let secondaryDetail = '';
+    let mt5Points = Math.round(convertedPoints);
+    let ticks: number | undefined;
+    let dollarValuePerUnit = convertedPoints * spec.pointValuePerLot;
+
+    if (id === 'NASDAQ') {
+      unitLabel = 'pts';
+      displayValue = `${convertedPoints.toFixed(1)} pts`;
+      mt5Points = Math.round(convertedPoints * (spec.decimals === 2 ? 100 : 1));
+      dollarValuePerUnit = convertedPoints * 1.0;
+      secondaryDetail = `$${dollarValuePerUnit.toFixed(1)} / lot CFD`;
+    } else if (id === 'NQ_F') {
+      unitLabel = 'pts';
+      ticks = Math.round(convertedPoints / 0.25);
+      dollarValuePerUnit = convertedPoints * 20.0;
+      displayValue = `${convertedPoints.toFixed(2)} pts`;
+      secondaryDetail = `${ticks} ticks • $${dollarValuePerUnit.toFixed(0)} / ct`;
+    } else if (id === 'SPX500') {
+      unitLabel = 'pts';
+      displayValue = `${convertedPoints.toFixed(1)} pts`;
+      mt5Points = Math.round(convertedPoints * (spec.decimals === 2 ? 100 : 1));
+      dollarValuePerUnit = convertedPoints * 1.0;
+      secondaryDetail = `$${dollarValuePerUnit.toFixed(1)} / lot CFD`;
+    } else if (id === 'ES_F') {
+      unitLabel = 'pts';
+      ticks = Math.round(convertedPoints / 0.25);
+      dollarValuePerUnit = convertedPoints * 50.0;
+      displayValue = `${convertedPoints.toFixed(2)} pts`;
+      secondaryDetail = `${ticks} ticks • $${dollarValuePerUnit.toFixed(0)} / ct`;
+    } else if (id === 'DOW_JONES') {
+      unitLabel = 'pts';
+      displayValue = `${convertedPoints.toFixed(1)} pts`;
+      mt5Points = Math.round(convertedPoints * 10);
+      dollarValuePerUnit = convertedPoints * 1.0;
+      secondaryDetail = `$${dollarValuePerUnit.toFixed(1)} / lot CFD`;
+    } else if (id === 'GOLD') {
+      unitLabel = '$';
+      const pips = convertedPoints * 10;
+      mt5Points = Math.round(convertedPoints * 100);
+      dollarValuePerUnit = convertedPoints * 100.0;
+      displayValue = `$${convertedPoints.toFixed(2)}`;
+      secondaryDetail = `${pips.toFixed(1)} pips • ${mt5Points} pts MT5 ($${dollarValuePerUnit.toFixed(0)}/lot)`;
+    } else if (id === 'GC_F') {
+      unitLabel = '$';
+      ticks = Math.round(convertedPoints / 0.10);
+      dollarValuePerUnit = convertedPoints * 100.0;
+      displayValue = `$${convertedPoints.toFixed(2)}`;
+      secondaryDetail = `${ticks} ticks • $${dollarValuePerUnit.toFixed(0)} / ct`;
+    } else if (id === 'EURUSD' || id === 'GBPUSD') {
+      unitLabel = 'pips';
+      mt5Points = Math.round(convertedPoints * 10);
+      dollarValuePerUnit = convertedPoints * 10.0;
+      displayValue = `${convertedPoints.toFixed(1)} pips`;
+      secondaryDetail = `${mt5Points} pts MT5 • $${dollarValuePerUnit.toFixed(1)}/lot`;
+    } else if (id === 'USDJPY') {
+      unitLabel = 'pips';
+      mt5Points = Math.round(convertedPoints * 10);
+      dollarValuePerUnit = convertedPoints * (1000 / (price || 154.5));
+      displayValue = `${convertedPoints.toFixed(1)} pips`;
+      secondaryDetail = `${mt5Points} pts MT5 • ~$${dollarValuePerUnit.toFixed(1)}/lot`;
+    }
+
+    let actualPriceDist = convertedPoints;
+    if (id === 'EURUSD' || id === 'GBPUSD') actualPriceDist = convertedPoints * 0.0001;
+    else if (id === 'USDJPY') actualPriceDist = convertedPoints * 0.01;
+    const percentMove = price > 0 ? (actualPriceDist / price) * 100 : basePercent;
+
+    conversions[id] = {
+      instrumentId: id,
+      name: spec.name,
+      symbol: spec.symbol,
+      category: spec.category,
+      price,
+      points: convertedPoints,
+      unitLabel,
+      displayValue,
+      secondaryDetail,
+      percentMove,
+      isOverridden: hasOverride,
+      mt5Points,
+      ticks,
+      dollarValuePerUnit,
+    };
+
+    pointsMap[id] = convertedPoints;
+  }
+
+  return {
+    baseAsset: safeBaseAsset,
+    basePoints: safeBasePoints,
+    basePercent,
+    conversions: conversions as Record<InstrumentId, TrailingStopParityConversion>,
+    pointsMap: pointsMap as Record<InstrumentId, number>,
+  };
+}

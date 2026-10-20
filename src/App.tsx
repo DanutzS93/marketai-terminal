@@ -646,6 +646,56 @@ export default function App() {
     }
   };
 
+  const handleCloseTrade = async (signalId: string) => {
+    const targetSig = signals.find((s) => s.id === signalId);
+    const liveQ = targetSig ? quotes[targetSig.instrumentId] : null;
+    const exitPrice = liveQ && liveQ.price > 0 ? liveQ.price : (targetSig?.currentMarketPrice || targetSig?.entryPrice || 0);
+
+    // 1. Mark as CANCELLED with manual close reason
+    setSignals((prev) =>
+      prev.map((s) => {
+        if (s.id === signalId) {
+          return {
+            ...s,
+            status: 'CANCELLED',
+            outcomeStatus: 'CANCELLED',
+            cancelReasonRo: 'Închis manual din interfață (Comandă Stop MT5 / NinjaTrader)',
+            cancelReasonEn: 'Manually closed from dashboard (Stop order MT5 / NinjaTrader)',
+            closedAt: new Date().toISOString(),
+            exitPrice: exitPrice,
+          };
+        }
+        return s;
+      })
+    );
+
+    // 2. Add to deletedSignalIds so MT5 & NinjaTrader receive it in cancelled_ids immediately
+    const updatedDeleted = Array.from(new Set([...deletedSignalIds, signalId]));
+    setDeletedSignalIds(updatedDeleted);
+    try {
+      localStorage.setItem(LOCAL_STORAGE_DELETED_SIGNALS_KEY, JSON.stringify(updatedDeleted));
+    } catch (e) {
+      console.warn('Could not save deletedSignalIds to localStorage:', e);
+    }
+
+    // 3. Post to /api/user/close-trade
+    const token = authToken || localStorage.getItem('market_ai_auth_token');
+    if (token) {
+      try {
+        await fetch('/api/user/close-trade', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ signalId, exitPrice }),
+        });
+      } catch (err) {
+        console.warn('Cloud close-trade failed:', err);
+      }
+    }
+  };
+
   const [isConfirmDeleteModalOpen, setIsConfirmDeleteModalOpen] = useState(false);
 
   const handleDeleteAllSignals = () => {
@@ -1245,6 +1295,7 @@ export default function App() {
               lang={lang}
               onUpdateSignalOutcome={handleUpdateSignalOutcome}
               onDeleteSignal={handleDeleteSignal}
+              onCloseTrade={handleCloseTrade}
               onDeleteAllSignals={handleDeleteAllSignals}
               onResetSignals={handleResetSignals}
               user={user}

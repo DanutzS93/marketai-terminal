@@ -22,6 +22,8 @@ import {
   Lock,
   AlertOctagon,
   ShieldCheck,
+  X,
+  XCircle,
 } from 'lucide-react';
 import { TradingSignal, InstrumentId, TimeFrame, UserProfile, MarketQuote } from '../types';
 import { getOutcomeBadgeDetails, getLocalizedSignalText, formatFullDateTime, getCancellationReason, calculateExecutionType, getOrCalculateVolumeProfileLevels, formatSignalPrice, calculateTradePnLMetrics } from '../utils/signalUtils';
@@ -41,6 +43,7 @@ interface TradingSignalsSectionProps {
   lang: 'ro' | 'en';
   onUpdateSignalOutcome?: (signalId: string, outcome: 'ACTIVE' | 'TP1_HIT' | 'TP2_HIT' | 'TP3_HIT' | 'SL_HIT') => void;
   onDeleteSignal?: (signalId: string) => void;
+  onCloseTrade?: (signalId: string) => void;
   onDeleteAllSignals?: () => void;
   onResetSignals?: () => void;
   user?: UserProfile | null;
@@ -57,6 +60,7 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
   lang,
   onUpdateSignalOutcome,
   onDeleteSignal,
+  onCloseTrade,
   onDeleteAllSignals,
   onResetSignals,
   user,
@@ -69,6 +73,39 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [selectedSignalForDetails, setSelectedSignalForDetails] = useState<TradingSignal | null>(null);
   const [selectedSignalForChart, setSelectedSignalForChart] = useState<TradingSignal | null>(null);
+
+  // Close Trade confirmation state
+  const [signalToClose, setSignalToClose] = useState<TradingSignal | null>(null);
+  const [isClosingTrade, setIsClosingTrade] = useState<boolean>(false);
+  const [closeSuccessToast, setCloseSuccessToast] = useState<string | null>(null);
+
+  const handleCloseClick = (sig: TradingSignal) => {
+    setSignalToClose(sig);
+  };
+
+  const handleConfirmCloseTrade = async () => {
+    if (!signalToClose) return;
+    setIsClosingTrade(true);
+    try {
+      if (onCloseTrade) {
+        await onCloseTrade(signalToClose.id);
+      } else if (onDeleteSignal) {
+        onDeleteSignal(signalToClose.id);
+      }
+
+      setCloseSuccessToast(
+        lang === 'ro'
+          ? `Poziția pentru ${signalToClose.symbol} a fost închisă! Comanda a fost transmisă către MT5 și NinjaTrader.`
+          : `Position for ${signalToClose.symbol} closed! Order sent to MT5 and NinjaTrader.`
+      );
+      setTimeout(() => setCloseSuccessToast(null), 4000);
+    } catch (err) {
+      console.error('Error closing trade:', err);
+    } finally {
+      setIsClosingTrade(false);
+      setSignalToClose(null);
+    }
+  };
 
   const marketSchedule = getMarketScheduleStatus();
 
@@ -503,6 +540,23 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
                 </span>
               </div>
 
+              {/* Emergency Close Button for Featured Signal */}
+              {featuredSignal.outcomeStatus !== 'CANCELLED' && (
+                <button
+                  onClick={() => handleCloseClick(featuredSignal)}
+                  className="px-3 py-2 rounded-xl bg-rose-950/70 hover:bg-rose-900/80 text-rose-300 hover:text-white font-bold text-xs flex items-center gap-1.5 border border-rose-500/40 shadow-[0_0_15px_rgba(244,63,94,0.2)] transition cursor-pointer hover:border-rose-400 group"
+                  title={lang === 'ro' ? 'Închide Trade-ul (Închidere Poziție în MT5 & NinjaTrader)' : 'Close Trade (Close Position in MT5 & NinjaTrader)'}
+                >
+                  <X className="w-4 h-4 text-rose-400 group-hover:scale-125 transition-transform" />
+                  <div className="text-left">
+                    <div className="text-[9px] text-rose-400/80 uppercase leading-none font-semibold font-mono">MT5 / Ninja</div>
+                    <div className="font-bold text-rose-300 leading-tight text-xs">
+                      {lang === 'ro' ? 'Închide Trade' : 'Close Trade'}
+                    </div>
+                  </div>
+                </button>
+              )}
+
               {/* TradingView Technical Chart Button */}
               <button
                 onClick={() => setSelectedSignalForChart(featuredSignal)}
@@ -862,6 +916,16 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
                   <span>{lang === 'ro' ? 'Justificare Tehnică Gemini AI' : 'Gemini AI Trade Plan & Rationale'}</span>
                 </h4>
                 <div className="flex items-center gap-2">
+                  {featuredSignal.outcomeStatus !== 'CANCELLED' && (
+                    <button
+                      onClick={() => handleCloseClick(featuredSignal)}
+                      className="px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/35 text-rose-300 hover:text-white font-bold text-xs flex items-center gap-1.5 transition border border-rose-500/40 cursor-pointer shadow-sm group"
+                      title={lang === 'ro' ? 'Închide Trade-ul (Comandă Stop MT5 / NinjaTrader)' : 'Close Trade (Stop order MT5 / NinjaTrader)'}
+                    >
+                      <X className="w-3.5 h-3.5 text-rose-400 group-hover:scale-125 transition-transform" />
+                      <span>{lang === 'ro' ? 'Închide Trade' : 'Close Trade'}</span>
+                    </button>
+                  )}
                   <button
                     onClick={() => setSelectedSignalForChart(featuredSignal)}
                     className="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 font-bold text-xs flex items-center gap-1.5 transition border border-emerald-500/30 cursor-pointer shadow-sm"
@@ -1131,6 +1195,16 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
 
                 {/* Action Buttons */}
                 <div className="flex items-center justify-between gap-2 pt-1" onClick={(e) => e.stopPropagation()}>
+                  {sig.outcomeStatus !== 'CANCELLED' && (
+                    <button
+                      onClick={() => handleCloseClick(sig)}
+                      className="py-1.5 px-2.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/35 text-rose-300 font-bold text-xs flex items-center justify-center gap-1 transition border border-rose-500/40 shadow-sm"
+                      title={lang === 'ro' ? 'Închide Trade-ul (MT5 / NinjaTrader)' : 'Close Trade (MT5 / NinjaTrader)'}
+                    >
+                      <X className="w-3.5 h-3.5 text-rose-400" />
+                      <span>{lang === 'ro' ? 'Închide' : 'Close'}</span>
+                    </button>
+                  )}
                   <button
                     onClick={() => setSelectedSignalForChart(sig)}
                     className="flex-1 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 font-bold text-xs flex items-center justify-center gap-1.5 transition border border-emerald-500/30"
@@ -1285,6 +1359,17 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
                     </td>
                     <td className="px-3 py-2.5 text-right whitespace-nowrap">
                       <div className="flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
+                        {/* Buton X - Închide Trade (MT5 & NinjaTrader) */}
+                        {sig.outcomeStatus !== 'CANCELLED' && (
+                          <button
+                            onClick={() => handleCloseClick(sig)}
+                            className="px-2 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/35 text-rose-300 hover:text-white font-bold text-[11px] flex items-center gap-1 transition cursor-pointer border border-rose-500/40 shadow-sm hover:border-rose-400 group"
+                            title={lang === 'ro' ? 'Închide Trade-ul (Comandă Stop & Închidere Poziție în MT5 / NinjaTrader)' : 'Close Trade (Close Position & Stop in MT5 / NinjaTrader)'}
+                          >
+                            <X className="w-3.5 h-3.5 text-rose-400 group-hover:scale-125 transition-transform" />
+                            <span className="font-mono">{lang === 'ro' ? 'Închide' : 'Close'}</span>
+                          </button>
+                        )}
                         <button
                           onClick={() => setSelectedSignalForChart(sig)}
                           className="px-2 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 font-bold text-[11px] flex items-center gap-1 transition cursor-pointer border border-emerald-500/30"
@@ -1353,6 +1438,123 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
         onDeleteAllSignals={onDeleteAllSignals}
         onResetSignals={onResetSignals}
       />
+
+      {/* Confirm Close Trade Modal */}
+      {signalToClose && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-gradient-to-b from-[#0F1A30] to-[#0A1020] border border-rose-500/40 rounded-2xl p-6 shadow-2xl shadow-rose-950/40 space-y-5">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400 shrink-0">
+                  <AlertOctagon className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white leading-tight">
+                    {lang === 'ro' ? 'Confirmă Închiderea Trade-ului' : 'Confirm Close Trade'}
+                  </h3>
+                  <span className="text-xs text-rose-400 font-mono font-semibold">
+                    MT5 & NinjaTrader Synced
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={() => setSignalToClose(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Trade Info Summary Card */}
+            <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-300 font-mono">
+                  {signalToClose.symbol} ({signalToClose.timeframe})
+                </span>
+                <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase font-mono ${
+                  signalToClose.type.includes('BUY') 
+                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' 
+                    : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                }`}>
+                  {signalToClose.type}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-900 text-xs font-mono">
+                <div>
+                  <span className="text-[10px] text-slate-500 block uppercase">Entry</span>
+                  <span className="text-white font-bold">${signalToClose.entryPrice}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-500 block uppercase">Stop Loss</span>
+                  <span className="text-rose-400 font-bold">${signalToClose.stopLoss}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-500 block uppercase">Take Profit 1</span>
+                  <span className="text-emerald-400 font-bold">${signalToClose.targetPrice1}</span>
+                </div>
+              </div>
+
+              {/* PnL Preview if live quote available */}
+              {quotes && (
+                <div className="pt-2 border-t border-slate-900 flex items-center justify-between">
+                  <span className="text-xs text-slate-400 font-mono">
+                    {lang === 'ro' ? 'P&L Curent Estimat:' : 'Current Estimated P&L:'}
+                  </span>
+                  {(() => {
+                    const pnlMetrics = calculateTradePnLMetrics(signalToClose, user, quotes);
+                    const isPos = pnlMetrics.pnl > 0;
+                    return (
+                      <span className={`text-sm font-bold font-mono ${isPos ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {isPos ? '+' : ''}${pnlMetrics.pnl.toFixed(2)}
+                      </span>
+                    );
+                  })()}
+                </div>
+              )}
+            </div>
+
+            {/* Warning / Explanation Text */}
+            <div className="p-3.5 rounded-xl bg-rose-950/30 border border-rose-500/30 text-xs text-rose-200 leading-relaxed flex items-start gap-2.5">
+              <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+              <p>
+                {lang === 'ro'
+                  ? 'Această acțiune va marca trade-ul ca închis în MarketAI și va trimite comanda de ÎNCHIDERE a poziției deschise sau de ȘTERGERE a ordinului de intrare către terminalul MetaTrader 5 (MQL5 EA) și NinjaTrader 8.'
+                  : 'This action marks the trade as closed in MarketAI and immediately sends a CLOSE POSITION or CANCEL ORDER command to MetaTrader 5 (MQL5 EA) and NinjaTrader 8.'}
+              </p>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setSignalToClose(null)}
+                className="flex-1 py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 font-bold text-xs border border-slate-700 transition cursor-pointer text-center"
+              >
+                {lang === 'ro' ? 'Anulează / Păstrează' : 'Cancel / Keep'}
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmCloseTrade}
+                disabled={isClosingTrade}
+                className="flex-1 py-2.5 px-4 rounded-xl bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white font-bold text-xs border border-rose-400/30 shadow-lg shadow-rose-600/30 transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <X className="w-4 h-4" />
+                <span>{isClosingTrade ? (lang === 'ro' ? 'Se închide...' : 'Closing...') : (lang === 'ro' ? 'Închide Trade-ul Acum' : 'Close Trade Now')}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Close Success Toast */}
+      {closeSuccessToast && (
+        <div className="fixed bottom-6 right-6 z-50 p-4 rounded-xl bg-slate-900/95 border border-emerald-500/40 text-emerald-300 text-xs font-mono font-bold shadow-2xl flex items-center gap-2.5 animate-in slide-in-from-bottom-5 duration-300">
+          <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+          <span>{closeSuccessToast}</span>
+        </div>
+      )}
     </div>
   );
 };

@@ -19,12 +19,19 @@ import {
   Scale,
   Zap,
   Info,
+  RotateCcw,
+  Sparkles,
+  Check,
+  Edit3,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { InstrumentId, CalculatorInstrumentId, MarketQuote, UserProfile } from '../types';
 import {
   INSTRUMENT_SPECS,
   calculatePositionMetrics,
+  calculateTrailingStopConversions,
   InstrumentSpec,
+  TrailingStopParityConversion,
 } from '../utils/lotCalculator';
 
 interface RiskRulesConfigurationSectionProps {
@@ -67,6 +74,15 @@ export const RiskRulesConfigurationSection: React.FC<RiskRulesConfigurationSecti
   const [autoBreakEven, setAutoBreakEven] = useState<boolean>(user?.riskSettings?.autoBreakEven ?? true);
   const [trailingStop, setTrailingStop] = useState<boolean>(user?.riskSettings?.trailingStop ?? true);
   const [trailingStopPoints, setTrailingStopPoints] = useState<number>(user?.riskSettings?.trailingStopPoints ?? 50);
+  const [trailingStopBaseAsset, setTrailingStopBaseAsset] = useState<InstrumentId>(
+    (user?.riskSettings?.trailingStopBaseAsset as InstrumentId) || (initialSelectedInstrument as InstrumentId) || 'NASDAQ'
+  );
+  const [trailingStopCustomOverrides, setTrailingStopCustomOverrides] = useState<Partial<Record<InstrumentId, number>>>(
+    user?.riskSettings?.trailingStopCustomOverrides || {}
+  );
+  const [tsCategoryFilter, setTsCategoryFilter] = useState<'ALL' | 'INDICES' | 'METALS' | 'FOREX'>('ALL');
+  const [tsEditingParity, setTsEditingParity] = useState<InstrumentId | null>(null);
+  const [tsEditingVal, setTsEditingVal] = useState<string>('');
 
   // Active spec & price
   const currentSpec: InstrumentSpec = INSTRUMENT_SPECS[activeInstrument] || INSTRUMENT_SPECS.NASDAQ;
@@ -128,6 +144,58 @@ export const RiskRulesConfigurationSection: React.FC<RiskRulesConfigurationSecti
     });
   }, [activeInstrument, accountBalance, equity, riskPerTrade, entryPrice, stopLossPrice, leverage, quotes]);
 
+  // Multi-parity trailing stop conversions memo
+  const trailingStopConversions = useMemo(() => {
+    return calculateTrailingStopConversions({
+      baseAsset: trailingStopBaseAsset,
+      basePoints: trailingStopPoints,
+      quotes,
+      customOverrides: trailingStopCustomOverrides,
+    });
+  }, [trailingStopBaseAsset, trailingStopPoints, quotes, trailingStopCustomOverrides]);
+
+  const handleSelectBaseAsset = (newBase: InstrumentId) => {
+    if (newBase === trailingStopBaseAsset) return;
+    const currentConverted = trailingStopConversions.conversions[newBase]?.points;
+    setTrailingStopBaseAsset(newBase);
+    if (currentConverted && currentConverted > 0) {
+      setTrailingStopPoints(currentConverted);
+    }
+  };
+
+  const getBasePresets = (baseId: InstrumentId) => {
+    if (baseId === 'NASDAQ' || baseId === 'NQ_F') return [25, 50, 75, 100];
+    if (baseId === 'SPX500' || baseId === 'ES_F') return [10, 15, 20, 30];
+    if (baseId === 'DOW_JONES') return [50, 100, 150, 200];
+    if (baseId === 'GOLD' || baseId === 'GC_F') return [4.0, 7.0, 10.0, 15.0];
+    if (baseId === 'EURUSD' || baseId === 'GBPUSD') return [15, 25, 35, 50];
+    if (baseId === 'USDJPY') return [20, 35, 50, 75];
+    return [20, 40, 60, 80];
+  };
+
+  const handleSaveParityOverride = (instId: InstrumentId, rawVal: string) => {
+    const num = parseFloat(rawVal);
+    if (!isNaN(num) && num > 0) {
+      setTrailingStopCustomOverrides((prev) => ({
+        ...prev,
+        [instId]: num,
+      }));
+    }
+    setTsEditingParity(null);
+  };
+
+  const handleResetSingleOverride = (instId: InstrumentId) => {
+    setTrailingStopCustomOverrides((prev) => {
+      const next = { ...prev };
+      delete next[instId];
+      return next;
+    });
+  };
+
+  const handleResetAllOverrides = () => {
+    setTrailingStopCustomOverrides({});
+  };
+
   const handleSaveSettings = async () => {
     setIsSaving(true);
     setSaveSuccess(false);
@@ -153,10 +221,32 @@ export const RiskRulesConfigurationSection: React.FC<RiskRulesConfigurationSecti
               autoBreakEven,
               trailingStop,
               trailingStopPoints,
+              trailingStopBaseAsset,
+              trailingStopPointsPerAsset: trailingStopConversions.pointsMap,
+              trailingStopCustomOverrides,
               leverage,
             },
           }),
         });
+      }
+
+      if (user) {
+        user.riskSettings = {
+          ...(user.riskSettings || {}),
+          riskPerTrade,
+          maxDailyLoss,
+          dailyProfitTarget,
+          maxTradesPerDay,
+          maxTradesPerSymbol,
+          minSignalScore: minConfidence,
+          autoBreakEven,
+          trailingStop,
+          trailingStopPoints,
+          trailingStopBaseAsset,
+          trailingStopPointsPerAsset: trailingStopConversions.pointsMap,
+          trailingStopCustomOverrides,
+          leverage,
+        };
       }
 
       if (onUpdateUserBalance) {
@@ -524,39 +614,308 @@ export const RiskRulesConfigurationSection: React.FC<RiskRulesConfigurationSecti
                 />
               </div>
 
-              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800/80 space-y-2.5 sm:col-span-2">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <span className="text-xs font-bold text-slate-200 block">
-                      {lang === 'ro' ? 'Trailing Stop Inteligent (Activ după TP1)' : 'Smart Trailing Stop (Active after TP1)'}
-                    </span>
-                    <span className="text-[10px] text-slate-500">
-                      {lang === 'ro' ? 'Urmărește prețul la distanță fixă de puncte' : 'Follows price at fixed point distance'}
-                    </span>
+              {/* Trailing Stop Multi-Parity Engine */}
+              <div className="p-4 rounded-2xl bg-gradient-to-b from-slate-950 via-[#0B1528] to-slate-950 border border-indigo-500/30 shadow-xl space-y-4 sm:col-span-2">
+                {/* Header & Toggle */}
+                <div className="flex items-start justify-between gap-3 pb-3 border-b border-slate-800/80">
+                  <div className="flex items-start gap-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center shrink-0 mt-0.5">
+                      <Zap className="w-4 h-4 text-indigo-400" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-white uppercase tracking-wider">
+                          {lang === 'ro' ? 'Trailing Stop Inteligent (Lock Profit TP1+)' : 'Smart Trailing Stop (TP1+ Lock)'}
+                        </span>
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase ${
+                          trailingStop 
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' 
+                            : 'bg-slate-800 text-slate-400 border border-slate-700'
+                        }`}>
+                          {trailingStop ? (lang === 'ro' ? 'Activ' : 'Active') : (lang === 'ro' ? 'Inactiv' : 'Disabled')}
+                        </span>
+                      </div>
+                      <span className="text-[11px] text-slate-400 block mt-0.5">
+                        {lang === 'ro' 
+                          ? 'Introduci punctele manual pentru o paritate de referință, iar distanța se convertește automat pentru toate cele 10 parități.' 
+                          : 'Set manual points for a base instrument and the distance auto-converts proportionally for all 10 assets.'}
+                      </span>
+                    </div>
                   </div>
-                  <input
-                    type="checkbox"
-                    checked={trailingStop}
-                    onChange={(e) => setTrailingStop(e.target.checked)}
-                    className="w-4 h-4 accent-indigo-500 rounded cursor-pointer"
-                  />
+                  <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={trailingStop}
+                      onChange={(e) => setTrailingStop(e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                  </label>
                 </div>
 
                 {trailingStop && (
-                  <div className="pt-2 border-t border-slate-900 flex items-center justify-between gap-3">
-                    <span className="text-xs text-slate-300">
-                      {lang === 'ro' ? 'Distanță Trailing Stop (puncte):' : 'Trailing Distance (Points):'}
-                    </span>
-                    <div className="w-36">
-                      <input
-                        type="number"
-                        min="1"
-                        max="2000"
-                        value={trailingStopPoints}
-                        onChange={(e) => setTrailingStopPoints(Number(e.target.value))}
-                        className="w-full bg-slate-900 border border-slate-800 rounded-lg py-1.5 px-3 text-white font-mono text-xs font-bold focus:outline-none focus:border-indigo-500"
-                        placeholder="50"
-                      />
+                  <div className="space-y-4 pt-1">
+                    {/* Base Asset & Manual Points Input */}
+                    <div className="p-3.5 rounded-xl bg-slate-900/90 border border-indigo-900/40 space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <label className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                          <SlidersHorizontal className="w-3.5 h-3.5 text-indigo-400" />
+                          {lang === 'ro' ? 'Paritate de Bază (Referință Puncte Manuale):' : 'Reference Base Asset (Manual Points):'}
+                        </label>
+                        <span className="text-[11px] font-mono text-cyan-400 font-semibold">
+                          {trailingStopConversions.conversions[trailingStopBaseAsset]?.symbol} • {quotes[trailingStopBaseAsset]?.price ? `$${quotes[trailingStopBaseAsset].price.toLocaleString()}` : `$${INSTRUMENT_SPECS[trailingStopBaseAsset]?.defaultPrice.toLocaleString()}`}
+                        </span>
+                      </div>
+
+                      {/* Quick Selector Pills for Base Asset */}
+                      <div className="flex flex-wrap gap-1.5">
+                        {allInstrumentKeys.map((k) => {
+                          const spec = INSTRUMENT_SPECS[k];
+                          const isSelected = trailingStopBaseAsset === k;
+                          return (
+                            <button
+                              key={k}
+                              type="button"
+                              onClick={() => handleSelectBaseAsset(k)}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition flex items-center gap-1 cursor-pointer ${
+                                isSelected
+                                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30 border border-indigo-400'
+                                  : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800 hover:border-slate-700'
+                              }`}
+                            >
+                              <span>{spec.symbol}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Manual Numeric Input + Steppers + Quick Presets */}
+                      <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 pt-1">
+                        <div className="sm:col-span-7">
+                          <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                            {lang === 'ro'
+                              ? `Puncte Manuale pentru ${INSTRUMENT_SPECS[trailingStopBaseAsset]?.symbol} (${trailingStopConversions.conversions[trailingStopBaseAsset]?.unitLabel}):`
+                              : `Manual Distance for ${INSTRUMENT_SPECS[trailingStopBaseAsset]?.symbol} (${trailingStopConversions.conversions[trailingStopBaseAsset]?.unitLabel}):`}
+                          </label>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const step = trailingStopBaseAsset === 'GOLD' || trailingStopBaseAsset === 'GC_F' ? 1.0 : (trailingStopBaseAsset === 'EURUSD' || trailingStopBaseAsset === 'GBPUSD' || trailingStopBaseAsset === 'USDJPY' ? 2 : 5);
+                                setTrailingStopPoints((prev) => Math.max(step, Number((prev - step).toFixed(2))));
+                              }}
+                              className="w-9 h-9 rounded-lg bg-slate-950 border border-slate-800 hover:border-slate-700 text-slate-300 font-bold hover:text-white flex items-center justify-center cursor-pointer transition shrink-0"
+                            >
+                              -
+                            </button>
+                            <input
+                              type="number"
+                              step="any"
+                              min="0.1"
+                              value={trailingStopPoints}
+                              onChange={(e) => setTrailingStopPoints(Number(e.target.value))}
+                              className="w-full bg-slate-950 border border-indigo-500/50 rounded-lg py-2 px-3 text-white font-mono text-sm font-bold focus:outline-none focus:border-indigo-400 transition"
+                              placeholder="50"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const step = trailingStopBaseAsset === 'GOLD' || trailingStopBaseAsset === 'GC_F' ? 1.0 : (trailingStopBaseAsset === 'EURUSD' || trailingStopBaseAsset === 'GBPUSD' || trailingStopBaseAsset === 'USDJPY' ? 2 : 5);
+                                setTrailingStopPoints((prev) => Number((prev + step).toFixed(2)));
+                              }}
+                              className="w-9 h-9 rounded-lg bg-slate-950 border border-slate-800 hover:border-slate-700 text-slate-300 font-bold hover:text-white flex items-center justify-center cursor-pointer transition shrink-0"
+                            >
+                              +
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Quick Presets for Base Asset */}
+                        <div className="sm:col-span-5 flex flex-col justify-end">
+                          <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">
+                            {lang === 'ro' ? 'Preseturi Rapide:' : 'Quick Presets:'}
+                          </label>
+                          <div className="grid grid-cols-4 gap-1">
+                            {getBasePresets(trailingStopBaseAsset).map((val) => (
+                              <button
+                                key={val}
+                                type="button"
+                                onClick={() => setTrailingStopPoints(val)}
+                                className={`py-1.5 px-1 rounded-md text-[11px] font-mono font-bold transition border cursor-pointer text-center ${
+                                  trailingStopPoints === val
+                                    ? 'bg-cyan-500/20 text-cyan-300 border-cyan-400'
+                                    : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white hover:bg-slate-800'
+                                }`}
+                              >
+                                {val}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Volatility Distance Equivalence */}
+                      <div className="flex items-center justify-between text-[11px] px-3 py-1.5 rounded-lg bg-slate-950/60 border border-slate-800/80 font-mono text-slate-300">
+                        <span className="flex items-center gap-1.5 text-indigo-400">
+                          <Sparkles className="w-3.5 h-3.5" />
+                          {lang === 'ro' ? 'Echivalent Volatilitate / Distanță Procentuală:' : 'Equivalent Volatility / Percentage Distance:'}
+                        </span>
+                        <span className="font-bold text-emerald-400">
+                          ±{trailingStopConversions.basePercent.toFixed(3)}%
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Multi-Parity Auto-Conversion Grid (All 10 Parities) */}
+                    <div className="space-y-2.5">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <ArrowRightLeft className="w-4 h-4 text-cyan-400" />
+                          <span className="text-xs font-bold text-slate-200">
+                            {lang === 'ro'
+                              ? 'Conversie Automată Puncte (Toate cele 10 Parități)'
+                              : 'Auto-Converted Points (All 10 Parities)'}
+                          </span>
+                        </div>
+
+                        {/* Category filter tabs */}
+                        <div className="flex items-center gap-1">
+                          {(['ALL', 'INDICES', 'METALS', 'FOREX'] as const).map((cat) => (
+                            <button
+                              key={cat}
+                              type="button"
+                              onClick={() => setTsCategoryFilter(cat)}
+                              className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold transition cursor-pointer ${
+                                tsCategoryFilter === cat
+                                  ? 'bg-slate-700 text-white border border-slate-600'
+                                  : 'text-slate-500 hover:text-slate-300'
+                              }`}
+                            >
+                              {cat === 'ALL' ? (lang === 'ro' ? 'Toate (10)' : 'All (10)') : cat}
+                            </button>
+                          ))}
+                          {Object.keys(trailingStopCustomOverrides).length > 0 && (
+                            <button
+                              type="button"
+                              onClick={handleResetAllOverrides}
+                              title={lang === 'ro' ? 'Resetează toate ajustările manuale' : 'Reset all manual overrides'}
+                              className="px-2 py-0.5 rounded text-[10px] font-mono text-amber-400 hover:text-amber-300 hover:bg-amber-950/40 flex items-center gap-1 cursor-pointer ml-1"
+                            >
+                              <RotateCcw className="w-3 h-3" />
+                              {lang === 'ro' ? 'Reset' : 'Reset'}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Parities Cards Grid */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[360px] overflow-y-auto pr-1">
+                        {allInstrumentKeys
+                          .filter((k) => {
+                            if (tsCategoryFilter === 'ALL') return true;
+                            return INSTRUMENT_SPECS[k].category === tsCategoryFilter;
+                          })
+                          .map((k) => {
+                            const conv = trailingStopConversions.conversions[k];
+                            const isBase = trailingStopBaseAsset === k;
+                            const isEditing = tsEditingParity === k;
+
+                            return (
+                              <div
+                                key={k}
+                                className={`p-2.5 rounded-xl border transition flex flex-col justify-between gap-1.5 ${
+                                  isBase
+                                    ? 'bg-indigo-950/40 border-indigo-500/50 shadow-md shadow-indigo-900/20'
+                                    : conv.isOverridden
+                                    ? 'bg-amber-950/30 border-amber-500/40'
+                                    : 'bg-slate-900/80 border-slate-800/80 hover:border-slate-700'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="font-mono font-bold text-xs text-white">
+                                      {conv.symbol}
+                                    </span>
+                                    <span className={`text-[9px] font-mono px-1.5 py-0.2 rounded font-semibold ${
+                                      conv.category === 'INDICES'
+                                        ? 'bg-purple-950/80 text-purple-300 border border-purple-800/50'
+                                        : conv.category === 'METALS'
+                                        ? 'bg-amber-950/80 text-amber-300 border border-amber-800/50'
+                                        : 'bg-blue-950/80 text-blue-300 border border-blue-800/50'
+                                    }`}>
+                                      {conv.category}
+                                    </span>
+                                    {isBase && (
+                                      <span className="text-[9px] bg-indigo-500 text-white font-mono px-1 rounded font-bold">
+                                        BAZĂ
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  <div className="flex items-center gap-1">
+                                    {conv.isOverridden && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleResetSingleOverride(k)}
+                                        title={lang === 'ro' ? 'Resetează la calcul automat' : 'Reset to auto-calculated'}
+                                        className="text-[10px] text-amber-400 hover:text-amber-300 p-0.5 rounded cursor-pointer"
+                                      >
+                                        <RotateCcw className="w-3 h-3" />
+                                      </button>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (isEditing) {
+                                          handleSaveParityOverride(k, tsEditingVal);
+                                        } else {
+                                          setTsEditingParity(k);
+                                          setTsEditingVal(String(conv.points));
+                                        }
+                                      }}
+                                      title={lang === 'ro' ? 'Personalizează manual această paritate' : 'Manually override this parity'}
+                                      className="text-[10px] text-slate-400 hover:text-white p-0.5 rounded cursor-pointer"
+                                    >
+                                      <Edit3 className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {/* Converted Value Display or Edit Input */}
+                                <div className="flex items-baseline justify-between pt-0.5">
+                                  {isEditing ? (
+                                    <div className="flex items-center gap-1 w-full my-0.5">
+                                      <input
+                                        type="number"
+                                        step="any"
+                                        value={tsEditingVal}
+                                        onChange={(e) => setTsEditingVal(e.target.value)}
+                                        className="w-full bg-slate-950 border border-cyan-500 rounded py-0.5 px-1.5 text-white font-mono text-xs font-bold focus:outline-none"
+                                        autoFocus
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSaveParityOverride(k, tsEditingVal)}
+                                        className="p-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer"
+                                      >
+                                        <Check className="w-3 h-3" />
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <>
+                                      <span className="font-mono font-bold text-sm text-cyan-300">
+                                        {conv.displayValue}
+                                      </span>
+                                      <span className="text-[10px] font-mono text-slate-400">
+                                        {conv.secondaryDetail}
+                                      </span>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                      </div>
                     </div>
                   </div>
                 )}

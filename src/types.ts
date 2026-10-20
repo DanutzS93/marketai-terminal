@@ -98,7 +98,7 @@ export interface TradingSignal {
   targetPrice3: number;
   riskRewardRatio: string;
   confidencePercent: number;
-  status: 'ACTIVE' | 'TARGET_HIT' | 'EXPIRED';
+  status: 'ACTIVE' | 'TARGET_HIT' | 'EXPIRED' | 'CANCELLED';
   outcomeStatus?: 'PENDING' | 'RUNNING' | 'TP1_HIT' | 'TP2_HIT' | 'TP3_HIT' | 'SL_HIT' | 'CANCELLED' | 'ACTIVE';
   firstHitMilestone?: 'TP1' | 'TP2' | 'TP3' | 'SL' | 'ENTRY' | 'PENDING' | 'CANCELLED';
   isBeHitAfterTp1?: boolean;
@@ -211,6 +211,9 @@ export interface UserProfile {
     autoBreakEven?: boolean;
     trailingStop?: boolean;
     trailingStopPoints?: number;
+    trailingStopBaseAsset?: InstrumentId;
+    trailingStopPointsPerAsset?: Partial<Record<InstrumentId, number>>;
+    trailingStopCustomOverrides?: Partial<Record<InstrumentId, number>>;
     leverage?: number;
   };
   tradeJournal?: TradeJournalEntry[];

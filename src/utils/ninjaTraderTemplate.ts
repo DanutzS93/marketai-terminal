@@ -271,6 +271,61 @@ namespace NinjaTrader.NinjaScript.Strategies
                 }
             }
 
+            // Check for cancelled/closed signal IDs to close live market position or cancel orders in NinjaTrader
+            MatchCollection cancelMatches = Regex.Matches(json, "\\\"cancelled_ids\\\"\\s*:\\s*\\[(.*?)\\]");
+            if (cancelMatches.Count > 0)
+            {
+                string cancelIdsStr = cancelMatches[0].Groups[1].Value;
+                if (!string.IsNullOrEmpty(activeSignalId) && cancelIdsStr.Contains(activeSignalId))
+                {
+                    ChartControl?.Dispatcher?.InvokeAsync(() =>
+                    {
+                        if (Position.MarketPosition != MarketPosition.Flat)
+                        {
+                            Print(string.Format("[MarketAI Bridge] Closing Position on {0} for Signal {1} via Web Terminal X-button!", 
+                                Instrument.FullName, activeSignalId));
+                            if (Position.MarketPosition == MarketPosition.Long)
+                                ExitLong("MarketAI_Long");
+                            else if (Position.MarketPosition == MarketPosition.Short)
+                                ExitShort("MarketAI_Short");
+                        }
+                    });
+                }
+            }
+
+            // Sync live risk rules and symbol-specific trailing stop ticks
+            int riskIdx = json.IndexOf("\"riskRules\"");
+            if (riskIdx >= 0)
+            {
+                string trailingStopStr = ExtractJsonString(json, "trailingStop");
+                if (!string.IsNullOrEmpty(trailingStopStr))
+                    EnableTrailingStop = (trailingStopStr.ToLower() == "true");
+
+                string instName = Instrument.MasterInstrument.Name.ToUpper();
+                double tickSz = Instrument.MasterInstrument.TickSize;
+                double assetPts = 0;
+
+                if (instName.Contains("NQ") || instName.Contains("MNQ"))
+                    assetPts = ExtractJsonDouble(json, "NQ_F");
+                else if (instName.Contains("ES") || instName.Contains("MES"))
+                    assetPts = ExtractJsonDouble(json, "ES_F");
+                else if (instName.Contains("GC") || instName.Contains("MGC"))
+                    assetPts = ExtractJsonDouble(json, "GC_F");
+                else if (instName.Contains("YM") || instName.Contains("MYM"))
+                    assetPts = ExtractJsonDouble(json, "DOW_JONES");
+                else if (instName.Contains("6E"))
+                    assetPts = ExtractJsonDouble(json, "EURUSD") * 0.0001;
+                else if (instName.Contains("6B"))
+                    assetPts = ExtractJsonDouble(json, "GBPUSD") * 0.0001;
+                else if (instName.Contains("6J"))
+                    assetPts = ExtractJsonDouble(json, "USDJPY") * 0.01;
+
+                if (assetPts > 0 && tickSz > 0)
+                {
+                    TrailingStopTicks = (int)Math.Round(assetPts / tickSz);
+                }
+            }
+
             // Extract signals array items
             int signalsIndex = json.IndexOf("\\"signals\\"");
             if (signalsIndex < 0) return;

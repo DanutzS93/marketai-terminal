@@ -240,6 +240,10 @@ function formatUserForClient(u: StoredUser) {
       minSignalScore: 75,
       autoBreakEven: true,
       trailingStop: true,
+      trailingStopPoints: 50,
+      trailingStopBaseAsset: 'NASDAQ',
+      trailingStopPointsPerAsset: {},
+      trailingStopCustomOverrides: {},
       leverage: 100,
     },
     tradeJournal: (u.tradeJournal || []).filter((t: any) => !isDemoOrSampleTrade(t)),
@@ -498,6 +502,60 @@ app.post('/api/user/delete-signal', async (req, res) => {
   await saveUsersDb(users, user.id);
 
   return res.json({ success: true, deletedSignalId: signalId });
+});
+
+app.post('/api/user/close-trade', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.replace('Bearer ', '').trim();
+  if (!token) return res.status(401).json({ error: 'Neautorizat' });
+
+  const { signalId, exitPrice } = req.body;
+  if (!signalId) return res.status(400).json({ error: 'ID semnal lipsă.' });
+
+  const users = loadUsersDb();
+  const user = Object.values(users).find((u) => u.token === token);
+  if (!user) return res.status(401).json({ error: 'Sesiune nevalidă.' });
+
+  if (!user.deletedSignalIds) user.deletedSignalIds = [];
+  if (!user.deletedSignalIds.includes(signalId)) {
+    user.deletedSignalIds.push(signalId);
+  }
+
+  // Update signal outcome to CANCELLED / CLOSED with manual close reason
+  if (Array.isArray(user.signals)) {
+    user.signals = user.signals.map((s) => {
+      if (s.id === signalId) {
+        return {
+          ...s,
+          status: 'CANCELLED',
+          outcomeStatus: 'CANCELLED',
+          cancelReasonRo: 'Închis manual din interfață (Comandă Stop MT5 / NinjaTrader)',
+          cancelReasonEn: 'Manually closed from dashboard (Stop order MT5 / NinjaTrader)',
+          closedAt: new Date().toISOString(),
+          exitPrice: exitPrice || s.currentMarketPrice || s.entryPrice,
+        };
+      }
+      return s;
+    });
+  }
+
+  // Also update active server signals if running
+  serverActiveSignals = serverActiveSignals.map((s) => {
+    if (s.id === signalId) {
+      return {
+        ...s,
+        status: 'CANCELLED',
+        outcomeStatus: 'CANCELLED',
+        cancelReasonRo: 'Închis manual din interfață (Comandă Stop MT5 / NinjaTrader)',
+        closedAt: new Date().toISOString(),
+      };
+    }
+    return s;
+  });
+
+  await saveUsersDb(users, user.id);
+
+  return res.json({ success: true, closedSignalId: signalId, deletedSignalIds: user.deletedSignalIds });
 });
 
 // Admin CRM Helper
@@ -5274,8 +5332,9 @@ app.get('/api/mt5/signals', (req, res) => {
     };
   });
 
+  const userDeletedIds = (matchedUser?.deletedSignalIds || []).map((id) => String(id));
   const cancelledSignals = targetSignals.filter((s) => s.status === 'CANCELLED' || s.status === 'CANCELED' || s.outcomeStatus === 'CANCELLED');
-  const cancelledIds = cancelledSignals.map((s) => s.id).filter(Boolean);
+  const cancelledIds = Array.from(new Set([...cancelledSignals.map((s) => String(s.id)).filter(Boolean), ...userDeletedIds]));
   const placedIds = Array.from(processedSet);
 
   const userRisk = matchedUser?.riskSettings || {};
@@ -5289,6 +5348,9 @@ app.get('/api/mt5/signals', (req, res) => {
     autoBreakEven: userRisk.autoBreakEven !== false,
     trailingStop: userRisk.trailingStop !== false,
     trailingStopPoints: typeof userRisk.trailingStopPoints === 'number' ? userRisk.trailingStopPoints : 50,
+    trailingStopBaseAsset: userRisk.trailingStopBaseAsset || 'NASDAQ',
+    trailingStopPointsPerAsset: userRisk.trailingStopPointsPerAsset || {},
+    trailingStopCustomOverrides: userRisk.trailingStopCustomOverrides || {},
     leverage: typeof userRisk.leverage === 'number' ? userRisk.leverage : (matchedUser?.leverage || 100),
   };
 
