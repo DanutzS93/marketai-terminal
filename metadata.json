@@ -1,0 +1,6 @@
+{
+  "name": "MarketAI - Indici & Gold",
+  "description": "Platformă de analiză AI a pieței și generare de semnale personalizate pe bază de reguli pentru Nasdaq, Dow Jones, Aur (XAU/USD) și Forex (EUR/USD, GBP/USD, USD/JPY) cu cotatori live și TradingView.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

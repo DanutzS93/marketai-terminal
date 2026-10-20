@@ -1,0 +1,39 @@
+{
+  "entities": {
+    "users": {
+      "title": "Users",
+      "description": "User profiles, roles, subscriptions, and custom API keys",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "username": { "type": "string" },
+        "passwordHash": { "type": "string" },
+        "inviteCodeUsed": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "token": { "type": "string" },
+        "role": { "type": "string" },
+        "status": { "type": "string" },
+        "subscriptionExpiresAt": { "type": "string" },
+        "signals": { "type": "array", "items": { "type": "object" } },
+        "tradeJournal": { "type": "array", "items": { "type": "object" } },
+        "customRules": { "type": "array", "items": { "type": "object" } },
+        "apiKeys": { "type": "object" }
+      },
+      "required": ["id", "username", "passwordHash"]
+    },
+    "inviteCodes": {
+      "title": "Invite Codes",
+      "description": "Valid invitation codes for platform registration",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "createdByName": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "usesCount": { "type": "number" },
+        "maxUses": { "type": "number" },
+        "note": { "type": "string" }
+      },
+      "required": ["code"]
+    }
+  }
+}

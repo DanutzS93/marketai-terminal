@@ -1,0 +1,16 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+*.zip
+.restore_points/
+.backups/
+.system_generated/
+users_cloud_db.json
+invite_codes_db.json
+*_db.json
+.env*
+!.env.example
+
