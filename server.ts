@@ -881,12 +881,22 @@ function getGeminiClient(req?: express.Request) {
     });
   }
 
-  // Check if requesting user is Admin
+  // Check if requesting user has stored geminiApiKey
   const authHeader = req?.headers?.authorization;
   const token = authHeader?.replace('Bearer ', '').trim();
   if (token) {
     const users = loadUsersDb();
     const user = Object.values(users).find((u) => u.token === token);
+    if (user?.apiKeys?.geminiApiKey && typeof user.apiKeys.geminiApiKey === 'string' && user.apiKeys.geminiApiKey.trim().length > 0) {
+      return new GoogleGenAI({
+        apiKey: user.apiKeys.geminiApiKey.trim(),
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          },
+        },
+      });
+    }
     if (user && (user.role === 'admin' || user.username.toLowerCase() === 'admin')) {
       // Use system server environment GEMINI_API_KEY for admin
       if (process.env.GEMINI_API_KEY) {
@@ -4654,6 +4664,7 @@ Generate valid JSON output:
         if (!serverActiveSignals.some((s) => s.id === validated.id)) {
           serverActiveSignals.unshift(validated);
         }
+        await attachSignalToUser(req, validated);
         return res.json({ signal: validated });
       } catch (aiErr) {
         console.warn('Gemini AI generation warning, falling back to deterministic signal:', aiErr);
@@ -4664,12 +4675,34 @@ Generate valid JSON output:
     if (!serverActiveSignals.some((s) => s.id === signal.id)) {
       serverActiveSignals.unshift(signal);
     }
+    await attachSignalToUser(req, signal);
     return res.json({ signal });
   } catch (error: any) {
     console.error('AI signal generation error:', error);
     res.status(500).json({ error: 'Eroare la generarea semnalului AI.' });
   }
 });
+
+async function attachSignalToUser(req: express.Request, signal: any) {
+  try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.replace('Bearer ', '').trim();
+    if (token) {
+      const users = loadUsersDb();
+      const user = Object.values(users).find((u) => u.token === token);
+      if (user) {
+        if (!Array.isArray(user.signals)) user.signals = [];
+        if (!user.signals.some((s) => s && s.id === signal.id)) {
+          user.signals.unshift(signal);
+          user.signals = user.signals.slice(0, 50);
+          await saveUsersDb(users, user.id);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to attach signal to user:', err);
+  }
+}
 
 // API Route: Generate Custom Rules Signal (Secțiunea Regulilor Personalizate)
 app.post('/api/generate-custom-rule-signal', async (req, res) => {
@@ -4883,6 +4916,7 @@ Generate valid JSON output:
         if (!serverActiveSignals.some((s) => s.id === validatedCustom.id)) {
           serverActiveSignals.unshift(validatedCustom);
         }
+        await attachSignalToUser(req, validatedCustom);
         return res.json({ signal: validatedCustom });
       } catch (aiCustomErr) {
         console.warn('Gemini custom signal evaluation warning, falling back to deterministic calculation:', aiCustomErr);
@@ -4893,6 +4927,7 @@ Generate valid JSON output:
     if (!serverActiveSignals.some((s) => s.id === signal.id)) {
       serverActiveSignals.unshift(signal);
     }
+    await attachSignalToUser(req, signal);
     return res.json({ signal });
   } catch (error: any) {
     console.error('Custom rule signal generation error:', error);
@@ -5154,6 +5189,8 @@ function resolveUserByMt5Token(token: string | null): { user: StoredUser | null;
       userKey === cleanToken ||
       (u.apiKeys && u.apiKeys.mt5ApiKey === cleanToken) ||
       (u.mt5ApiKey && u.mt5ApiKey === cleanToken) ||
+      ((u.role === 'admin' || u.username.toLowerCase() === 'admin') && cleanToken.startsWith('mt5_live_admin')) ||
+      (u.id && cleanToken.includes(u.id.replace(/[^a-zA-Z0-9]/g, '').slice(-8))) ||
       u.token === cleanToken ||
       u.id === cleanToken
     ) {
@@ -5236,7 +5273,15 @@ app.get('/api/mt5/signals', (req, res) => {
   let targetSignals: any[] = [];
 
   if (matchedUser) {
-    targetSignals = matchedUser.signals || [];
+    const userSigs = matchedUser.signals || [];
+    const deletedSet = new Set((matchedUser.deletedSignalIds || []).map(String));
+    const combined = [...userSigs.filter((s) => s && !deletedSet.has(String(s.id)))];
+    for (const s of serverActiveSignals) {
+      if (s && !deletedSet.has(String(s.id)) && !combined.some((us) => us.id === s.id)) {
+        combined.push(s);
+      }
+    }
+    targetSignals = combined;
   } else if (token === 'mt5_live_token_marketai2026' || token === 'default') {
     targetSignals = serverActiveSignals;
   } else {
@@ -5481,6 +5526,21 @@ app.post('/api/mt5/update', async (req, res) => {
             target.isEntryTriggered = true;
             target.firstHitMilestone = 'ENTRY';
           }
+        }
+      }
+
+      const serverTarget = serverActiveSignals.find((s) => s.id === signal_id || s.signal_id === signal_id);
+      if (serverTarget) {
+        serverTarget.mt5Placed = true;
+        serverTarget.mt5PlacedAt = serverTarget.mt5PlacedAt || new Date().toISOString();
+        serverTarget.accountSource = 'MT5';
+        if (pnl !== undefined && !isNaN(Number(pnl))) serverTarget.pnl = Number(pnl);
+        else if (profit !== undefined && !isNaN(Number(profit))) serverTarget.pnl = Number(profit);
+        serverTarget.outcomeStatus = outcomeStatus || serverTarget.outcomeStatus || 'RUNNING';
+        serverTarget.status = status || serverTarget.status || 'ACTIVE';
+        if (milestone === 'ENTRY') {
+          serverTarget.isEntryTriggered = true;
+          serverTarget.firstHitMilestone = 'ENTRY';
         }
       }
     }

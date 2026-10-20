@@ -1236,27 +1236,27 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
         </div>
 
         {/* Desktop View: Full Data Table with Obsidian Frosted Glass */}
-        <div className="hidden md:block overflow-x-auto rounded-xl border border-white/10 shadow-2xl bg-[#091122]/80 backdrop-blur-2xl">
+        <div className="hidden md:block rounded-xl border border-white/10 shadow-2xl bg-[#091122]/80 backdrop-blur-2xl overflow-x-auto no-scrollbar">
           <table className="w-full text-left text-xs text-slate-200 font-mono">
             <thead className="bg-[#060B17]/90 text-slate-400 uppercase text-[10px] font-bold tracking-wider border-b border-white/10">
               <tr>
-                <th className="px-3 py-3 whitespace-nowrap">{lang === 'ro' ? 'Instrument' : 'Instrument'}</th>
-                <th className="px-2.5 py-3 whitespace-nowrap">{lang === 'ro' ? 'Acțiune' : 'Action'}</th>
-                <th className="px-2.5 py-3 whitespace-nowrap">{lang === 'ro' ? 'Tip Ordin' : 'Order Type'}</th>
-                <th className="px-2 py-3 text-center whitespace-nowrap">{lang === 'ro' ? 'Timeframe' : 'Timeframe'}</th>
-                <th className="px-3 py-3 whitespace-nowrap">{lang === 'ro' ? 'Intrare (Entry)' : 'Entry Price'}</th>
-                <th className="px-3 py-3 whitespace-nowrap">{lang === 'ro' ? 'Stop Loss' : 'Stop Loss'}</th>
-                <th className="px-3 py-3 whitespace-nowrap">{lang === 'ro' ? 'Take Profit (1 / 2 / 3)' : 'Take Profit (1 / 2 / 3)'}</th>
-                <th className="px-3 py-3 whitespace-nowrap">{lang === 'ro' ? 'Stare Rezultat (TP/SL)' : 'Result Status'}</th>
-                <th className="px-2 py-3 text-center whitespace-nowrap">{lang === 'ro' ? 'Încredere' : 'Confidence'}</th>
+                <th className="px-2.5 py-2.5 whitespace-nowrap">{lang === 'ro' ? 'Instrument' : 'Instrument'}</th>
+                <th className="px-1.5 py-2.5 text-center whitespace-nowrap">{lang === 'ro' ? 'Direcție' : 'Side'}</th>
+                <th className="px-1.5 py-2.5 text-center whitespace-nowrap">{lang === 'ro' ? 'Tip Ordin' : 'Order'}</th>
+                <th className="px-1 py-2.5 text-center whitespace-nowrap">{lang === 'ro' ? 'TF' : 'TF'}</th>
+                <th className="px-2 py-2.5 whitespace-nowrap">{lang === 'ro' ? 'Intrare' : 'Entry'}</th>
+                <th className="px-2 py-2.5 whitespace-nowrap">{lang === 'ro' ? 'Stop Loss' : 'Stop Loss'}</th>
+                <th className="px-2.5 py-2.5 whitespace-nowrap">{lang === 'ro' ? 'Take Profit (1 / 2 / 3)' : 'Take Profit'}</th>
+                <th className="px-2 py-2.5 whitespace-nowrap">{lang === 'ro' ? 'Stare' : 'Status'}</th>
+                <th className="px-1 py-2.5 text-center whitespace-nowrap">{lang === 'ro' ? 'Scor' : 'Score'}</th>
                 {/* Rubrică PNL Curent sincronizat din MT5 / NinjaTrader */}
-                <th className="px-3 py-3 text-center whitespace-nowrap">
+                <th className="px-2 py-2.5 text-center whitespace-nowrap">
                   <div className="flex flex-col items-center justify-center">
-                    <span className="text-white font-extrabold">{lang === 'ro' ? 'PNL Curent' : 'Live P&L'}</span>
-                    <span className="text-[8px] font-sans text-cyan-400 font-semibold tracking-wider uppercase">MT5 / Ninja</span>
+                    <span className="text-white font-extrabold">{lang === 'ro' ? 'PNL' : 'P&L'}</span>
+                    <span className="text-[7.5px] font-sans text-cyan-400 font-semibold tracking-wider uppercase leading-none">MT5/NT</span>
                   </div>
                 </th>
-                <th className="px-3 py-3 text-right whitespace-nowrap">{lang === 'ro' ? 'Acțiuni' : 'Actions'}</th>
+                <th className="px-2.5 py-2.5 text-right whitespace-nowrap">{lang === 'ro' ? 'Acțiuni Trade' : 'Actions'}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5 bg-transparent">
@@ -1269,72 +1269,116 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
                     className="hover:bg-white/[0.04] transition cursor-pointer group"
                     title={lang === 'ro' ? 'Click pentru a vedea explicația detaliată a semnalului' : 'Click to open trade explanation pop-up'}
                   >
-                    <td className="px-3 py-2.5 font-sans font-bold text-white whitespace-nowrap">
+                    <td className="px-2.5 py-2 font-sans font-bold text-white whitespace-nowrap">
                       <div className="flex items-center gap-1.5 group-hover:text-cyan-400 transition">
-                        <span>{sig.instrumentName}</span>
-                        <span className="text-[10px] text-slate-400 font-mono">({sig.symbol})</span>
+                        <span className="font-extrabold text-xs">{sig.symbol}</span>
+                        <span className="text-[10px] text-slate-400 font-normal truncate max-w-[90px] hidden lg:inline">
+                          ({sig.instrumentName})
+                        </span>
                       </div>
-                      <div className="text-[10px] text-slate-400 font-mono mt-0.5 flex items-center gap-1 font-normal">
-                        <Calendar className="w-3 h-3 text-cyan-400 shrink-0" />
+                      <div className="text-[9px] text-slate-400 font-mono mt-0.5 flex items-center gap-1 font-normal">
+                        <Calendar className="w-2.5 h-2.5 text-cyan-400 shrink-0" />
                         <span>{formatFullDateTime(sig.createdAt, lang)}</span>
                       </div>
                     </td>
-                    <td className="px-2.5 py-2.5 whitespace-nowrap">
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${getSignalBadgeStyle(sig.type)}`}>
-                        {sig.type.replace('_', ' ')}
+                    <td className="px-1.5 py-2 text-center whitespace-nowrap">
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${getSignalBadgeStyle(sig.type)}`}>
+                        {sig.type.includes('BUY') ? 'BUY' : sig.type.includes('SELL') ? 'SELL' : sig.type}
                       </span>
                     </td>
-                    <td className="px-2.5 py-2.5 whitespace-nowrap">
+                    <td className="px-1.5 py-2 text-center whitespace-nowrap">
                       {(() => {
                         const execType = sig.executionType || calculateExecutionType(sig.type, sig.entryPrice, sig.currentMarketPrice || sig.entryPrice);
+                        const compactExec = execType
+                          .replace('BUY MARKET', 'MKT')
+                          .replace('SELL MARKET', 'MKT')
+                          .replace('Market Execution', 'MKT')
+                          .replace('BUY LIMIT', 'LIMIT')
+                          .replace('SELL LIMIT', 'LIMIT')
+                          .replace('BUY STOP', 'STOP')
+                          .replace('SELL STOP', 'STOP');
                         return (
-                          <span className={`px-2 py-0.5 rounded text-[10px] border uppercase ${getExecutionBadgeStyle(execType)}`}>
-                            ⚡ {execType}
+                          <span
+                            className={`px-1.5 py-0.5 rounded text-[9.5px] border uppercase font-bold ${getExecutionBadgeStyle(execType)}`}
+                            title={execType}
+                          >
+                            ⚡ {compactExec}
                           </span>
                         );
                       })()}
                     </td>
-                    <td className="px-2 py-2.5 text-center text-slate-300 font-bold whitespace-nowrap">{sig.timeframe}</td>
-                    <td className="px-3 py-2.5 font-bold text-white whitespace-nowrap">${formatSignalPrice(sig.entryPrice, sig.instrumentId, sig.symbol)}</td>
-                    <td className="px-3 py-2.5 text-rose-400 font-bold whitespace-nowrap">${formatSignalPrice(sig.stopLoss, sig.instrumentId, sig.symbol)}</td>
-                    <td className="px-3 py-2.5 text-emerald-400 font-bold whitespace-nowrap">
+                    <td className="px-1 py-2 text-center text-slate-300 font-bold whitespace-nowrap text-xs">
+                      {sig.timeframe}
+                    </td>
+                    <td className="px-2 py-2 font-bold text-white whitespace-nowrap text-xs font-mono">
+                      ${formatSignalPrice(sig.entryPrice, sig.instrumentId, sig.symbol)}
+                    </td>
+                    <td className="px-2 py-2 text-rose-400 font-bold whitespace-nowrap text-xs font-mono">
+                      ${formatSignalPrice(sig.stopLoss, sig.instrumentId, sig.symbol)}
+                    </td>
+                    <td className="px-2.5 py-2 text-emerald-400 whitespace-nowrap font-mono">
                       <div className="flex flex-col text-[11px] leading-tight">
-                        <span className="font-extrabold text-emerald-300">TP1: ${formatSignalPrice(sig.targetPrice1, sig.instrumentId, sig.symbol)}</span>
-                        <span className="text-slate-400 text-[10px]">
-                          TP2: ${formatSignalPrice(sig.targetPrice2, sig.instrumentId, sig.symbol)} | TP3: ${formatSignalPrice(sig.targetPrice3, sig.instrumentId, sig.symbol)}
+                        <span className="font-extrabold text-emerald-300">
+                          TP1: ${formatSignalPrice(sig.targetPrice1, sig.instrumentId, sig.symbol)}
                         </span>
+                        <div className="flex items-center gap-1.5 text-slate-400 text-[9.5px] mt-0.5">
+                          <span>TP2: ${formatSignalPrice(sig.targetPrice2, sig.instrumentId, sig.symbol)}</span>
+                          <span className="text-slate-600">•</span>
+                          <span>TP3: ${formatSignalPrice(sig.targetPrice3, sig.instrumentId, sig.symbol)}</span>
+                        </div>
                       </div>
                     </td>
-                    <td className="px-3 py-2.5 whitespace-nowrap">
-                      <div className="flex flex-col gap-1 max-w-[220px]">
-                        <span className={`px-2.5 py-0.5 rounded text-[11px] border whitespace-nowrap inline-block font-mono ${badge.badgeClass}`}>
-                          {badge.label}
-                        </span>
-                        {sig.outcomeStatus === 'CANCELLED' && (
-                          <span className="text-[10px] text-slate-300 font-sans leading-tight bg-rose-950/40 p-1 rounded border border-rose-500/30 block" title={getCancellationReason(sig, lang)}>
-                            <strong>{lang === 'ro' ? 'Motiv:' : 'Reason:'}</strong> {getCancellationReason(sig, lang)}
-                          </span>
-                        )}
-                      </div>
+                    <td className="px-2 py-2 whitespace-nowrap">
+                      {(() => {
+                        const compactLabel = badge.label
+                          .replace(' (În Desfășurare)', '')
+                          .replace(' (In Progress)', '')
+                          .replace(' (+TP1)', '')
+                          .replace(' (+TP2)', '')
+                          .replace(' (+TP3 Max)', '')
+                          .replace(' (SL)', '');
+                        return (
+                          <div className="flex flex-col gap-0.5 max-w-[140px]">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10.5px] border whitespace-nowrap inline-block font-mono font-bold ${badge.badgeClass}`}
+                              title={badge.label}
+                            >
+                              {compactLabel}
+                            </span>
+                            {sig.outcomeStatus === 'CANCELLED' && (
+                              <span
+                                className="text-[9px] text-slate-300 font-sans leading-tight bg-rose-950/40 px-1 py-0.5 rounded border border-rose-500/30 truncate max-w-[130px] block"
+                                title={getCancellationReason(sig, lang)}
+                              >
+                                {getCancellationReason(sig, lang)}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </td>
-                    <td className="px-2 py-2.5 text-center text-indigo-300 font-bold whitespace-nowrap">{sig.confidencePercent}%</td>
+                    <td className="px-1 py-2 text-center text-indigo-300 font-bold whitespace-nowrap text-xs font-mono">
+                      {sig.confidencePercent}%
+                    </td>
                     {/* Rubrică PNL Curent sincronizat din MT5 / NinjaTrader */}
-                    <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                    <td className="px-2 py-2 text-center whitespace-nowrap">
                       {(() => {
                         const pnlData = calculateTradePnLMetrics(sig, user, quotes);
                         const isPos = pnlData.pnl > 0;
                         const isNeg = pnlData.pnl < 0;
                         return (
                           <div className="flex flex-col items-center justify-center">
-                            <span className={`font-mono font-black tracking-tight text-xs sm:text-[13px] ${
-                              pnlData.hasPrice === false
-                                ? 'text-slate-400'
-                                : isPos
-                                ? 'text-emerald-400'
-                                : isNeg
-                                ? 'text-rose-400'
-                                : 'text-slate-400'
-                            }`}>
+                            <span
+                              className={`font-mono font-black tracking-tight text-xs ${
+                                pnlData.hasPrice === false
+                                  ? 'text-slate-400'
+                                  : isPos
+                                  ? 'text-emerald-400'
+                                  : isNeg
+                                  ? 'text-rose-400'
+                                  : 'text-slate-400'
+                              }`}
+                            >
                               {pnlData.hasPrice === false
                                 ? '-'
                                 : isPos
@@ -1344,11 +1388,11 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
                                 : '$0.00'}
                             </span>
                             <div className="flex items-center gap-1 mt-0.5">
-                              <span className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold uppercase tracking-tight ${pnlData.accountBadgeStyle}`}>
+                              <span className={`text-[8.5px] px-1.5 py-0.2 rounded font-mono font-bold uppercase tracking-tight ${pnlData.accountBadgeStyle}`}>
                                 {pnlData.accountBadge}
                               </span>
                               {pnlData.hasPrice !== false && pnlData.rr !== 0 && (
-                                <span className={`text-[9px] font-mono font-semibold ${isPos ? 'text-emerald-300' : 'text-rose-300'}`}>
+                                <span className={`text-[8.5px] font-mono font-semibold ${isPos ? 'text-emerald-300' : 'text-rose-300'}`}>
                                   ({isPos ? '+' : ''}{pnlData.rr}R)
                                 </span>
                               )}
@@ -1357,39 +1401,41 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
                         );
                       })()}
                     </td>
-                    <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                      <div className="flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
+                    <td className="px-2.5 py-2 text-right whitespace-nowrap">
+                      <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
                         {/* Buton X - Închide Trade (MT5 & NinjaTrader) */}
                         {sig.outcomeStatus !== 'CANCELLED' && (
                           <button
                             onClick={() => handleCloseClick(sig)}
-                            className="px-2 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/35 text-rose-300 hover:text-white font-bold text-[11px] flex items-center gap-1 transition cursor-pointer border border-rose-500/40 shadow-sm hover:border-rose-400 group"
-                            title={lang === 'ro' ? 'Închide Trade-ul (Comandă Stop & Închidere Poziție în MT5 / NinjaTrader)' : 'Close Trade (Close Position & Stop in MT5 / NinjaTrader)'}
+                            className="px-2 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/35 text-rose-300 hover:text-white font-bold text-[10.5px] flex items-center gap-1 transition cursor-pointer border border-rose-500/40 shadow-sm hover:border-rose-400 group shrink-0"
+                            title={lang === 'ro' ? 'Închide Trade-ul (Comandă Stop MT5 / NinjaTrader)' : 'Close Trade (Stop Order MT5 / NinjaTrader)'}
                           >
                             <X className="w-3.5 h-3.5 text-rose-400 group-hover:scale-125 transition-transform" />
                             <span className="font-mono">{lang === 'ro' ? 'Închide' : 'Close'}</span>
                           </button>
                         )}
+                        {/* Buton Grafic */}
                         <button
                           onClick={() => setSelectedSignalForChart(sig)}
-                          className="px-2 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 font-bold text-[11px] flex items-center gap-1 transition cursor-pointer border border-emerald-500/30"
+                          className="px-2 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 font-bold text-[10.5px] flex items-center gap-1 transition cursor-pointer border border-emerald-500/30 shrink-0"
                           title={lang === 'ro' ? 'Deschide Grafic Tehnic TradingView' : 'Open TradingView Technical Chart'}
                         >
                           <TrendingUp className="w-3 h-3 text-emerald-400" />
                           <span>{lang === 'ro' ? 'Grafic' : 'Chart'}</span>
                         </button>
+                        {/* Buton Pop-up Explicație */}
                         <button
                           onClick={() => setSelectedSignalForDetails(sig)}
-                          className="px-2 py-1 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 font-bold text-[11px] flex items-center gap-1 transition cursor-pointer border border-indigo-500/30"
-                          title={lang === 'ro' ? 'Vezi Explicația Detaliată' : 'View Trade Rationale'}
+                          className="p-1.5 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 font-bold text-[10.5px] flex items-center gap-1 transition cursor-pointer border border-indigo-500/30 shrink-0"
+                          title={lang === 'ro' ? 'Vezi Explicația Detaliată (Pop-up)' : 'View Trade Rationale'}
                         >
-                          <Info className="w-3 h-3 text-indigo-400" />
-                          <span>{lang === 'ro' ? 'Explicație' : 'Details'}</span>
+                          <Info className="w-3.5 h-3.5 text-indigo-400" />
                         </button>
+                        {/* Buton Șterge Semnal */}
                         {onDeleteSignal && (
                           <button
                             onClick={() => onDeleteSignal(sig.id)}
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-950/40 transition cursor-pointer"
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-950/40 transition cursor-pointer shrink-0"
                             title={lang === 'ro' ? 'Șterge semnal' : 'Delete signal'}
                           >
                             <Trash2 className="w-3.5 h-3.5" />

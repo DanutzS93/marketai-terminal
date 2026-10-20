@@ -106,7 +106,7 @@ export const Mt5IntegrationModal: React.FC<Mt5IntegrationModalProps> = ({
                   {lang === 'ro' ? 'Conexiune Automată MetaTrader 5 (MT5 Bridge)' : 'MetaTrader 5 Auto-Trading Bridge'}
                 </h2>
                 <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 font-mono text-[10px] font-bold">
-                  EA v4.50 Pro Risk
+                  EA v4.60 Pro Risk
                 </span>
               </div>
               <p className="text-xs text-slate-300 mt-0.5">
@@ -186,11 +186,11 @@ export const Mt5IntegrationModal: React.FC<Mt5IntegrationModalProps> = ({
             <ShieldCheck className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
             <div className="text-xs">
               <span className="font-bold text-cyan-300 font-mono">
-                {lang === 'ro' ? 'Noutăți EA v4.50 Pro Risk Engine:' : 'EA v4.50 Pro Risk Engine Highlights:'}
+                {lang === 'ro' ? 'Noutăți EA v4.60 Pro Diagnostic & Execution Engine:' : 'EA v4.60 Pro Diagnostic & Execution Engine Highlights:'}
               </span>{' '}
               {lang === 'ro'
-                ? 'Include acum calcul dinamic al mărimii lotului din % risc, oprire automată la Daily Loss & Daily Target, limită tranzacții/zi și per simbol, plus Smart Trailing Stop & Auto Break-Even sincronizate în timp real din panoul web.'
-                : 'Now includes dynamic lot sizing from % risk, automatic trading halt on Daily Loss & Daily Target, max daily & symbol trade limits, plus Smart Trailing Stop & Auto Break-Even synced in real-time.'}
+                ? 'Include verificare automată a permisiunilor Algo Trading, deblocare tranzacții multiple, heartbeat la fiecare 60s în Experts, diagnostic eroare 4060 WebRequest, plus închidere imediată la apăsarea butonului X din tabel.'
+                : 'Includes auto Algo Trading checks, unblocked multiple trade placement, 60s Experts heartbeat, 4060 WebRequest diagnostic, plus instant position close via table X button.'}
             </div>
           </div>
           
@@ -256,7 +256,7 @@ export const Mt5IntegrationModal: React.FC<Mt5IntegrationModalProps> = ({
           <div className="bg-[#060B18]/80 border border-white/10 rounded-xl p-4 text-slate-200 backdrop-blur-md">
             <h3 className="font-bold text-sm mb-2 flex items-center gap-2 text-cyan-300">
               <ShieldCheck className="w-4 h-4 text-cyan-400" />
-              {lang === 'ro' ? 'Pași de configurare în MetaTrader 5:' : 'MetaTrader 5 Setup Guide:'}
+              {lang === 'ro' ? 'Pași esențiali de configurare în MetaTrader 5:' : 'Essential MetaTrader 5 Setup Guide:'}
             </h3>
             <ol className="list-decimal list-inside space-y-1.5 text-xs text-slate-300 font-medium">
               <li>
@@ -271,19 +271,24 @@ export const Mt5IntegrationModal: React.FC<Mt5IntegrationModalProps> = ({
               </li>
               <li>
                 {lang === 'ro'
-                  ? 'Ștergeți tot codul vechi și lipiți codul MQL5 v4.50 actualizat de mai jos. Apoi apăsați **Compile** (F7).'
-                  : 'Clear all old code and paste the updated MQL5 v4.50 script below. Then click **Compile** (F7).'}
+                  ? 'Ștergeți tot codul vechi și lipiți codul MQL5 v4.60 actualizat de mai jos. Apoi apăsați **Compile** (F7).'
+                  : 'Clear all old code and paste the updated MQL5 v4.60 script below. Then click **Compile** (F7).'}
               </li>
               <li>
                 {lang === 'ro'
-                  ? 'În MT5, mergeți la **Tools -> Options -> Expert Advisors**, bifați **"Allow WebRequest for the listed URL"** și adăugați: '
+                  ? 'În MT5, mergeți la **Tools -> Options -> Expert Advisors**, bifați **"Allow WebRequest for the listed URL"** și adăugați exact adresa: '
                   : 'In MT5, go to **Tools -> Options -> Expert Advisors**, check **"Allow WebRequest for the listed URL"** and add: '}
                 <code className="bg-[#040813] px-1.5 py-0.5 rounded border border-white/10 font-mono text-[11px] text-cyan-300">{currentOrigin}</code>
               </li>
               <li>
                 {lang === 'ro'
-                  ? 'Atașați Expert Advisor-ul pe graficele dorite (EURUSD, GBPUSD, USDJPY, NAS100, Gold etc.) și asigurați-vă că butonul **Algo Trading / AutoTrading** este activ (verde).'
-                  : 'Attach the Expert Advisor to your charts (EURUSD, GBPUSD, USDJPY, NAS100, Gold etc.) and ensure **Algo Trading / AutoTrading** is enabled (green).'}
+                  ? 'Atașați Expert Advisor-ul pe graficele dorite (EURUSD, GBPUSD, USDJPY, NAS100, Gold etc.) și asigurați-vă că butonul **Algo Trading** din bara de sus este activ (verde).'
+                  : 'Attach the Expert Advisor to your charts and ensure **Algo Trading** in top MT5 toolbar is active (green).'}
+              </li>
+              <li className="text-amber-300 font-semibold">
+                {lang === 'ro'
+                  ? 'Verificare mesaje: Toate alertele și statusurile EA-ului apar în tab-ul "Experts" / "Consilieri" din MT5 (nu în tab-ul "Journal").'
+                  : 'Log verification: All EA notifications and status updates appear in the MT5 "Experts" tab (not the "Journal" tab).'}
               </li>
             </ol>
           </div>
@@ -293,7 +298,7 @@ export const Mt5IntegrationModal: React.FC<Mt5IntegrationModalProps> = ({
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5 font-mono">
                 <Cpu className="w-4 h-4 text-cyan-400" />
-                {lang === 'ro' ? 'Cod Sursă MQL5 Actualizat v4.50 (Pro Risk Engine + Trailing Stop)' : 'Updated MQL5 Source Code v4.50 (Pro Risk Engine + Trailing Stop)'}
+                {lang === 'ro' ? 'Cod Sursă MQL5 Actualizat v4.60 (Pro Risk Engine + Trailing Stop)' : 'Updated MQL5 Source Code v4.60 (Pro Risk Engine + Trailing Stop)'}
               </span>
               <button
                 onClick={() => handleCopy(mql5Code, 'mql5')}
@@ -307,7 +312,7 @@ export const Mt5IntegrationModal: React.FC<Mt5IntegrationModalProps> = ({
                 ) : (
                   <>
                     <Copy className="w-4 h-4" />
-                    <span>{lang === 'ro' ? 'Copiază Codul MQL5 v4.50' : 'Copy MQL5 Code v4.50'}</span>
+                    <span>{lang === 'ro' ? 'Copiază Codul MQL5 v4.60' : 'Copy MQL5 Code v4.60'}</span>
                   </>
                 )}
               </button>
@@ -322,7 +327,7 @@ export const Mt5IntegrationModal: React.FC<Mt5IntegrationModalProps> = ({
         {/* Footer */}
         <div className="bg-[#060B18]/90 px-6 py-4 border-t border-white/10 flex items-center justify-between relative z-10">
           <span className="text-xs text-slate-400 font-medium font-mono">
-            {lang === 'ro' ? 'MT5 Bridge v4.50 • Execuție Automată, Control Risc & Trailing Stop' : 'MT5 Bridge v4.50 • Automated Execution, Risk Guard & Trailing Stop'}
+            {lang === 'ro' ? 'MT5 Bridge v4.60 • Execuție Automată, Control Risc & Trailing Stop' : 'MT5 Bridge v4.60 • Automated Execution, Risk Guard & Trailing Stop'}
           </span>
           <button
             onClick={onClose}

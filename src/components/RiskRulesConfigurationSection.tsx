@@ -334,7 +334,7 @@ export const RiskRulesConfigurationSection: React.FC<RiskRulesConfigurationSecti
               </h3>
             </div>
             <span className="text-xs text-slate-400 font-mono">
-              EA v4.50 Real-Time Sync
+              EA v4.60 Real-Time Sync
             </span>
           </div>
 
@@ -366,7 +366,7 @@ export const RiskRulesConfigurationSection: React.FC<RiskRulesConfigurationSecti
                     {lang === 'ro' ? 'Sincronizare Activă' : 'Live Sync Active'}
                   </span>
                   <span className="text-[10px] text-emerald-500 font-mono font-bold">
-                    EA v4.50 Guard
+                    EA v4.60 Guard
                   </span>
                 </div>
               </div>

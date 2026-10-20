@@ -11,7 +11,7 @@ export function getMql5EaCode(
 //+------------------------------------------------------------------+
 #property copyright "MarketAI Signals"
 #property link      "https://ai.studio"
-#property version   "4.50"
+#property version   "4.60"
 #property description "MarketAI MT5 Auto-Trading Bridge with Real-Time Risk Rules & Smart Trailing Engine"
 
 #include <Trade\\Trade.mqh>
@@ -445,7 +445,7 @@ void UpdateChartHUD()
    int symTrades = GetSymbolActiveCount(targetSymbol);
    
    string hud = "=======================================================\\n" +
-                "  MarketAI Signals MT5 Bridge v4.50 (Pro Risk Engine)  \\n" +
+                "  MarketAI Signals MT5 Bridge v4.60 (Pro Risk Engine)  \\n" +
                 "=======================================================\\n" +
                 " Connected Account : #" + IntegerToString(login) + " (" + serverName + ")\\n" +
                 " Balance / Equity   : $" + DoubleToString(balance, 2) + " / $" + DoubleToString(equity, 2) + "\\n" +
@@ -488,7 +488,7 @@ int OnInit()
    long login = AccountInfoInteger(ACCOUNT_LOGIN);
    string serverName = AccountInfoString(ACCOUNT_SERVER);
    string company = AccountInfoString(ACCOUNT_COMPANY);
-   Print("MarketAI MT5 Bridge v4.50 initialized. Target Symbol: ", targetSymbol, " Magic: ", InpMagicNumber, " Connected Account: #", login, " (", serverName, ") [", company, "]");
+   Print("MarketAI MT5 Bridge v4.60 initialized. Target Symbol: ", targetSymbol, " Magic: ", InpMagicNumber, " Connected Account: #", login, " (", serverName, ") [", company, "]");
    
    // Send immediate initial sync on startup
    SendAccountSync();
@@ -505,7 +505,7 @@ void OnDeinit(const int reason)
 {
    EventKillTimer();
    Comment("");
-   Print("MarketAI MT5 Bridge v4.50 stopped.");
+   Print("MarketAI MT5 Bridge v4.60 stopped.");
 }
 
 //+------------------------------------------------------------------+
@@ -585,6 +585,26 @@ void FetchAndExecuteSignals()
 {
    string targetSymbol = (InpBrokerSymbol != "") ? InpBrokerSymbol : _Symbol;
 
+   // Diagnostic check for Algo Trading permissions in MT5
+   if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED))
+   {
+      static datetime lastAlgoWarn = 0;
+      if(TimeCurrent() - lastAlgoWarn > 60)
+      {
+         Print("[MarketAI ATENTIE] 'Algo Trading' este DEZACTIVAT in bara de sus din MT5! Apasati butonul 'Algo Trading' (sa devina verde) pentru a permite executarea tranzactiilor.");
+         lastAlgoWarn = TimeCurrent();
+      }
+   }
+   if(!MQLInfoInteger(MQL_TRADE_ALLOWED))
+   {
+      static datetime lastMqlWarn = 0;
+      if(TimeCurrent() - lastMqlWarn > 60)
+      {
+         Print("[MarketAI ATENTIE] Optiunea 'Allow Algo Trading' nu este bifata in setarile EA-ului! Apasati F7 -> Common -> bifati 'Allow Algo Trading'.");
+         lastMqlWarn = TimeCurrent();
+      }
+   }
+
    uchar data[];
    uchar result[];
    string result_headers;
@@ -599,9 +619,36 @@ void FetchAndExecuteSignals()
    if(res == -1)
    {
       int err = GetLastError();
-      if(err == 4060)
-         Print("Error 4060: WebRequest URL not allowed. Add ${currentOrigin} in Tools -> Options -> Expert Advisors.");
+      static datetime lastWebErr = 0;
+      if(TimeCurrent() - lastWebErr > 30)
+      {
+         if(err == 4060)
+            Print("[MarketAI EROARE 4060] URL-ul WebRequest nu este autorizat in MT5! Adaugati '", url, "' sau '${currentOrigin}' in Tools -> Options -> Expert Advisors -> Allow WebRequest for listed URL.");
+         else
+            Print("[MarketAI EROARE WebRequest ", err, "] Conexiunea la server a esuat. Verificati internetul sau firewall-ul. URL: ", url);
+         lastWebErr = TimeCurrent();
+      }
       return;
+   }
+   
+   if(res != 200)
+   {
+      static datetime lastHttpErr = 0;
+      if(TimeCurrent() - lastHttpErr > 30)
+      {
+         string errBody = CharArrayToString(result);
+         Print("[MarketAI HTTP ", res, "] Serverul a raspuns cu eroare: ", errBody, " | Verificati cheia InpApiKey: '", InpApiKey, "'");
+         lastHttpErr = TimeCurrent();
+      }
+      return;
+   }
+
+   // Periodic heartbeat in Experts tab every 60s
+   static datetime lastHeartbeat = 0;
+   if(TimeCurrent() - lastHeartbeat > 60)
+   {
+      Print("[MarketAI OK] Bridge conectat cu succes la server. Monitorizeaza semnale pentru ", targetSymbol, "... (HTTP 200)");
+      lastHeartbeat = TimeCurrent();
    }
    
    if(res == 200)
@@ -721,7 +768,7 @@ void FetchAndExecuteSignals()
             if(ticket > 0 && PositionGetInteger(POSITION_MAGIC) == InpMagicNumber && PositionGetString(POSITION_SYMBOL) == targetSymbol)
             {
                string comment = PositionGetString(POSITION_COMMENT);
-               if(StringFind(comment, sigId) != -1 || !isPending)
+               if(StringFind(comment, sigId) != -1)
                {
                   alreadyPlaced = true;
                   break;
@@ -830,12 +877,12 @@ void FetchAndExecuteSignals()
             tp1Hit = false;
             tp2Hit = false;
             
-            Print("MarketAI: Trade executed successfully (", action, ") Lot: ", finalLot, " (Risk: ", liveRiskPercent, "%) on ", targetSymbol, " Signal ID: ", sigId, " SL: ", sl, " TP3: ", tp3);
+            Print("[MarketAI SUCCES] Tranzactie executata cu succes (", action, ") Lot: ", finalLot, " (Risc: ", liveRiskPercent, "%) pe ", targetSymbol, " Signal ID: ", sigId, " SL: ", sl, " TP3: ", tp3);
             SendStatusUpdate(sigId, "RUNNING", "OPENED", "ENTRY");
          }
          else
          {
-            Print("MarketAI Trade Error on ", targetSymbol, "! Action: ", action, " Lot: ", finalLot, " Retcode: ", trade.ResultRetcode(), " (", trade.ResultRetcodeDescription(), ")");
+            Print("[MarketAI EROARE ORDIN] Ordinul nu a putut fi plasat pe ", targetSymbol, "! Actiune: ", action, " Lot: ", finalLot, " Cod MT5: ", trade.ResultRetcode(), " (", trade.ResultRetcodeDescription(), ")");
          }
       }
    }
