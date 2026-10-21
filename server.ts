@@ -151,7 +151,14 @@ function getDaysLeft(expiresAtIso?: string, role?: string): number {
 // Helper to get or create user MT5 API key (Permanent & unique per account)
 function ensureUserMt5ApiKey(user: StoredUser): string {
   if (!user.apiKeys) user.apiKeys = {};
-  if (!user.apiKeys.mt5ApiKey || typeof user.apiKeys.mt5ApiKey !== 'string' || !user.apiKeys.mt5ApiKey.startsWith('mt5_live_')) {
+  const currentKey = user.apiKeys.mt5ApiKey || user.mt5ApiKey;
+  if (
+    !currentKey ||
+    typeof currentKey !== 'string' ||
+    !currentKey.startsWith('mt5_live_') ||
+    currentKey === 'mt5_live_token_marketai2026' ||
+    currentKey.length < 16
+  ) {
     const cleanId = (user.id || '').replace(/[^a-zA-Z0-9]/g, '').slice(-8) || 'user';
     const randPart = Math.random().toString(36).substring(2, 10);
     const generatedKey = `mt5_live_${cleanId}_${randPart}`;
@@ -163,8 +170,9 @@ function ensureUserMt5ApiKey(user: StoredUser): string {
       users[user.id].mt5ApiKey = generatedKey;
       saveUsersDb(users, user.id).catch((err) => console.warn('Failed to save generated MT5 API key:', err));
     }
-  } else if (!user.mt5ApiKey) {
-    user.mt5ApiKey = user.apiKeys.mt5ApiKey;
+  } else {
+    user.apiKeys.mt5ApiKey = currentKey;
+    user.mt5ApiKey = currentKey;
   }
   return user.apiKeys.mt5ApiKey;
 }
@@ -4577,9 +4585,6 @@ app.post('/api/generate-ai-signal', async (req, res) => {
       if (isAdmin) {
         const rawSignal = buildDeterministicSignal(validId, timeframe, quote, strategy, isEn);
         const signal = validateAndFixSignalPrices(rawSignal, quote.price, quote.atr);
-        if (!serverActiveSignals.some((s) => s.id === signal.id)) {
-          serverActiveSignals.unshift(signal);
-        }
         await attachSignalToUser(req, signal);
         return res.json({ signal });
       }
@@ -4787,9 +4792,6 @@ Generate valid JSON output:
         };
 
         const validated = validateAndFixSignalPrices(generatedSignal, quote.price, quote.atr);
-        if (!serverActiveSignals.some((s) => s.id === validated.id)) {
-          serverActiveSignals.unshift(validated);
-        }
         await attachSignalToUser(req, validated);
         return res.json({ signal: validated });
       } catch (aiErr) {
@@ -4798,9 +4800,6 @@ Generate valid JSON output:
 
     const rawSignal = buildDeterministicSignal(validId, timeframe, quote, strategy, isEn);
     const signal = validateAndFixSignalPrices(rawSignal, quote.price, quote.atr);
-    if (!serverActiveSignals.some((s) => s.id === signal.id)) {
-      serverActiveSignals.unshift(signal);
-    }
     await attachSignalToUser(req, signal);
     return res.json({ signal });
   } catch (error: any) {
@@ -4812,11 +4811,12 @@ Generate valid JSON output:
 async function attachSignalToUser(req: express.Request, signal: any) {
   try {
     const authHeader = req.headers.authorization;
-    const token = authHeader?.replace('Bearer ', '').trim();
+    const token = authHeader?.replace(/^Bearer\s+/i, '').trim();
     if (token) {
       const users = loadUsersDb();
       const user = Object.values(users).find((u) => u.token === token);
       if (user) {
+        signal.userId = user.id;
         if (!Array.isArray(user.signals)) user.signals = [];
         if (!user.signals.some((s) => s && s.id === signal.id)) {
           user.signals.unshift(signal);
@@ -5064,9 +5064,6 @@ Generate valid JSON output:
         };
 
         const validatedCustom = validateAndFixSignalPrices(customSignal, quote.price, quote.atr);
-        if (!serverActiveSignals.some((s) => s.id === validatedCustom.id)) {
-          serverActiveSignals.unshift(validatedCustom);
-        }
         await attachSignalToUser(req, validatedCustom);
         return res.json({ signal: validatedCustom });
       } catch (aiCustomErr) {
@@ -5075,9 +5072,6 @@ Generate valid JSON output:
 
     const rawSignal = buildDeterministicSignal(instrumentId, timeframe, quote, `Custom Rules: ${notesStr}`, isEn);
     const signal = validateAndFixSignalPrices(rawSignal, quote.price, quote.atr);
-    if (!serverActiveSignals.some((s) => s.id === signal.id)) {
-      serverActiveSignals.unshift(signal);
-    }
     await attachSignalToUser(req, signal);
     return res.json({ signal });
   } catch (error: any) {
@@ -5373,10 +5367,12 @@ app.post('/api/user/regenerate-mt5-key', async (req, res) => {
   if (!user.apiKeys) user.apiKeys = {};
   const cleanId = (user.id || '').replace(/[^a-zA-Z0-9]/g, '').slice(-8) || 'user';
   const randPart = Math.random().toString(36).substring(2, 10);
-  user.apiKeys.mt5ApiKey = `mt5_live_${cleanId}_${randPart}`;
+  const newKey = `mt5_live_${cleanId}_${randPart}`;
+  user.apiKeys.mt5ApiKey = newKey;
+  user.mt5ApiKey = newKey;
 
   await saveUsersDb(users, user.id);
-  return res.json({ success: true, mt5ApiKey: user.apiKeys.mt5ApiKey, user: formatUserForClient(user) });
+  return res.json({ success: true, mt5ApiKey: newKey, user: formatUserForClient(user) });
 });
 
 // Regenerate user NinjaTrader API key endpoint (Only on explicit user request)
@@ -5428,25 +5424,31 @@ function resolveUserByMt5Token(token: string | null): { user: StoredUser | null;
   if (!token) return { user: null, allUsers: users };
 
   const cleanToken = token.trim();
+  // Reject default or invalid tokens immediately
+  if (
+    !cleanToken ||
+    cleanToken === 'default' ||
+    cleanToken === 'mt5_live_token_marketai2026' ||
+    cleanToken.length < 15
+  ) {
+    return { user: null, allUsers: users };
+  }
+
   const userList = Object.values(users);
 
-  // 1. Direct match on user MT5 key or stored key or user token/id
+  // STRICT DIRECT MATCH: EA token must exactly equal user's dedicated mt5ApiKey
   for (const u of userList) {
     const userKey = ensureUserMt5ApiKey(u);
     if (
       userKey === cleanToken ||
       (u.apiKeys && u.apiKeys.mt5ApiKey === cleanToken) ||
-      (u.mt5ApiKey && u.mt5ApiKey === cleanToken) ||
-      ((u.role === 'admin' || u.username.toLowerCase() === 'admin') && cleanToken.startsWith('mt5_live_admin')) ||
-      (u.id && cleanToken.includes(u.id.replace(/[^a-zA-Z0-9]/g, '').slice(-8))) ||
-      u.token === cleanToken ||
-      u.id === cleanToken
+      (u.mt5ApiKey && u.mt5ApiKey === cleanToken)
     ) {
       return { user: u, allUsers: users };
     }
   }
 
-  // Strict isolation: never fall back to admin or arbitrary user for demo/unknown tokens
+  // Strict isolation: never fall back to admin or arbitrary user
   return { user: null, allUsers: users };
 }
 
@@ -5634,27 +5636,24 @@ function symbolsMatch(instrumentId: string, signalSymbol: string, brokerSymbol: 
 app.get('/api/mt5/signals', (req, res) => {
   const token = extractMt5Token(req);
   if (!token) {
-    return res.status(401).json({ error: 'Unauthorized MT5 API Token' });
+    return res.status(401).json({ error: 'Unauthorized MT5 API Token. Include your personal API key in InpApiKey parameter.' });
   }
 
   const { user: matchedUser } = resolveUserByMt5Token(token);
-  let targetSignals: any[] = [];
-
-  if (matchedUser) {
-    const userSigs = matchedUser.signals || [];
-    const deletedSet = new Set((matchedUser.deletedSignalIds || []).map(String));
-    const combined = [...userSigs.filter((s) => s && !deletedSet.has(String(s.id)))];
-    for (const s of serverActiveSignals) {
-      if (s && !deletedSet.has(String(s.id)) && !combined.some((us) => us.id === s.id)) {
-        combined.push(s);
-      }
-    }
-    targetSignals = combined;
-  } else if (token === 'mt5_live_token_marketai2026' || token === 'default') {
-    targetSignals = serverActiveSignals;
-  } else {
-    return res.status(401).json({ error: 'Invalid MT5 API Key. Please use your personal API key from MarketAI account settings.' });
+  if (!matchedUser) {
+    return res.status(401).json({
+      error: 'Invalid MT5 API Key. Fiecare utilizator are o cheie unică generată în contul său MarketAI. Deschideți fereastra MT5 Bridge din platformă și copiați cheia InpApiKey unică a contului dvs.',
+    });
   }
+
+  if (matchedUser.status === 'blocked') {
+    return res.status(403).json({ error: 'Contul MT5 este blocat de administrator.' });
+  }
+
+  // STRICT ISOLATION: Only send signals belonging to THIS user's account!
+  const userSigs = Array.isArray(matchedUser.signals) ? matchedUser.signals : [];
+  const deletedSet = new Set((matchedUser.deletedSignalIds || []).map(String));
+  let targetSignals = userSigs.filter((s) => s && !deletedSet.has(String(s.id)));
 
   // Auto-cancel unactivated signals by the end of day
   const todayStr = new Date().toISOString().split('T')[0];
@@ -5760,17 +5759,16 @@ app.get('/api/mt5/signals', (req, res) => {
     };
   });
 
-  const userDeletedIds = (matchedUser?.deletedSignalIds || []).map((id) => String(id));
+  const userDeletedIds = (matchedUser.deletedSignalIds || []).map((id) => String(id));
   const cancelledSignals = targetSignals.filter((s) => s.status === 'CANCELLED' || s.status === 'CANCELED' || s.outcomeStatus === 'CANCELLED');
   const allCancelled = Array.from(new Set([
     ...cancelledSignals.map((s) => String(s.id)).filter(Boolean),
     ...userDeletedIds,
-    ...Array.from(serverCancelledSignalIds),
   ])).filter((id) => id && id !== 'CLOSE_ALL' && id !== 'ALL' && id.length >= 8);
   const cancelledIds = allCancelled.slice(-100);
   const placedIds = Array.from(processedSet);
 
-  const userRisk = matchedUser?.riskSettings || {};
+  const userRisk = matchedUser.riskSettings || {};
   const effectiveRiskRules = {
     riskPerTrade: typeof userRisk.riskPerTrade === 'number' ? userRisk.riskPerTrade : 1.0,
     maxDailyLoss: typeof userRisk.maxDailyLoss === 'number' ? userRisk.maxDailyLoss : 3000,
@@ -5784,13 +5782,14 @@ app.get('/api/mt5/signals', (req, res) => {
     trailingStopBaseAsset: userRisk.trailingStopBaseAsset || 'NASDAQ',
     trailingStopPointsPerAsset: userRisk.trailingStopPointsPerAsset || {},
     trailingStopCustomOverrides: userRisk.trailingStopCustomOverrides || {},
-    leverage: typeof userRisk.leverage === 'number' ? userRisk.leverage : (matchedUser?.leverage || 100),
+    leverage: typeof userRisk.leverage === 'number' ? userRisk.leverage : (matchedUser.leverage || 100),
   };
 
   return res.json({
     status: 'online',
     serverTime: new Date().toISOString(),
     message: 'MarketAI MT5 Bridge active',
+    userId: matchedUser.id,
     symbolFilter: symbolParam || 'ALL',
     activeSignalsCount: formattedSignals.length,
     signals: formattedSignals,
@@ -5800,12 +5799,52 @@ app.get('/api/mt5/signals', (req, res) => {
   });
 });
 
-app.post('/api/mt5/signals/sync', (req, res) => {
+app.post('/api/mt5/signals/sync', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.replace(/^Bearer\s+/i, '').trim();
+  const apiKey = (req.headers['x-api-key'] || req.query.apiKey) as string;
+
+  const users = loadUsersDb();
+  let targetUser: StoredUser | null = null;
+
+  if (token) {
+    targetUser = Object.values(users).find((u) => u.token === token) || null;
+  }
+  if (!targetUser && apiKey) {
+    targetUser = Object.values(users).find(
+      (u) => u.mt5ApiKey === apiKey || u.apiKeys?.mt5ApiKey === apiKey
+    ) || null;
+  }
+
+  if (!targetUser) {
+    return res.status(401).json({ error: 'Unauthorized: Sesiune nevalidă pentru sincronizare MT5.' });
+  }
+
   const { signals } = req.body;
   if (Array.isArray(signals)) {
-    serverActiveSignals = signals;
+    const existingMap = new Map((targetUser.signals || []).map((s: any) => [s.id, s]));
+    const merged = signals.map((s: any) => {
+      const ex = existingMap.get(s.id);
+      if (ex) {
+        return {
+          ...s,
+          userId: targetUser!.id,
+          mt5Placed: s.mt5Placed ?? ex.mt5Placed,
+          mt5PlacedAt: s.mt5PlacedAt ?? ex.mt5PlacedAt,
+          ninjaTraderPlaced: s.ninjaTraderPlaced ?? ex.ninjaTraderPlaced,
+          ninjaTraderPlacedAt: s.ninjaTraderPlacedAt ?? ex.ninjaTraderPlacedAt,
+          isEntryTriggered: s.isEntryTriggered ?? ex.isEntryTriggered,
+        };
+      }
+      return { ...s, userId: targetUser!.id };
+    });
+
+    targetUser.signals = filter30DaySignals(merged, targetUser.deletedSignalIds);
+    await saveUsersDb(users, targetUser.id);
+    return res.json({ success: true, count: targetUser.signals.length, userId: targetUser.id });
   }
-  return res.json({ success: true, count: serverActiveSignals.length });
+
+  return res.json({ success: true, count: targetUser.signals?.length || 0 });
 });
 
 app.post('/api/mt5/account', async (req, res) => {
@@ -5936,19 +5975,7 @@ app.post('/api/mt5/update', async (req, res) => {
     await saveUsersDb(users, matchedUser.id);
     return res.json({ success: true, received: { signal_id, status, outcomeStatus } });
   } else {
-    if (signal_id) {
-      const target = serverActiveSignals.find((s) => s.id === signal_id || s.signal_id === signal_id);
-      if (target) {
-        target.mt5Placed = true;
-        target.mt5PlacedAt = target.mt5PlacedAt || new Date().toISOString();
-        target.accountSource = 'MT5';
-        if (pnl !== undefined && !isNaN(Number(pnl))) target.pnl = Number(pnl);
-        else if (profit !== undefined && !isNaN(Number(profit))) target.pnl = Number(profit);
-        target.outcomeStatus = outcomeStatus || target.outcomeStatus || 'RUNNING';
-        target.status = status || target.status || 'ACTIVE';
-      }
-    }
-    return res.json({ success: true, received: { signal_id, status, outcomeStatus } });
+    return res.status(401).json({ error: 'Unauthorized MT5 API Token' });
   }
 });
 
@@ -5984,19 +6011,17 @@ function resolveUserByNinjaTraderToken(token: string | null): { user: StoredUser
   if (!token) return { user: null, allUsers: users };
 
   const cleanToken = token.trim();
+  if (!cleanToken || cleanToken === 'default' || cleanToken.length < 15) {
+    return { user: null, allUsers: users };
+  }
   const userList = Object.values(users);
 
   for (const u of userList) {
     const ntKey = ensureUserNinjaTraderApiKey(u);
-    const mt5Key = ensureUserMt5ApiKey(u);
     if (
       ntKey === cleanToken ||
       (u.apiKeys && u.apiKeys.ninjaTraderApiKey === cleanToken) ||
-      (u.ninjaTraderApiKey && u.ninjaTraderApiKey === cleanToken) ||
-      mt5Key === cleanToken ||
-      (u.apiKeys && u.apiKeys.mt5ApiKey === cleanToken) ||
-      u.token === cleanToken ||
-      u.id === cleanToken
+      (u.ninjaTraderApiKey && u.ninjaTraderApiKey === cleanToken)
     ) {
       return { user: u, allUsers: users };
     }
@@ -6044,12 +6069,50 @@ function mapToNinjaTraderSymbol(instrumentId: string, isMicro: boolean = false):
 }
 
 // Sync active signals from browser to NinjaTrader bridge
-app.post(['/api/ninjatrader/signals/sync', '/api/nt8/signals/sync'], (req, res) => {
+app.post(['/api/ninjatrader/signals/sync', '/api/nt8/signals/sync'], async (req, res) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.replace(/^Bearer\s+/i, '').trim();
+  const apiKey = (req.headers['x-api-key'] || req.query.apiKey) as string;
+
+  const users = loadUsersDb();
+  let targetUser: StoredUser | null = null;
+
+  if (token) {
+    targetUser = Object.values(users).find((u) => u.token === token) || null;
+  }
+  if (!targetUser && apiKey) {
+    targetUser = Object.values(users).find(
+      (u) => u.ninjaTraderApiKey === apiKey || u.apiKeys?.ninjaTraderApiKey === apiKey
+    ) || null;
+  }
+
+  if (!targetUser) {
+    return res.status(401).json({ error: 'Unauthorized: Sesiune nevalidă pentru sincronizare NinjaTrader.' });
+  }
+
   const { signals } = req.body;
   if (Array.isArray(signals)) {
-    serverActiveSignals = signals.filter((s: any) => s.status === 'ACTIVE' || s.outcomeStatus === 'RUNNING' || s.outcomeStatus === 'PENDING');
+    const existingMap = new Map((targetUser.signals || []).map((s: any) => [s.id, s]));
+    const merged = signals.map((s: any) => {
+      const ex = existingMap.get(s.id);
+      if (ex) {
+        return {
+          ...s,
+          userId: targetUser!.id,
+          ninjaTraderPlaced: s.ninjaTraderPlaced ?? ex.ninjaTraderPlaced,
+          ninjaTraderPlacedAt: s.ninjaTraderPlacedAt ?? ex.ninjaTraderPlacedAt,
+          isEntryTriggered: s.isEntryTriggered ?? ex.isEntryTriggered,
+        };
+      }
+      return { ...s, userId: targetUser!.id };
+    });
+
+    targetUser.signals = filter30DaySignals(merged, targetUser.deletedSignalIds);
+    await saveUsersDb(users, targetUser.id);
+    return res.json({ success: true, count: targetUser.signals.length, userId: targetUser.id });
   }
-  return res.json({ success: true, count: serverActiveSignals.length });
+
+  return res.json({ success: true, count: targetUser.signals?.length || 0 });
 });
 
 // GET active signals for NinjaTrader 8 Strategy
@@ -6075,9 +6138,7 @@ app.get(['/api/ninjatrader/signals', '/api/nt8/signals'], (req, res) => {
   const instrumentParam = String(req.query.instrument || req.query.symbol || 'ALL').trim().toUpperCase();
   const isMicroParam = String(req.query.micro || '').toLowerCase() === 'true';
 
-  let rawSignals = matchedUser.signals && Array.isArray(matchedUser.signals) && matchedUser.signals.length > 0
-    ? matchedUser.signals
-    : serverActiveSignals;
+  let rawSignals = Array.isArray(matchedUser.signals) ? matchedUser.signals : [];
 
   const deletedIds = new Set(matchedUser.deletedSignalIds || []);
   const processedIds = new Set(matchedUser.ninjaTraderProcessedSignalIds || []);
@@ -6273,21 +6334,7 @@ app.post(['/api/ninjatrader/update', '/api/nt8/update'], async (req, res) => {
     await saveUsersDb(users, matchedUser.id);
     return res.json({ success: true, received: { signal_id, status, outcomeStatus } });
   } else {
-    if (signal_id) {
-      const target = serverActiveSignals.find((s) => s.id === signal_id || s.signal_id === signal_id);
-      if (target) {
-        target.ninjaTraderPlaced = true;
-        target.ninjaTraderPlacedAt = target.ninjaTraderPlacedAt || new Date().toISOString();
-        target.accountSource = 'NINJATRADER';
-        const incomingPnl = pnl ?? profit ?? (status === 'CLOSED' ? realizedPnL : unrealizedPnL);
-        if (incomingPnl !== undefined && !isNaN(Number(incomingPnl))) {
-          target.pnl = Number(incomingPnl);
-        }
-        target.outcomeStatus = outcomeStatus || target.outcomeStatus || 'RUNNING';
-        target.status = status || target.status || 'ACTIVE';
-      }
-    }
-    return res.json({ success: true, received: { signal_id, status, outcomeStatus } });
+    return res.status(401).json({ error: 'Unauthorized NinjaTrader API Key' });
   }
 });
 

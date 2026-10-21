@@ -23,7 +23,7 @@ CTrade trade;
 input group "=== [1] Web API & Connection Settings ==="
 input string   InpEndpointURL           = "${mt5Endpoint}";
 input string   InpUpdateURL             = "${mt5UpdateEndpoint}";
-input string   InpApiKey                = "${apiKey}";
+input string   InpApiKey                = "${apiKey}"; // Cheia MT5 API Personalizata (Asigura izolarea 100% per utilizator)
 input string   InpBrokerSymbol          = "";             // Custom broker symbol (e.g. EURUSD.pro, XAUUSD, NAS100, leave blank for chart symbol)
 input int      InpMagicNumber           = 26082026;       // EA Magic Number
 input int      InpCheckInterval         = 4;              // Check interval in seconds

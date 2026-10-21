@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Terminal, Copy, Check, ShieldCheck, Cpu, RefreshCw, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { X, Terminal, Copy, Check, ShieldCheck, Cpu, RefreshCw, AlertTriangle, CheckCircle2, Download, Lock } from 'lucide-react';
 import { getMql5EaCode } from '../utils/mql5Template';
 import { UserProfile } from '../types';
 
@@ -20,14 +20,14 @@ export const Mt5IntegrationModal: React.FC<Mt5IntegrationModalProps> = ({
 }) => {
   const [copiedSection, setCopiedSection] = useState<string | null>(null);
   const [apiKey, setApiKey] = useState<string>(
-    user?.mt5ApiKey || user?.apiKeys?.mt5ApiKey || 'mt5_live_token_marketai2026'
+    user?.mt5ApiKey || user?.apiKeys?.mt5ApiKey || ''
   );
   const [isRegenerating, setIsRegenerating] = useState<boolean>(false);
 
   useEffect(() => {
-    if (user?.mt5ApiKey) {
+    if (user?.mt5ApiKey && user.mt5ApiKey !== 'mt5_live_token_marketai2026') {
       setApiKey(user.mt5ApiKey);
-    } else if (user?.apiKeys?.mt5ApiKey) {
+    } else if (user?.apiKeys?.mt5ApiKey && user.apiKeys.mt5ApiKey !== 'mt5_live_token_marketai2026') {
       setApiKey(user.apiKeys.mt5ApiKey);
     }
   }, [user]);
@@ -40,12 +40,11 @@ export const Mt5IntegrationModal: React.FC<Mt5IntegrationModalProps> = ({
       })
         .then((r) => r.json())
         .then((d) => {
-          if (d.mt5ApiKey) {
-            setApiKey(d.mt5ApiKey);
-          } else if (d.user?.mt5ApiKey) {
-            setApiKey(d.user.mt5ApiKey);
-          } else if (d.apiKeys?.mt5ApiKey) {
-            setApiKey(d.apiKeys.mt5ApiKey);
+          const key = d.mt5ApiKey || d.user?.mt5ApiKey || d.apiKeys?.mt5ApiKey;
+          if (key && key !== 'mt5_live_token_marketai2026') {
+            setApiKey(key);
+          } else if (!key || key === 'mt5_live_token_marketai2026') {
+            handleRegenerateKey();
           }
         })
         .catch(() => {
@@ -80,6 +79,16 @@ export const Mt5IntegrationModal: React.FC<Mt5IntegrationModalProps> = ({
   const mt5UpdateEndpoint = `${currentOrigin}/api/mt5/update`;
 
   const mql5Code = getMql5EaCode(mt5Endpoint, mt5UpdateEndpoint, apiKey, currentOrigin);
+
+  const handleDownloadMql5 = () => {
+    const element = document.createElement('a');
+    const file = new Blob([mql5Code], { type: 'text/plain;charset=utf-8' });
+    element.href = URL.createObjectURL(file);
+    element.download = 'MarketAI_Bridge.mq5';
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
+  };
 
   const handleCopy = (text: string, section: string) => {
     navigator.clipboard.writeText(text);
@@ -126,6 +135,19 @@ export const Mt5IntegrationModal: React.FC<Mt5IntegrationModalProps> = ({
 
         {/* Content Body */}
         <div className="p-6 space-y-6 max-h-[75vh] overflow-y-auto font-sans relative z-10">
+
+          {/* Strict Account Isolation Notice */}
+          <div className="p-3.5 rounded-xl bg-indigo-950/60 border border-indigo-500/40 text-indigo-100 flex items-start gap-2.5 backdrop-blur-md">
+            <Lock className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
+            <div className="text-xs">
+              <span className="font-bold text-cyan-300 font-mono">
+                {lang === 'ro' ? '🔒 Izolare Strictă per Cont & Utilizator:' : '🔒 Strict Multi-User Account Isolation:'}
+              </span>{' '}
+              {lang === 'ro'
+                ? 'Cheia MT5 API de mai jos este unică pentru contul tău. Doar semnalele și comenzile plasate de pe contul tău sunt executate pe acest EA. Nu există amestecare de trade-uri între utilizatori diferiți.'
+                : 'The MT5 API key below is strictly unique to your account. Only signals and orders from your account are executed by this EA. No trade crossing between different user accounts.'}
+            </div>
+          </div>
 
           {/* Connected MT5 Account Status Box */}
           {user?.mt5AccountNumber ? (
@@ -300,22 +322,33 @@ export const Mt5IntegrationModal: React.FC<Mt5IntegrationModalProps> = ({
                 <Cpu className="w-4 h-4 text-cyan-400" />
                 {lang === 'ro' ? 'Cod Sursă MQL5 Actualizat v4.60 (Pro Risk Engine + Trailing Stop)' : 'Updated MQL5 Source Code v4.60 (Pro Risk Engine + Trailing Stop)'}
               </span>
-              <button
-                onClick={() => handleCopy(mql5Code, 'mql5')}
-                className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 bg-gradient-to-r from-indigo-600 via-blue-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 text-white rounded-lg transition shadow-md shadow-cyan-900/30 border border-cyan-400/30 cursor-pointer"
-              >
-                {copiedSection === 'mql5' ? (
-                  <>
-                    <Check className="w-4 h-4 text-emerald-300" />
-                    <span>{lang === 'ro' ? 'Copiat!' : 'Copied!'}</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-4 h-4" />
-                    <span>{lang === 'ro' ? 'Copiază Codul MQL5 v4.60' : 'Copy MQL5 Code v4.60'}</span>
-                  </>
-                )}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleDownloadMql5}
+                  className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition shadow-md shadow-emerald-900/30 border border-emerald-400/40 cursor-pointer"
+                  title={lang === 'ro' ? 'Descarcă direct fișierul MarketAI_Bridge.mq5 cu cheia ta inclusă' : 'Download MarketAI_Bridge.mq5 file with your personal key'}
+                >
+                  <Download className="w-4 h-4 text-emerald-200" />
+                  <span>{lang === 'ro' ? 'Descarcă .MQ5' : 'Download .MQ5'}</span>
+                </button>
+
+                <button
+                  onClick={() => handleCopy(mql5Code, 'mql5')}
+                  className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 bg-gradient-to-r from-indigo-600 via-blue-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 text-white rounded-lg transition shadow-md shadow-cyan-900/30 border border-cyan-400/30 cursor-pointer"
+                >
+                  {copiedSection === 'mql5' ? (
+                    <>
+                      <Check className="w-4 h-4 text-emerald-300" />
+                      <span>{lang === 'ro' ? 'Copiat!' : 'Copied!'}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-4 h-4" />
+                      <span>{lang === 'ro' ? 'Copiază Codul' : 'Copy Code'}</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
             <div className="bg-[#040813] text-cyan-100/90 p-4 rounded-xl font-mono text-xs overflow-x-auto max-h-64 border border-white/10 leading-relaxed shadow-inner">
               <pre>{mql5Code}</pre>

@@ -294,19 +294,26 @@ export default function App() {
     syncToCloud();
   }, [signals, manualTrades, apiKeys, deletedSignalIds, user, authToken, isCloudSynced]);
 
-  // Sync active signals to MT5 & NinjaTrader bridge server endpoints
+  // Sync active signals to MT5 & NinjaTrader bridge server endpoints (Isolated per user account)
   useEffect(() => {
     const syncToBridges = async () => {
+      if (!authToken) return;
       try {
         await Promise.all([
           fetch('/api/mt5/signals/sync', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${authToken}`,
+            },
             body: JSON.stringify({ signals }),
           }),
           fetch('/api/ninjatrader/signals/sync', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${authToken}`,
+            },
             body: JSON.stringify({ signals }),
           }),
         ]);
@@ -315,7 +322,7 @@ export default function App() {
       }
     };
     syncToBridges();
-  }, [signals]);
+  }, [signals, authToken]);
 
   const handleAuthSuccess = async (newUser: UserProfile, newAuthToken: string) => {
     setUser(newUser);
