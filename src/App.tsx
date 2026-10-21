@@ -696,6 +696,59 @@ export default function App() {
     }
   };
 
+  const handleCloseAllTrades = async () => {
+    const activeSigs = signals.filter(
+      (s) => s.outcomeStatus !== 'CANCELLED' && s.outcomeStatus !== 'SL_HIT' && s.outcomeStatus !== 'TP3_HIT'
+    );
+    if (activeSigs.length === 0) return;
+
+    const closingIds = activeSigs.map((s) => s.id);
+    const nowIso = new Date().toISOString();
+
+    setSignals((prev) =>
+      prev.map((s) => {
+        if (closingIds.includes(s.id)) {
+          const liveQ = quotes[s.instrumentId];
+          const exitPrice = liveQ && liveQ.price > 0 ? liveQ.price : (s.currentMarketPrice || s.entryPrice || 0);
+          return {
+            ...s,
+            status: 'CANCELLED',
+            outcomeStatus: 'CANCELLED',
+            cancelReasonRo: 'Închis manual din interfață (Comandă Închidere Totală)',
+            cancelReasonEn: 'Manually closed from dashboard (Close All command)',
+            closedAt: nowIso,
+            exitPrice: exitPrice,
+          };
+        }
+        return s;
+      })
+    );
+
+    const updatedDeleted = Array.from(new Set([...deletedSignalIds, ...closingIds]));
+    setDeletedSignalIds(updatedDeleted);
+    try {
+      localStorage.setItem(LOCAL_STORAGE_DELETED_SIGNALS_KEY, JSON.stringify(updatedDeleted));
+    } catch (e) {
+      console.warn('Could not save deletedSignalIds to localStorage:', e);
+    }
+
+    const token = authToken || localStorage.getItem('market_ai_auth_token');
+    if (token) {
+      try {
+        await fetch('/api/user/close-all-trades', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ signalIds: closingIds }),
+        });
+      } catch (err) {
+        console.warn('Cloud close-all-trades failed:', err);
+      }
+    }
+  };
+
   const [isConfirmDeleteModalOpen, setIsConfirmDeleteModalOpen] = useState(false);
 
   const handleDeleteAllSignals = () => {
@@ -1296,6 +1349,7 @@ export default function App() {
               onUpdateSignalOutcome={handleUpdateSignalOutcome}
               onDeleteSignal={handleDeleteSignal}
               onCloseTrade={handleCloseTrade}
+              onCloseAllTrades={handleCloseAllTrades}
               onDeleteAllSignals={handleDeleteAllSignals}
               onResetSignals={handleResetSignals}
               user={user}

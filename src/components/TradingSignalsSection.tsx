@@ -24,6 +24,7 @@ import {
   ShieldCheck,
   X,
   XCircle,
+  Ban,
 } from 'lucide-react';
 import { TradingSignal, InstrumentId, TimeFrame, UserProfile, MarketQuote } from '../types';
 import { getOutcomeBadgeDetails, getLocalizedSignalText, formatFullDateTime, getCancellationReason, calculateExecutionType, getOrCalculateVolumeProfileLevels, formatSignalPrice, calculateTradePnLMetrics } from '../utils/signalUtils';
@@ -44,6 +45,7 @@ interface TradingSignalsSectionProps {
   onUpdateSignalOutcome?: (signalId: string, outcome: 'ACTIVE' | 'TP1_HIT' | 'TP2_HIT' | 'TP3_HIT' | 'SL_HIT') => void;
   onDeleteSignal?: (signalId: string) => void;
   onCloseTrade?: (signalId: string) => void;
+  onCloseAllTrades?: () => Promise<void> | void;
   onDeleteAllSignals?: () => void;
   onResetSignals?: () => void;
   user?: UserProfile | null;
@@ -61,6 +63,7 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
   onUpdateSignalOutcome,
   onDeleteSignal,
   onCloseTrade,
+  onCloseAllTrades,
   onDeleteAllSignals,
   onResetSignals,
   user,
@@ -78,6 +81,10 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
   const [signalToClose, setSignalToClose] = useState<TradingSignal | null>(null);
   const [isClosingTrade, setIsClosingTrade] = useState<boolean>(false);
   const [closeSuccessToast, setCloseSuccessToast] = useState<string | null>(null);
+
+  // Close All Trades state
+  const [isCloseAllModalOpen, setIsCloseAllModalOpen] = useState<boolean>(false);
+  const [isClosingAllTrades, setIsClosingAllTrades] = useState<boolean>(false);
 
   const handleCloseClick = (sig: TradingSignal) => {
     setSignalToClose(sig);
@@ -1073,6 +1080,17 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
                 <span>{lang === 'ro' ? 'Șterge Tot Istoricul' : 'Clear All History'}</span>
               </button>
             )}
+
+            {onCloseAllTrades && signals.length > 0 && (
+              <button
+                onClick={() => setIsCloseAllModalOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-red-600/90 to-rose-600/90 hover:from-red-500 hover:to-rose-500 text-white font-bold text-xs shadow-md border border-red-400/40 transition cursor-pointer"
+                title={lang === 'ro' ? 'Închide toate pozițiile deschise și anulează ordinele în așteptare în MT5 și NinjaTrader' : 'Close all open positions and cancel pending orders in MT5 and NinjaTrader'}
+              >
+                <Ban className="w-3.5 h-3.5 text-white" />
+                <span>{lang === 'ro' ? 'Închide Toate Tranzacțiile' : 'Close All Trades'}</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -1104,7 +1122,13 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
                       {sig.type.replace('_', ' ')}
                     </span>
                     <span className={`px-2 py-0.5 rounded text-[10px] border whitespace-nowrap font-mono ${badge.badgeClass}`}>
-                      {badge.label}
+                      {badge.label
+                        .replace(' (În Desfășurare)', '')
+                        .replace(' (In Progress)', '')
+                        .replace(' (Ordin Neactivat)', '')
+                        .replace(' (Unfilled)', '')
+                        .replace(' (Trade Închis)', '')
+                        .replace(' (Trade Closed)', '')}
                     </span>
                   </div>
                 </div>
@@ -1356,24 +1380,49 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
                         const compactLabel = badge.label
                           .replace(' (În Desfășurare)', '')
                           .replace(' (In Progress)', '')
+                          .replace(' (Ordin Neactivat)', '')
+                          .replace(' (Unfilled)', '')
+                          .replace(' (Trade Închis)', '')
+                          .replace(' (Trade Closed)', '')
+                          .replace(' (Securizat | SL la BE)', '')
+                          .replace(' (Secured | SL at BE)', '')
+                          .replace(' (Securizat | Țintă TP3)', '')
+                          .replace(' (Secured | Target TP3)', '')
                           .replace(' (+TP1)', '')
                           .replace(' (+TP2)', '')
                           .replace(' (+TP3 Max)', '')
                           .replace(' (SL)', '');
+
+                        const fullCancelReason = getCancellationReason(sig, lang);
+                        const isManual =
+                          fullCancelReason.toLowerCase().includes('manual') ||
+                          (sig.cancelReasonRo || '').toLowerCase().includes('manual') ||
+                          (sig.cancelReasonEn || '').toLowerCase().includes('manual');
+                        const isEod =
+                          fullCancelReason.toLowerCase().includes('eod') ||
+                          fullCancelReason.toLowerCase().includes('sfârșitul zilei') ||
+                          fullCancelReason.toLowerCase().includes('end of day');
+
+                        const shortChip = isManual
+                          ? (lang === 'ro' ? 'Închis Manual' : 'Manual Close')
+                          : isEod
+                          ? (lang === 'ro' ? 'Expirat EOD' : 'Expired EOD')
+                          : (lang === 'ro' ? 'Neactivat' : 'Unfilled');
+
                         return (
-                          <div className="flex flex-col gap-0.5 max-w-[140px]">
+                          <div className="flex flex-col gap-0.5 max-w-[110px]">
                             <span
-                              className={`px-2 py-0.5 rounded text-[10.5px] border whitespace-nowrap inline-block font-mono font-bold ${badge.badgeClass}`}
+                              className={`px-1.5 py-0.5 rounded text-[10px] border whitespace-nowrap inline-block font-mono font-bold text-center ${badge.badgeClass}`}
                               title={badge.label}
                             >
                               {compactLabel}
                             </span>
                             {sig.outcomeStatus === 'CANCELLED' && (
                               <span
-                                className="text-[9px] text-slate-300 font-sans leading-tight bg-rose-950/40 px-1 py-0.5 rounded border border-rose-500/30 truncate max-w-[130px] block"
-                                title={getCancellationReason(sig, lang)}
+                                className="text-[8.5px] text-rose-300 font-mono font-semibold leading-tight bg-rose-950/60 px-1 py-0.5 rounded border border-rose-500/30 whitespace-nowrap inline-block text-center cursor-help"
+                                title={fullCancelReason}
                               >
-                                {getCancellationReason(sig, lang)}
+                                {shortChip}
                               </span>
                             )}
                           </div>
@@ -1611,6 +1660,83 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
               >
                 <X className="w-4 h-4" />
                 <span>{isClosingTrade ? (lang === 'ro' ? 'Se închide...' : 'Closing...') : (lang === 'ro' ? 'Închide Trade-ul Acum' : 'Close Trade Now')}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Confirmare Închidere Toate Tranzacțiile */}
+      {isCloseAllModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-[#0A1326]/95 border border-rose-500/40 rounded-2xl max-w-md w-full p-6 shadow-2xl relative space-y-4 backdrop-blur-xl">
+            <button
+              onClick={() => setIsCloseAllModalOpen(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg transition cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-3">
+              <div className="p-3 rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/30">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">
+                  {lang === 'ro' ? 'Închide Toate Tranzacțiile' : 'Close All Trades'}
+                </h3>
+                <p className="text-xs text-rose-400 font-mono mt-0.5">
+                  {lang === 'ro' ? 'Comandă de Stop & Anulare MT5 & NinjaTrader' : 'Stop & Cancel Command for MT5 & NinjaTrader'}
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-rose-950/40 border border-rose-500/30 text-xs text-slate-300 leading-relaxed">
+              <p>
+                {lang === 'ro'
+                  ? 'Ești sigur că dorești să închizi TOATE tranzacțiile active și să ștergi toate ordinele în așteptare? Această comandă se va transmite instant către MetaTrader 5 (MT5 EA) și NinjaTrader 8 pentru a închide pozițiile și anula ordinele.'
+                  : 'Are you sure you want to CLOSE ALL active trades and cancel all pending orders? This command will be sent immediately to MetaTrader 5 (MT5 EA) and NinjaTrader 8 to close positions and cancel pending orders.'}
+              </p>
+            </div>
+
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsCloseAllModalOpen(false)}
+                className="flex-1 py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 font-bold text-xs border border-slate-700 transition cursor-pointer text-center"
+              >
+                {lang === 'ro' ? 'Anulează' : 'Cancel'}
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  setIsClosingAllTrades(true);
+                  try {
+                    if (onCloseAllTrades) {
+                      await onCloseAllTrades();
+                    }
+                    setCloseSuccessToast(
+                      lang === 'ro'
+                        ? 'Toate tranzacțiile au fost închise! Comenzile au fost transmise către MT5 și NinjaTrader.'
+                        : 'All trades have been closed! Orders have been sent to MT5 and NinjaTrader.'
+                    );
+                    setTimeout(() => setCloseSuccessToast(null), 4000);
+                  } catch (e) {
+                    console.error('Error closing all trades:', e);
+                  } finally {
+                    setIsClosingAllTrades(false);
+                    setIsCloseAllModalOpen(false);
+                  }
+                }}
+                disabled={isClosingAllTrades}
+                className="flex-1 py-2.5 px-4 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white font-bold text-xs border border-red-400/30 shadow-lg shadow-red-600/30 transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <Ban className="w-4 h-4" />
+                <span>
+                  {isClosingAllTrades
+                    ? (lang === 'ro' ? 'Se închide...' : 'Closing...')
+                    : (lang === 'ro' ? 'Da, Închide Toate' : 'Yes, Close All')}
+                </span>
               </button>
             </div>
           </div>

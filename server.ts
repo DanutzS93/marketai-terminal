@@ -64,6 +64,10 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8000;
 
+// Global signals and cancellation tracking for bridge endpoints
+let serverActiveSignals: any[] = [];
+const serverCancelledSignalIds = new Set<string>();
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
@@ -520,6 +524,7 @@ app.post('/api/user/close-trade', async (req, res) => {
   if (!user.deletedSignalIds.includes(signalId)) {
     user.deletedSignalIds.push(signalId);
   }
+  serverCancelledSignalIds.add(String(signalId));
 
   // Update signal outcome to CANCELLED / CLOSED with manual close reason
   if (Array.isArray(user.signals)) {
@@ -556,6 +561,70 @@ app.post('/api/user/close-trade', async (req, res) => {
   await saveUsersDb(users, user.id);
 
   return res.json({ success: true, closedSignalId: signalId, deletedSignalIds: user.deletedSignalIds });
+});
+
+app.post('/api/user/close-all-trades', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.replace('Bearer ', '').trim();
+  if (!token) return res.status(401).json({ error: 'Neautorizat' });
+
+  const { signalIds } = req.body;
+  const users = loadUsersDb();
+  const user = Object.values(users).find((u) => u.token === token);
+  if (!user) return res.status(401).json({ error: 'Sesiune nevalidă.' });
+
+  if (!user.deletedSignalIds) user.deletedSignalIds = [];
+
+  const targetIds: string[] = Array.isArray(signalIds) && signalIds.length > 0
+    ? signalIds.map(String)
+    : (user.signals || [])
+        .filter((s: any) => s && s.outcomeStatus !== 'CANCELLED' && s.outcomeStatus !== 'SL_HIT' && s.outcomeStatus !== 'TP3_HIT')
+        .map((s: any) => String(s.id));
+
+  // Add all target IDs to deletedSignalIds and global serverCancelledSignalIds
+  for (const id of targetIds) {
+    if (!user.deletedSignalIds.includes(id)) {
+      user.deletedSignalIds.push(id);
+    }
+    serverCancelledSignalIds.add(id);
+  }
+  // Also add CLOSE_ALL indicator so connected MT5 / NT8 bridges immediately close and cancel everything
+  serverCancelledSignalIds.add('CLOSE_ALL');
+
+  const nowIso = new Date().toISOString();
+  if (Array.isArray(user.signals)) {
+    user.signals = user.signals.map((s) => {
+      if (targetIds.includes(String(s.id))) {
+        return {
+          ...s,
+          status: 'CANCELLED',
+          outcomeStatus: 'CANCELLED',
+          cancelReasonRo: 'Închis manual din interfață (Comandă Închidere Totală)',
+          cancelReasonEn: 'Manually closed from dashboard (Close All command)',
+          closedAt: nowIso,
+        };
+      }
+      return s;
+    });
+  }
+
+  serverActiveSignals = serverActiveSignals.map((s) => {
+    if (targetIds.includes(String(s.id))) {
+      return {
+        ...s,
+        status: 'CANCELLED',
+        outcomeStatus: 'CANCELLED',
+        cancelReasonRo: 'Închis manual din interfață (Comandă Închidere Totală)',
+        cancelReasonEn: 'Manually closed from dashboard (Close All command)',
+        closedAt: nowIso,
+      };
+    }
+    return s;
+  });
+
+  await saveUsersDb(users, user.id);
+
+  return res.json({ success: true, closedCount: targetIds.length, deletedSignalIds: user.deletedSignalIds });
 });
 
 // Admin CRM Helper
@@ -5384,7 +5453,7 @@ function resolveUserByMt5Token(token: string | null): { user: StoredUser | null;
 }
 
 // MetaTrader 5 Bridge Endpoint for EA integration (User-Specific)
-let serverActiveSignals: any[] = [];
+// Note: serverActiveSignals declared at top of file
 
 // Helper to map instrument ID to MT5 symbol
 function mapToMt5Symbol(instrumentId: string): string {
@@ -5560,7 +5629,11 @@ app.get('/api/mt5/signals', (req, res) => {
 
   const userDeletedIds = (matchedUser?.deletedSignalIds || []).map((id) => String(id));
   const cancelledSignals = targetSignals.filter((s) => s.status === 'CANCELLED' || s.status === 'CANCELED' || s.outcomeStatus === 'CANCELLED');
-  const cancelledIds = Array.from(new Set([...cancelledSignals.map((s) => String(s.id)).filter(Boolean), ...userDeletedIds]));
+  const cancelledIds = Array.from(new Set([
+    ...cancelledSignals.map((s) => String(s.id)).filter(Boolean),
+    ...userDeletedIds,
+    ...Array.from(serverCancelledSignalIds),
+  ]));
   const placedIds = Array.from(processedSet);
 
   const userRisk = matchedUser?.riskSettings || {};
@@ -5956,7 +6029,11 @@ app.get(['/api/ninjatrader/signals', '/api/nt8/signals'], (req, res) => {
     activeSignalsCount: formattedSignals.length,
     signals: formattedSignals,
     placed_ids: Array.from(processedIds),
-    cancelled_ids: Array.from(deletedIds),
+    cancelled_ids: Array.from(new Set([
+      ...Array.from(deletedIds),
+      ...rawSignals.filter((s: any) => s.status === 'CANCELLED' || s.outcomeStatus === 'CANCELLED').map((s: any) => String(s.id)),
+      ...Array.from(serverCancelledSignalIds),
+    ])),
     riskRules: matchedUser.riskSettings || {},
   });
 });
