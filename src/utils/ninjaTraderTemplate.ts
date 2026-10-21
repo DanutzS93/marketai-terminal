@@ -396,9 +396,11 @@ namespace NinjaTrader.NinjaScript.Strategies
             if ((chartInst.Contains("ES") || chartInst.Contains("MES")) && (sig.Contains("SP500") || sig.Contains("US500") || sig.Contains("ES") || sig.Contains("SPX")))
                 return true;
 
-            // Gold mapping
-            if ((chartInst.Contains("GC") || chartInst.Contains("MGC")) && (sig.Contains("GOLD") || sig.Contains("XAU") || sig.Contains("GC")))
-                return true;
+            // Gold mapping - Strictly separate Gold Futures (GC/MGC) from Gold Spot (XAUUSD)
+            bool sigIsGoldFutures = sig.Contains("GC") || sig.Contains("GOLD.F") || sig.Contains("MGC");
+            bool chartIsGoldFutures = chartInst.Contains("GC") || chartInst.Contains("MGC");
+            if (sigIsGoldFutures) return chartIsGoldFutures;
+            if (sig.Contains("GOLD") || sig.Contains("XAU")) return (!chartIsGoldFutures && (chartInst.Contains("XAU") || chartInst.Contains("GOLD")));
 
             // Forex mapping
             if (chartInst.Contains("6E") && sig.Contains("EURUSD")) return true;

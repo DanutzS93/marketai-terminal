@@ -123,6 +123,24 @@ bool DoSymbolsMatch(string chartSym, string sigSym)
    StringToUpper(c);
    StringToUpper(s);
    
+   // --- STRICT SEPARATION: GOLD SPOT (XAUUSD) vs GOLD FUTURES (GC.F) ---
+   bool sigIsGoldFutures = (StringFind(s, "GC") != -1 || StringFind(s, "GOLD.F") != -1 || StringFind(s, "GC.F") != -1 || StringFind(s, "GC_F") != -1 || StringFind(s, "MGC") != -1);
+   bool chartIsGoldFutures = (StringFind(c, "GC") != -1 || StringFind(c, "GOLD.F") != -1 || StringFind(c, "GC.F") != -1 || StringFind(c, "GC_F") != -1 || StringFind(c, "MGC") != -1);
+
+   bool sigIsGoldSpot = (!sigIsGoldFutures && (StringFind(s, "XAU") != -1 || StringFind(s, "GOLD") != -1));
+   bool chartIsGoldSpot = (!chartIsGoldFutures && (StringFind(c, "XAU") != -1 || StringFind(c, "GOLD") != -1));
+
+   if(sigIsGoldFutures)
+   {
+      // If signal is for Gold Futures, it MUST only match a Gold Futures chart/symbol
+      return chartIsGoldFutures;
+   }
+   if(sigIsGoldSpot)
+   {
+      // If signal is for Gold Spot, it MUST only match a Gold Spot chart/symbol
+      return chartIsGoldSpot;
+   }
+
    if(c == s || StringFind(c, s) != -1 || StringFind(s, c) != -1) return true;
    
    // Forex Pairs Matching
@@ -137,7 +155,6 @@ bool DoSymbolsMatch(string chartSym, string sigSym)
    if((StringFind(s, "NAS") != -1 || StringFind(s, "NQ") != -1) && (StringFind(c, "NAS") != -1 || StringFind(c, "US100") != -1 || StringFind(c, "USTEC") != -1 || StringFind(c, "NQ") != -1)) return true;
    if((StringFind(s, "US30") != -1 || StringFind(s, "DOW") != -1) && (StringFind(c, "US30") != -1 || StringFind(c, "DJ30") != -1 || StringFind(c, "WS30") != -1 || StringFind(c, "DOW") != -1)) return true;
    if((StringFind(s, "SPX") != -1 || StringFind(s, "US500") != -1 || StringFind(s, "SP500") != -1 || StringFind(s, "ES") != -1) && (StringFind(c, "SPX") != -1 || StringFind(c, "US500") != -1 || StringFind(c, "SP500") != -1 || StringFind(c, "ES") != -1)) return true;
-   if((StringFind(s, "GOLD") != -1 || StringFind(s, "XAU") != -1 || StringFind(s, "GC") != -1) && (StringFind(c, "XAU") != -1 || StringFind(c, "GOLD") != -1 || StringFind(c, "GC") != -1)) return true;
    
    return false;
 }

@@ -5476,13 +5476,58 @@ function mapToMt5Symbol(instrumentId: string): string {
   }
 }
 
+function isGoldFutures(sym: string): boolean {
+  if (!sym) return false;
+  const upper = sym.toUpperCase().trim();
+  const clean = upper.replace(/[^A-Z0-9]/g, '');
+  return (
+    upper.includes('GC.F') ||
+    upper.includes('GC_F') ||
+    upper.includes('GOLD.F') ||
+    clean.startsWith('GC') ||
+    clean.startsWith('MGC') ||
+    clean === 'GCF' ||
+    clean.includes('GOLDF')
+  );
+}
+
+function isGoldSpot(sym: string): boolean {
+  if (!sym) return false;
+  if (isGoldFutures(sym)) return false;
+  const upper = sym.toUpperCase().trim();
+  const clean = upper.replace(/[^A-Z0-9]/g, '');
+  return clean.includes('XAU') || clean.startsWith('GOLD');
+}
+
 function symbolsMatch(instrumentId: string, signalSymbol: string, brokerSymbol: string): boolean {
   if (!brokerSymbol || brokerSymbol === 'ALL' || brokerSymbol.trim() === '') return true;
   const b = brokerSymbol.toUpperCase().replace(/[^A-Z0-9]/g, '');
   const i = (instrumentId || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
   const s = (signalSymbol || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+  // 1. STRICT SEPARATION: Gold Spot (XAUUSD) vs Gold Futures (GC.F)
+  const sigIsGcFutures = isGoldFutures(instrumentId) || isGoldFutures(signalSymbol);
+  const sigIsGcSpot = isGoldSpot(instrumentId) || isGoldSpot(signalSymbol);
+  const brokerIsGcFutures = isGoldFutures(brokerSymbol);
+  const brokerIsGcSpot = isGoldSpot(brokerSymbol);
+
+  if (sigIsGcFutures) {
+    // If the signal is for Gold Futures, it MUST only match a Gold Futures chart/symbol
+    return brokerIsGcFutures;
+  }
+  if (sigIsGcSpot) {
+    // If the signal is for Gold Spot, it MUST only match a Gold Spot chart/symbol
+    return brokerIsGcSpot;
+  }
   
-  if (b === i || b === s || b.includes(i) || i.includes(b) || (s && (b.includes(s) || s.includes(b)))) {
+  // Exact or direct match (non-Gold)
+  if (b === i || b === s) {
+    return true;
+  }
+  if ((b.includes(i) || i.includes(b)) && !i.includes('GOLD') && !i.includes('GC')) {
+    return true;
+  }
+  if (s && (b.includes(s) || s.includes(b)) && !s.includes('GOLD') && !s.includes('GC')) {
     return true;
   }
   
@@ -5495,9 +5540,6 @@ function symbolsMatch(instrumentId: string, signalSymbol: string, brokerSymbol: 
   if ((i.includes('DOW') || i.includes('US30')) && (b.includes('DJ30') || b.includes('US30') || b.includes('DOW') || b.includes('WS30'))) {
     return true;
   }
-  if ((i.includes('GOLD') || i.includes('XAU')) && (b.includes('XAU') || b.includes('GOLD'))) {
-    return true;
-  }
   if ((i.includes('NASDAQ') || i.includes('NAS') || i.includes('US100')) && (b.includes('NAS') || b.includes('NDX') || b.includes('US100') || b.includes('USTEC'))) {
     return true;
   }
@@ -5506,7 +5548,6 @@ function symbolsMatch(instrumentId: string, signalSymbol: string, brokerSymbol: 
   }
   if (i.includes('NQ') && (b.includes('NQ') || b.includes('NAS'))) return true;
   if (i.includes('ES') && (b.includes('ES') || b.includes('SPX') || b.includes('500'))) return true;
-  if (i.includes('GC') && (b.includes('GC') || b.includes('XAU') || b.includes('GOLD'))) return true;
 
   return false;
 }
