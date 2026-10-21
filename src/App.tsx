@@ -1331,6 +1331,8 @@ export default function App() {
               quotes={quotes}
               selectedInstrument={selectedInstrument}
               onSelectInstrument={setSelectedInstrument}
+              signals={signals}
+              onOpenCalcModal={() => setIsCalcModalOpen(true)}
               lang={lang}
               onGenerateSignal={handleGenerateSignal}
               onNavigateToSignals={() => setActiveTab('signals')}
