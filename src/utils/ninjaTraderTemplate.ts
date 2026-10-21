@@ -388,23 +388,27 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             if (chartInst == sig) return true;
 
-            // Nasdaq mapping
-            if ((chartInst.Contains("NQ") || chartInst.Contains("MNQ")) && (sig.Contains("NAS") || sig.Contains("NQ") || sig.Contains("US100")))
-                return true;
-
-            // Dow Jones mapping
-            if ((chartInst.Contains("YM") || chartInst.Contains("MYM")) && (sig.Contains("DOW") || sig.Contains("US30") || sig.Contains("YM") || sig.Contains("DJ30")))
-                return true;
-
-            // S&P 500 mapping
-            if ((chartInst.Contains("ES") || chartInst.Contains("MES")) && (sig.Contains("SP500") || sig.Contains("US500") || sig.Contains("ES") || sig.Contains("SPX")))
-                return true;
-
             // Gold mapping - Strictly separate Gold Futures (GC/MGC) from Gold Spot (XAUUSD)
             bool sigIsGoldFutures = sig.Contains("GC") || sig.Contains("GOLD.F") || sig.Contains("MGC");
             bool chartIsGoldFutures = chartInst.Contains("GC") || chartInst.Contains("MGC");
             if (sigIsGoldFutures) return chartIsGoldFutures;
             if (sig.Contains("GOLD") || sig.Contains("XAU")) return (!chartIsGoldFutures && (chartInst.Contains("XAU") || chartInst.Contains("GOLD")));
+
+            // Nasdaq mapping - Strictly separate Nasdaq Futures (NQ/MNQ) from Nasdaq Spot (NAS100/US100)
+            bool sigIsNasFutures = sig.Contains("NQ") || sig.Contains("NAS.F") || sig.Contains("NAS100.F") || sig.Contains("MNQ");
+            bool chartIsNasFutures = chartInst.Contains("NQ") || chartInst.Contains("MNQ");
+            if (sigIsNasFutures) return chartIsNasFutures;
+            if (sig.Contains("NAS") || sig.Contains("US100") || sig.Contains("USTEC")) return (!chartIsNasFutures && (chartInst.Contains("NAS") || chartInst.Contains("US100")));
+
+            // S&P 500 mapping - Strictly separate S&P 500 Futures (ES/MES) from S&P 500 Spot (SPX/US500)
+            bool sigIsSpxFutures = sig.Contains("ES") || sig.Contains("SPX.F") || sig.Contains("US500.F") || sig.Contains("MES");
+            bool chartIsSpxFutures = chartInst.Contains("ES") || chartInst.Contains("MES");
+            if (sigIsSpxFutures) return chartIsSpxFutures;
+            if (sig.Contains("SP500") || sig.Contains("US500") || sig.Contains("SPX")) return (!chartIsSpxFutures && (chartInst.Contains("SP500") || chartInst.Contains("US500") || chartInst.Contains("SPX")));
+
+            // Dow Jones mapping
+            if ((chartInst.Contains("YM") || chartInst.Contains("MYM")) && (sig.Contains("DOW") || sig.Contains("US30") || sig.Contains("YM") || sig.Contains("DJ30")))
+                return true;
 
             // Forex mapping
             if (chartInst.Contains("6E") && sig.Contains("EURUSD")) return true;
