@@ -1332,6 +1332,9 @@ export default function App() {
               selectedInstrument={selectedInstrument}
               onSelectInstrument={setSelectedInstrument}
               lang={lang}
+              onGenerateSignal={handleGenerateSignal}
+              onNavigateToSignals={() => setActiveTab('signals')}
+              isGeneratingSignal={isGeneratingSignal}
             />
           </div>
         )}

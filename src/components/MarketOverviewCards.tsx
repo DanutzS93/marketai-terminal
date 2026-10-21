@@ -1,12 +1,34 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { TrendingUp, TrendingDown, Minus, ChevronRight, Cpu, DollarSign, Database, CheckCircle2, Activity, Gauge, Info } from 'lucide-react';
-import { MarketQuote, InstrumentId } from '../types';
+import {
+  TrendingUp,
+  TrendingDown,
+  Minus,
+  ChevronRight,
+  Cpu,
+  DollarSign,
+  Database,
+  CheckCircle2,
+  Activity,
+  Gauge,
+  Info,
+  Zap,
+  BarChart2,
+  X,
+  Maximize2,
+  Sparkles,
+  RefreshCw,
+} from 'lucide-react';
+import { MarketQuote, InstrumentId, TimeFrame } from '../types';
+import { TradingViewWidgetContainer } from './TradingViewWidgetContainer';
 
 interface MarketOverviewCardsProps {
   quotes: Record<InstrumentId, MarketQuote>;
   selectedInstrument: InstrumentId;
   onSelectInstrument: (id: InstrumentId) => void;
   lang: 'ro' | 'en';
+  onGenerateSignal?: (instrumentId: InstrumentId, timeframe: TimeFrame, strategy: string) => Promise<void>;
+  onNavigateToSignals?: () => void;
+  isGeneratingSignal?: boolean;
 }
 
 function formatMacdNumber(val: number): string {
@@ -192,12 +214,86 @@ function getMacdState(
   };
 }
 
+function calculateKeyZones(quote: MarketQuote, id: InstrumentId): {
+  support: string;
+  resistance: string;
+  pivot: string;
+} {
+  const price = quote?.price || 0;
+  if (!price || isNaN(price) || price <= 0) {
+    return { support: '-', resistance: '-', pivot: '-' };
+  }
+
+  const high = quote.high > 0 ? quote.high : price * 1.004;
+  const low = quote.low > 0 ? quote.low : price * 0.996;
+  const close = price;
+
+  // Classical Institutional Session Pivot Point
+  let pivot = (high + low + close) / 3;
+
+  // Key Resistance (Pool Lichiditate Vanzare)
+  let resistance = 2 * pivot - low;
+  if (resistance <= price) {
+    resistance = Math.max(high, price * 1.0045);
+  }
+
+  // Key Support (Zona FVG Demand)
+  let support = 2 * pivot - high;
+  if (support >= price) {
+    support = Math.min(low, price * 0.9955);
+  }
+
+  if (support >= pivot) support = pivot * 0.996;
+  if (resistance <= pivot) resistance = pivot * 1.004;
+
+  const formatPrice = (val: number): string => {
+    if (id === 'EURUSD' || id === 'GBPUSD') {
+      return val.toFixed(5);
+    }
+    if (id === 'USDJPY') {
+      return val.toFixed(3);
+    }
+    return val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+
+  return {
+    support: formatPrice(support),
+    resistance: formatPrice(resistance),
+    pivot: formatPrice(pivot),
+  };
+}
+
 export const MarketOverviewCards: React.FC<MarketOverviewCardsProps> = ({
   quotes,
   selectedInstrument,
   onSelectInstrument,
   lang,
+  onGenerateSignal,
+  onNavigateToSignals,
+  isGeneratingSignal,
 }) => {
+  const [chartModalInstrument, setChartModalInstrument] = useState<InstrumentId | null>(null);
+  const [generatingInstrument, setGeneratingInstrument] = useState<InstrumentId | null>(null);
+
+  const handleGenerateSignalForCard = async (id: InstrumentId) => {
+    onSelectInstrument(id);
+    if (onGenerateSignal) {
+      setGeneratingInstrument(id);
+      try {
+        await onGenerateSignal(id, '15m', 'SMC Order Block & FVG Pullback');
+        if (onNavigateToSignals) {
+          onNavigateToSignals();
+        }
+      } catch (err) {
+        console.error('Signal generation error for card:', err);
+      } finally {
+        setGeneratingInstrument(null);
+      }
+    } else if (onNavigateToSignals) {
+      onNavigateToSignals();
+    }
+  };
+
   // Flash indicators on live price tick update
   const prevPricesRef = useRef<Record<string, number>>({});
   const [priceFlashes, setPriceFlashes] = useState<Record<string, 'up' | 'down'>>({});
@@ -328,6 +424,8 @@ export const MarketOverviewCards: React.FC<MarketOverviewCardsProps> = ({
         : id === 'USDJPY'
         ? `${quote.price.toFixed(3)}`
         : `$${quote.price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+    const keyZones = calculateKeyZones(quote, id);
 
     const flashCardClass = flash === 'up'
       ? 'ring-2 ring-emerald-400/80 border-emerald-400/60 shadow-[0_0_25px_rgba(16,185,129,0.35)] scale-[1.01]'
@@ -598,8 +696,103 @@ export const MarketOverviewCards: React.FC<MarketOverviewCardsProps> = ({
           </div>
         </div>
 
+        {/* ZONE CHEIE STRUCTURALE (S/R & FVG) */}
+        <div className="bg-[#070D1C]/90 p-3 rounded-xl border border-white/10 space-y-2.5 backdrop-blur-md mb-3">
+          {/* Section Header */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm">🎯</span>
+              <span className="text-[11px] font-bold tracking-wider text-slate-300 uppercase font-mono">
+                {lang === 'ro' ? 'ZONE CHEIE STRUCTURALE' : 'KEY STRUCTURAL ZONES'}
+              </span>
+            </div>
+            <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-900/90 text-slate-400 border border-white/10">
+              S/R & FVG
+            </span>
+          </div>
+
+          {/* 3 Zone Cards */}
+          <div className="grid grid-cols-3 gap-2">
+            {/* Suport Cheie */}
+            <div className="p-2 sm:p-2.5 rounded-xl bg-[#061514]/85 border border-emerald-500/35 flex flex-col justify-between">
+              <span className="text-[9px] font-bold font-mono uppercase text-slate-400 tracking-wider">
+                {lang === 'ro' ? 'SUPORT CHEIE' : 'KEY SUPPORT'}
+              </span>
+              <span className="text-xs sm:text-sm font-bold font-mono text-emerald-400 my-0.5 truncate">
+                {keyZones.support}
+              </span>
+              <span className="text-[9px] text-slate-400 font-medium truncate">
+                {lang === 'ro' ? 'Zona FVG Demand' : 'FVG Demand Zone'}
+              </span>
+            </div>
+
+            {/* Rezistență Cheie */}
+            <div className="p-2 sm:p-2.5 rounded-xl bg-[#170912]/85 border border-rose-500/35 flex flex-col justify-between">
+              <span className="text-[9px] font-bold font-mono uppercase text-slate-400 tracking-wider">
+                {lang === 'ro' ? 'REZISTENȚĂ CHEIE' : 'KEY RESISTANCE'}
+              </span>
+              <span className="text-xs sm:text-sm font-bold font-mono text-rose-400 my-0.5 truncate">
+                {keyZones.resistance}
+              </span>
+              <span className="text-[9px] text-slate-400 font-medium truncate">
+                {lang === 'ro' ? 'Pool Lichiditate Vânzare' : 'Sell Liquidity Pool'}
+              </span>
+            </div>
+
+            {/* Pivot Instituțional */}
+            <div className="p-2 sm:p-2.5 rounded-xl bg-[#17130A]/85 border border-amber-500/35 flex flex-col justify-between">
+              <span className="text-[9px] font-bold font-mono uppercase text-slate-400 tracking-wider">
+                {lang === 'ro' ? 'PIVOT INSTITUȚIONAL' : 'INSTITUTIONAL PIVOT'}
+              </span>
+              <span className="text-xs sm:text-sm font-bold font-mono text-slate-100 my-0.5 truncate">
+                {keyZones.pivot}
+              </span>
+              <span className="text-[9px] text-slate-400 font-medium truncate">
+                {lang === 'ro' ? 'Echilibru Sesiune' : 'Session Equilibrium'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Action Buttons Row */}
+        <div className="grid grid-cols-2 gap-2 mb-2">
+          <button
+            type="button"
+            disabled={generatingInstrument === id}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleGenerateSignalForCard(id);
+            }}
+            className="w-full py-2.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 active:scale-95 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-blue-600/30 transition cursor-pointer disabled:opacity-60"
+          >
+            {generatingInstrument === id ? (
+              <>
+                <RefreshCw className="w-3.5 h-3.5 animate-spin text-white" />
+                <span className="truncate">{lang === 'ro' ? 'Generare...' : 'Generating...'}</span>
+              </>
+            ) : (
+              <>
+                <Zap className="w-3.5 h-3.5 fill-amber-300 text-amber-300 shrink-0" />
+                <span className="truncate">{lang === 'ro' ? 'Generează Semnal AI' : 'Generate AI Signal'}</span>
+              </>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setChartModalInstrument(id);
+            }}
+            className="w-full py-2.5 px-3 rounded-xl bg-[#0D1528] hover:bg-[#13203C] active:scale-95 text-slate-200 hover:text-white border border-slate-700/80 hover:border-slate-600 font-bold text-xs flex items-center justify-center gap-1.5 shadow-md transition cursor-pointer"
+          >
+            <BarChart2 className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+            <span className="truncate">TradingView Chart</span>
+          </button>
+        </div>
+
         {/* Selection Prompt Footer */}
-        <div className="mt-2 flex items-center justify-between text-xs text-slate-400 pt-2.5 border-t border-white/10">
+        <div className="mt-1 flex items-center justify-between text-xs text-slate-400 pt-2 border-t border-white/10">
           <span className="flex items-center gap-1.5 font-medium">
             <CheckCircle2 className={`w-3.5 h-3.5 ${isSelected ? 'text-cyan-400' : 'text-slate-500'}`} />
             {isSelected ? (lang === 'ro' ? 'Activ pentru Analiză AI' : 'Active for AI Analysis') : (lang === 'ro' ? 'Apasă pentru selectare' : 'Click to select')}
@@ -684,6 +877,69 @@ export const MarketOverviewCards: React.FC<MarketOverviewCardsProps> = ({
           {forexInstruments.map(renderCard)}
         </div>
       </div>
+
+      {/* TradingView Interactive Chart Modal */}
+      {chartModalInstrument && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="w-full max-w-6xl max-h-[94vh] bg-[#0A1020] border border-indigo-500/30 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+            {/* Modal Header */}
+            <div className="px-5 py-3.5 bg-[#0F172A] border-b border-slate-800 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 shrink-0">
+                  <BarChart2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-sm sm:text-base text-white font-mono">
+                      {quotes[chartModalInstrument]?.name || chartModalInstrument}
+                    </h3>
+                    <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-indigo-900/60 border border-indigo-500/40 text-indigo-200">
+                      {quotes[chartModalInstrument]?.symbol || chartModalInstrument}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400">
+                    {lang === 'ro' ? 'Grafic Tehnic Live TradingView & Indicatori de Putere' : 'TradingView Live Chart & Technical Strength Gauge'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {onGenerateSignal && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const inst = chartModalInstrument;
+                      setChartModalInstrument(null);
+                      handleGenerateSignalForCard(inst);
+                    }}
+                    className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs transition shadow-md cursor-pointer"
+                  >
+                    <Zap className="w-3.5 h-3.5 fill-amber-300 text-amber-300" />
+                    <span>{lang === 'ro' ? 'Generează Semnal' : 'Generate Signal'}</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setChartModalInstrument(null)}
+                  className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+                  title={lang === 'ro' ? 'Închide' : 'Close'}
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body: TradingView widget */}
+            <div className="flex-1 overflow-y-auto">
+              <TradingViewWidgetContainer
+                selectedInstrument={chartModalInstrument}
+                onSelectInstrument={(newId) => setChartModalInstrument(newId)}
+                lang={lang}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
