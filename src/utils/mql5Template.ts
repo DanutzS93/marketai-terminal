@@ -851,8 +851,20 @@ void FetchAndExecuteSignals()
          SetupTradeFillingMode(targetSymbol);
          int digits = (int)SymbolInfoInteger(targetSymbol, SYMBOL_DIGITS);
          double point = SymbolInfoDouble(targetSymbol, SYMBOL_POINT);
+         double tickSize = SymbolInfoDouble(targetSymbol, SYMBOL_TRADE_TICK_SIZE);
+         if(tickSize <= 0) tickSize = point;
+
          double ask = SymbolInfoDouble(targetSymbol, SYMBOL_ASK);
          double bid = SymbolInfoDouble(targetSymbol, SYMBOL_BID);
+
+         int stopsLevel = (int)SymbolInfoInteger(targetSymbol, SYMBOL_TRADE_STOPS_LEVEL);
+         int freezeLevel = (int)SymbolInfoInteger(targetSymbol, SYMBOL_TRADE_FREEZE_LEVEL);
+         int spread = (int)SymbolInfoInteger(targetSymbol, SYMBOL_SPREAD);
+
+         // Minimum safe distance required by broker in price points (plus 3 points safety buffer)
+         double rawMinPoints = MathMax((double)stopsLevel, MathMax((double)freezeLevel, (double)spread));
+         if(rawMinPoints < 10.0) rawMinPoints = 10.0;
+         double minDistance = (rawMinPoints + 3.0) * point;
          
          double entry = NormalizeDouble(StringToDouble(ExtractJsonValue(sigJson, "entry")), digits);
          double sl    = NormalizeDouble(StringToDouble(ExtractJsonValue(sigJson, "sl")), digits);
@@ -882,6 +894,105 @@ void FetchAndExecuteSignals()
             if(tp1 <= 0) tp1 = NormalizeDouble(bid - 200 * point, digits);
             if(tp2 <= 0) tp2 = NormalizeDouble(bid - 400 * point, digits);
          }
+
+         // Validate and auto-adjust pending orders if market price has already crossed the level
+         string orderExecAction = action;
+         if(StringFind(action, "BUY_LIMIT") != -1)
+         {
+            if(entry <= 0 || entry >= (bid - minDistance))
+            {
+               orderExecAction = "BUY";
+               entry = 0.0;
+            }
+         }
+         else if(StringFind(action, "SELL_LIMIT") != -1)
+         {
+            if(entry <= 0 || entry <= (ask + minDistance))
+            {
+               orderExecAction = "SELL";
+               entry = 0.0;
+            }
+         }
+         else if(StringFind(action, "BUY_STOP") != -1)
+         {
+            if(entry <= 0 || entry <= (ask + minDistance))
+            {
+               orderExecAction = "BUY";
+               entry = 0.0;
+            }
+         }
+         else if(StringFind(action, "SELL_STOP") != -1)
+         {
+            if(entry <= 0 || entry >= (bid - minDistance))
+            {
+               orderExecAction = "SELL";
+               entry = 0.0;
+            }
+         }
+
+         // Ensure SL & TP strictly comply with broker minimum distance
+         if(entry > 0.0)
+         {
+            // Pending orders: distance relative to entry price
+            if(!isSell)
+            {
+               double maxAllowedSL = NormalizeDouble(entry - minDistance, digits);
+               if(sl >= maxAllowedSL) sl = maxAllowedSL;
+
+               double minAllowedTP = NormalizeDouble(entry + minDistance, digits);
+               if(tp3 <= minAllowedTP) tp3 = minAllowedTP;
+            }
+            else
+            {
+               double minAllowedSL = NormalizeDouble(entry + minDistance, digits);
+               if(sl <= minAllowedSL) sl = minAllowedSL;
+
+               double maxAllowedTP = NormalizeDouble(entry - minDistance, digits);
+               if(tp3 >= maxAllowedTP) tp3 = maxAllowedTP;
+            }
+         }
+         else
+         {
+            // Market orders: In MT5, BUY SL is checked against Bid, SELL SL against Ask
+            if(!isSell)
+            {
+               double maxAllowedSL = NormalizeDouble(bid - minDistance, digits);
+               if(sl >= maxAllowedSL) sl = maxAllowedSL;
+
+               double minAllowedTP = NormalizeDouble(ask + minDistance, digits);
+               if(tp3 <= minAllowedTP) tp3 = minAllowedTP;
+            }
+            else
+            {
+               double minAllowedSL = NormalizeDouble(ask + minDistance, digits);
+               if(sl <= minAllowedSL) sl = minAllowedSL;
+
+               double maxAllowedTP = NormalizeDouble(bid - minDistance, digits);
+               if(tp3 >= maxAllowedTP) tp3 = maxAllowedTP;
+            }
+         }
+
+         // Align all levels to broker tick size without stepping inside the forbidden stop zone
+         if(tickSize > 0)
+         {
+            if(entry > 0) entry = NormalizeDouble(MathRound(entry / tickSize) * tickSize, digits);
+            if(sl > 0)
+            {
+               if(!isSell)
+                  sl = NormalizeDouble(MathFloor(sl / tickSize) * tickSize, digits);
+               else
+                  sl = NormalizeDouble(MathCeil(sl / tickSize) * tickSize, digits);
+            }
+            if(tp3 > 0)
+            {
+               if(!isSell)
+                  tp3 = NormalizeDouble(MathCeil(tp3 / tickSize) * tickSize, digits);
+               else
+                  tp3 = NormalizeDouble(MathFloor(tp3 / tickSize) * tickSize, digits);
+            }
+            if(tp1 > 0)   tp1   = NormalizeDouble(MathRound(tp1 / tickSize) * tickSize, digits);
+            if(tp2 > 0)   tp2   = NormalizeDouble(MathRound(tp2 / tickSize) * tickSize, digits);
+         }
          
          // DYNAMIC LOT SIZE CALCULATION BASED ON % RISK & SL DISTANCE
          double tradePrice = (entry > 0) ? entry : (isSell ? bid : ask);
@@ -891,19 +1002,19 @@ void FetchAndExecuteSignals()
          string orderComment = sigId;
          if(StringLen(orderComment) > 31) orderComment = StringSubstr(sigId, 0, 31);
          
-         if(StringFind(action, "BUY_LIMIT") != -1 && entry > 0)
+         if(StringFind(orderExecAction, "BUY_LIMIT") != -1 && entry > 0)
          {
             orderSuccess = trade.BuyLimit(finalLot, entry, targetSymbol, sl, tp3, 0, 0, orderComment);
          }
-         else if(StringFind(action, "SELL_LIMIT") != -1 && entry > 0)
+         else if(StringFind(orderExecAction, "SELL_LIMIT") != -1 && entry > 0)
          {
             orderSuccess = trade.SellLimit(finalLot, entry, targetSymbol, sl, tp3, 0, 0, orderComment);
          }
-         else if(StringFind(action, "BUY_STOP") != -1 && entry > 0)
+         else if(StringFind(orderExecAction, "BUY_STOP") != -1 && entry > 0)
          {
             orderSuccess = trade.BuyStop(finalLot, entry, targetSymbol, sl, tp3, 0, 0, orderComment);
          }
-         else if(StringFind(action, "SELL_STOP") != -1 && entry > 0)
+         else if(StringFind(orderExecAction, "SELL_STOP") != -1 && entry > 0)
          {
             orderSuccess = trade.SellStop(finalLot, entry, targetSymbol, sl, tp3, 0, 0, orderComment);
          }
@@ -914,6 +1025,63 @@ void FetchAndExecuteSignals()
          else
          {
             orderSuccess = trade.Buy(finalLot, targetSymbol, 0.0, sl, tp3, orderComment);
+         }
+
+         // Two-stage fallback: If broker returns 10016/10015 (Invalid Stops / ECN Market Execution restriction)
+         if(!orderSuccess && (trade.ResultRetcode() == 10016 || trade.ResultRetcode() == 10015))
+         {
+            Print("[MarketAI] Broker a returnat ", trade.ResultRetcode(), " (Invalid Stops/Price). Se reîncearcă plasarea fără SL/TP inițial și aplicarea imediată prin PositionModify...");
+            if(isSell)
+               orderSuccess = trade.Sell(finalLot, targetSymbol, 0.0, 0.0, 0.0, orderComment);
+            else
+               orderSuccess = trade.Buy(finalLot, targetSymbol, 0.0, 0.0, 0.0, orderComment);
+
+            if(orderSuccess)
+            {
+               Sleep(150);
+               double curBid = SymbolInfoDouble(targetSymbol, SYMBOL_BID);
+               double curAsk = SymbolInfoDouble(targetSymbol, SYMBOL_ASK);
+               double curMinDist = MathMax((double)SymbolInfoInteger(targetSymbol, SYMBOL_TRADE_STOPS_LEVEL), (double)SymbolInfoInteger(targetSymbol, SYMBOL_SPREAD)) * point;
+               if(curMinDist < 10.0 * point) curMinDist = 10.0 * point;
+
+               if(!isSell)
+               {
+                  if(sl >= (curBid - curMinDist)) sl = NormalizeDouble(curBid - curMinDist - 2 * point, digits);
+                  if(tp3 <= (curAsk + curMinDist)) tp3 = NormalizeDouble(curAsk + curMinDist + 2 * point, digits);
+                  if(tickSize > 0)
+                  {
+                     sl = NormalizeDouble(MathFloor(sl / tickSize) * tickSize, digits);
+                     tp3 = NormalizeDouble(MathCeil(tp3 / tickSize) * tickSize, digits);
+                  }
+               }
+               else
+               {
+                  if(sl <= (curAsk + curMinDist)) sl = NormalizeDouble(curAsk + curMinDist + 2 * point, digits);
+                  if(tp3 >= (curBid - curMinDist)) tp3 = NormalizeDouble(curBid - curMinDist - 2 * point, digits);
+                  if(tickSize > 0)
+                  {
+                     sl = NormalizeDouble(MathCeil(sl / tickSize) * tickSize, digits);
+                     tp3 = NormalizeDouble(MathFloor(tp3 / tickSize) * tickSize, digits);
+                  }
+               }
+
+               for(int p = PositionsTotal() - 1; p >= 0; p--)
+               {
+                  ulong pTicket = PositionGetTicket(p);
+                  if(pTicket > 0 && PositionGetInteger(POSITION_MAGIC) == InpMagicNumber && PositionGetString(POSITION_SYMBOL) == targetSymbol)
+                  {
+                     if(trade.PositionModify(pTicket, sl, tp3))
+                     {
+                        Print("[MarketAI] SL (", sl, ") și TP3 (", tp3, ") aplicate cu succes prin PositionModify pe poziția #", pTicket);
+                     }
+                     else
+                     {
+                        Print("[MarketAI AVERTISMENT] PositionModify a returnat: ", trade.ResultRetcode(), " (", trade.ResultRetcodeDescription(), ")");
+                     }
+                     break;
+                  }
+               }
+            }
          }
          
          if(orderSuccess)
@@ -971,8 +1139,16 @@ void ManageActivePositions()
    string targetSymbol = (InpBrokerSymbol != "") ? InpBrokerSymbol : _Symbol;
    int digits = (int)SymbolInfoInteger(targetSymbol, SYMBOL_DIGITS);
    double point = SymbolInfoDouble(targetSymbol, SYMBOL_POINT);
+   double tickSize = SymbolInfoDouble(targetSymbol, SYMBOL_TRADE_TICK_SIZE);
+   if(tickSize <= 0) tickSize = point;
    double ask = SymbolInfoDouble(targetSymbol, SYMBOL_ASK);
    double bid = SymbolInfoDouble(targetSymbol, SYMBOL_BID);
+
+   int stopsLevel  = (int)SymbolInfoInteger(targetSymbol, SYMBOL_TRADE_STOPS_LEVEL);
+   int freezeLevel = (int)SymbolInfoInteger(targetSymbol, SYMBOL_TRADE_FREEZE_LEVEL);
+   int spread      = (int)SymbolInfoInteger(targetSymbol, SYMBOL_SPREAD);
+   double minDistance = (MathMax((double)stopsLevel, MathMax((double)freezeLevel, (double)spread)) + 2.0) * point;
+   if(minDistance < 10.0 * point) minDistance = 10.0 * point;
 
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
@@ -1004,10 +1180,13 @@ void ManageActivePositions()
                      if(liveAutoBreakEven)
                      {
                         double beSL = NormalizeDouble(openPrice + 2 * point, digits);
-                        if(beSL > currentSL)
+                        if(tickSize > 0) beSL = NormalizeDouble(MathFloor(beSL / tickSize) * tickSize, digits);
+                        if(beSL > currentSL && beSL <= (bid - minDistance))
                         {
-                           trade.PositionModify(ticket, beSL, currentTP);
-                           Print("MarketAI: SL moved to Break-Even: ", beSL);
+                           if(trade.PositionModify(ticket, beSL, currentTP))
+                           {
+                              Print("MarketAI: SL moved to Break-Even: ", beSL);
+                           }
                         }
                      }
                      SendStatusUpdate(activeSignalId, "RUNNING", "PROFIT", "TP1");
@@ -1037,9 +1216,11 @@ void ManageActivePositions()
                if(profitPoints >= InpTrailTriggerPoints)
                {
                   double proposedSL = NormalizeDouble(bid - liveTrailDistancePoints * point, digits);
+                  if(proposedSL > (bid - minDistance)) proposedSL = NormalizeDouble(bid - minDistance, digits);
+                  if(tickSize > 0) proposedSL = NormalizeDouble(MathFloor(proposedSL / tickSize) * tickSize, digits);
                   
-                  // Only trail forward in profit above current SL + step
-                  if(proposedSL > (currentSL + InpTrailStepPoints * point) && proposedSL > openPrice)
+                  // Only trail forward in profit above current SL + step, respecting broker distance
+                  if(proposedSL > (currentSL + InpTrailStepPoints * point) && proposedSL > openPrice && proposedSL <= (bid - minDistance))
                   {
                      if(trade.PositionModify(ticket, proposedSL, currentTP))
                      {
@@ -1067,10 +1248,13 @@ void ManageActivePositions()
                      if(liveAutoBreakEven)
                      {
                         double beSL = NormalizeDouble(openPrice - 2 * point, digits);
-                        if(currentSL == 0 || beSL < currentSL)
+                        if(tickSize > 0) beSL = NormalizeDouble(MathCeil(beSL / tickSize) * tickSize, digits);
+                        if((currentSL == 0 || beSL < currentSL) && beSL >= (ask + minDistance))
                         {
-                           trade.PositionModify(ticket, beSL, currentTP);
-                           Print("MarketAI: SL moved to Break-Even: ", beSL);
+                           if(trade.PositionModify(ticket, beSL, currentTP))
+                           {
+                              Print("MarketAI: SL moved to Break-Even: ", beSL);
+                           }
                         }
                      }
                      SendStatusUpdate(activeSignalId, "RUNNING", "PROFIT", "TP1");
@@ -1100,9 +1284,11 @@ void ManageActivePositions()
                if(profitPoints >= InpTrailTriggerPoints)
                {
                   double proposedSL = NormalizeDouble(ask + liveTrailDistancePoints * point, digits);
+                  if(proposedSL < (ask + minDistance)) proposedSL = NormalizeDouble(ask + minDistance, digits);
+                  if(tickSize > 0) proposedSL = NormalizeDouble(MathCeil(proposedSL / tickSize) * tickSize, digits);
                   
-                  // Only trail downwards in profit below current SL - step
-                  if((currentSL == 0 || proposedSL < (currentSL - InpTrailStepPoints * point)) && proposedSL < openPrice)
+                  // Only trail downwards in profit below current SL - step, respecting broker distance
+                  if((currentSL == 0 || proposedSL < (currentSL - InpTrailStepPoints * point)) && proposedSL < openPrice && proposedSL >= (ask + minDistance))
                   {
                      if(trade.PositionModify(ticket, proposedSL, currentTP))
                      {
