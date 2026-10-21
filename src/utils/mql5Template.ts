@@ -672,13 +672,7 @@ void FetchAndExecuteSignals()
                if(posTicket > 0 && PositionGetInteger(POSITION_MAGIC) == InpMagicNumber)
                {
                   string comment = PositionGetString(POSITION_COMMENT);
-                  string cleanComment = comment;
-                  StringReplace(cleanComment, "MarketAI ", "");
-                  StringReplace(cleanComment, "MarketAI", "");
-                  StringTrimLeft(cleanComment);
-                  StringTrimRight(cleanComment);
-
-                  string foundSigId = "";
+                  string sigToCheck = "";
                   int posLower = StringFind(comment, "sig_");
                   int posUpper = StringFind(comment, "SIG-");
                   int posUpper2 = StringFind(comment, "SIG_");
@@ -689,42 +683,37 @@ void FetchAndExecuteSignals()
 
                   if(bestPos != -1)
                   {
-                     foundSigId = StringSubstr(comment, bestPos);
-                     int spacePos = StringFind(foundSigId, " ");
-                     if(spacePos != -1) foundSigId = StringSubstr(foundSigId, 0, spacePos);
-                     int quotePos = StringFind(foundSigId, "\\\"");
-                     if(quotePos != -1) foundSigId = StringSubstr(foundSigId, 0, quotePos);
+                     sigToCheck = StringSubstr(comment, bestPos);
+                     int spacePos = StringFind(sigToCheck, " ");
+                     if(spacePos != -1) sigToCheck = StringSubstr(sigToCheck, 0, spacePos);
+                     int quotePos = StringFind(sigToCheck, "\\\"");
+                     if(quotePos != -1) sigToCheck = StringSubstr(sigToCheck, 0, quotePos);
                   }
-                  else if(cleanComment != "")
+                  else if(StringFind(comment, "MarketAI ") == 0)
                   {
-                     foundSigId = cleanComment;
+                     sigToCheck = StringSubstr(comment, 9);
+                  }
+                  else if(StringLen(comment) >= 8 && (StringFind(comment, "sig") != -1 || StringFind(comment, "SIG") != -1))
+                  {
+                     sigToCheck = comment;
                   }
 
                   bool shouldClose = false;
-                  if(StringFind(cancelArrStr, "CLOSE_ALL") != -1 || StringFind(cancelArrStr, "\\\"ALL\\\"") != -1)
+                  if(StringLen(sigToCheck) >= 8)
                   {
-                     shouldClose = true;
-                  }
-                  else if(foundSigId != "" && StringFind(cancelArrStr, foundSigId) != -1)
-                  {
-                     shouldClose = true;
-                  }
-                  else if(cleanComment != "" && StringFind(cancelArrStr, cleanComment) != -1)
-                  {
-                     shouldClose = true;
-                  }
-                  else if(activeSignalId != "" && StringFind(cancelArrStr, activeSignalId) != -1)
-                  {
-                     shouldClose = true;
+                     string searchKey = "\\\"" + sigToCheck + "\\\"";
+                     if(StringFind(cancelArrStr, searchKey) != -1)
+                     {
+                        shouldClose = true;
+                     }
                   }
 
                   if(shouldClose)
                   {
                      trade.PositionClose(posTicket);
-                     Print("MarketAI: Position #", posTicket, " (Signal ", foundSigId != "" ? foundSigId : activeSignalId, ") closed immediately via Web Terminal command!");
-                     if(foundSigId != "") SendStatusUpdate(foundSigId, "CLOSED", "MANUAL_CLOSED", "CLOSED_VIA_TERMINAL");
-                     else if(activeSignalId != "") SendStatusUpdate(activeSignalId, "CLOSED", "MANUAL_CLOSED", "CLOSED_VIA_TERMINAL");
-                     if(activeSignalId == foundSigId) activeSignalId = "";
+                     Print("MarketAI: Position #", posTicket, " (Signal: ", sigToCheck, ") closed via Web Terminal command!");
+                     SendStatusUpdate(sigToCheck, "CLOSED", "MANUAL_CLOSED", "CLOSED_VIA_TERMINAL");
+                     if(activeSignalId == sigToCheck) activeSignalId = "";
                   }
                }
             }
@@ -736,13 +725,7 @@ void FetchAndExecuteSignals()
                if(ticket > 0 && OrderGetInteger(ORDER_MAGIC) == InpMagicNumber)
                {
                   string comment = OrderGetString(ORDER_COMMENT);
-                  string cleanComment = comment;
-                  StringReplace(cleanComment, "MarketAI ", "");
-                  StringReplace(cleanComment, "MarketAI", "");
-                  StringTrimLeft(cleanComment);
-                  StringTrimRight(cleanComment);
-
-                  string foundSigId = "";
+                  string sigToCheck = "";
                   int posLower = StringFind(comment, "sig_");
                   int posUpper = StringFind(comment, "SIG-");
                   int posUpper2 = StringFind(comment, "SIG_");
@@ -753,40 +736,36 @@ void FetchAndExecuteSignals()
 
                   if(bestPos != -1)
                   {
-                     foundSigId = StringSubstr(comment, bestPos);
-                     int spacePos = StringFind(foundSigId, " ");
-                     if(spacePos != -1) foundSigId = StringSubstr(foundSigId, 0, spacePos);
-                     int quotePos = StringFind(foundSigId, "\\\"");
-                     if(quotePos != -1) foundSigId = StringSubstr(foundSigId, 0, quotePos);
+                     sigToCheck = StringSubstr(comment, bestPos);
+                     int spacePos = StringFind(sigToCheck, " ");
+                     if(spacePos != -1) sigToCheck = StringSubstr(sigToCheck, 0, spacePos);
+                     int quotePos = StringFind(sigToCheck, "\\\"");
+                     if(quotePos != -1) sigToCheck = StringSubstr(sigToCheck, 0, quotePos);
                   }
-                  else if(cleanComment != "")
+                  else if(StringFind(comment, "MarketAI ") == 0)
                   {
-                     foundSigId = cleanComment;
+                     sigToCheck = StringSubstr(comment, 9);
+                  }
+                  else if(StringLen(comment) >= 8 && (StringFind(comment, "sig") != -1 || StringFind(comment, "SIG") != -1))
+                  {
+                     sigToCheck = comment;
                   }
 
                   bool shouldDelete = false;
-                  if(StringFind(cancelArrStr, "CLOSE_ALL") != -1 || StringFind(cancelArrStr, "\\\"ALL\\\"") != -1)
+                  if(StringLen(sigToCheck) >= 8)
                   {
-                     shouldDelete = true;
-                  }
-                  else if(foundSigId != "" && StringFind(cancelArrStr, foundSigId) != -1)
-                  {
-                     shouldDelete = true;
-                  }
-                  else if(cleanComment != "" && StringFind(cancelArrStr, cleanComment) != -1)
-                  {
-                     shouldDelete = true;
-                  }
-                  else if(activeSignalId != "" && StringFind(cancelArrStr, activeSignalId) != -1)
-                  {
-                     shouldDelete = true;
+                     string searchKey = "\\\"" + sigToCheck + "\\\"";
+                     if(StringFind(cancelArrStr, searchKey) != -1)
+                     {
+                        shouldDelete = true;
+                     }
                   }
 
                   if(shouldDelete)
                   {
                      trade.OrderDelete(ticket);
-                     Print("MarketAI: Pending order #", ticket, " (Signal ", foundSigId != "" ? foundSigId : activeSignalId, ") cancelled/deleted from MT5 via Web Terminal command.");
-                     if(activeSignalId == foundSigId) activeSignalId = "";
+                     Print("MarketAI: Pending order #", ticket, " (Signal: ", sigToCheck, ") deleted via Web Terminal command.");
+                     if(activeSignalId == sigToCheck) activeSignalId = "";
                   }
                }
             }
@@ -909,8 +888,7 @@ void FetchAndExecuteSignals()
          double finalLot = CalculateLotSize(targetSymbol, tradePrice, sl, liveRiskPercent);
          
          bool orderSuccess = false;
-         string orderComment = "MarketAI " + sigId;
-         if(StringLen(orderComment) > 31) orderComment = sigId;
+         string orderComment = sigId;
          if(StringLen(orderComment) > 31) orderComment = StringSubstr(sigId, 0, 31);
          
          if(StringFind(action, "BUY_LIMIT") != -1 && entry > 0)

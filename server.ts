@@ -588,8 +588,6 @@ app.post('/api/user/close-all-trades', async (req, res) => {
     }
     serverCancelledSignalIds.add(id);
   }
-  // Also add CLOSE_ALL indicator so connected MT5 / NT8 bridges immediately close and cancel everything
-  serverCancelledSignalIds.add('CLOSE_ALL');
 
   const nowIso = new Date().toISOString();
   if (Array.isArray(user.signals)) {
@@ -5629,11 +5627,12 @@ app.get('/api/mt5/signals', (req, res) => {
 
   const userDeletedIds = (matchedUser?.deletedSignalIds || []).map((id) => String(id));
   const cancelledSignals = targetSignals.filter((s) => s.status === 'CANCELLED' || s.status === 'CANCELED' || s.outcomeStatus === 'CANCELLED');
-  const cancelledIds = Array.from(new Set([
+  const allCancelled = Array.from(new Set([
     ...cancelledSignals.map((s) => String(s.id)).filter(Boolean),
     ...userDeletedIds,
     ...Array.from(serverCancelledSignalIds),
-  ]));
+  ])).filter((id) => id && id !== 'CLOSE_ALL' && id !== 'ALL' && id.length >= 8);
+  const cancelledIds = allCancelled.slice(-100);
   const placedIds = Array.from(processedSet);
 
   const userRisk = matchedUser?.riskSettings || {};
@@ -6033,7 +6032,7 @@ app.get(['/api/ninjatrader/signals', '/api/nt8/signals'], (req, res) => {
       ...Array.from(deletedIds),
       ...rawSignals.filter((s: any) => s.status === 'CANCELLED' || s.outcomeStatus === 'CANCELLED').map((s: any) => String(s.id)),
       ...Array.from(serverCancelledSignalIds),
-    ])),
+    ])).filter((id) => id && id !== 'CLOSE_ALL' && id !== 'ALL' && id.length >= 8).slice(-100),
     riskRules: matchedUser.riskSettings || {},
   });
 });

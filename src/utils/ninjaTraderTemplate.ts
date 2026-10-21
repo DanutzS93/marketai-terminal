@@ -278,9 +278,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 string cancelIdsStr = cancelMatches[0].Groups[1].Value;
                 bool shouldCancelOrClose = false;
 
-                if (!string.IsNullOrEmpty(activeSignalId) && cancelIdsStr.Contains(activeSignalId))
-                    shouldCancelOrClose = true;
-                if (cancelIdsStr.Contains("CLOSE_ALL") || cancelIdsStr.Contains("\"ALL\""))
+                if (!string.IsNullOrEmpty(activeSignalId) && activeSignalId.Length >= 8 && cancelIdsStr.Contains("\"" + activeSignalId + "\""))
                     shouldCancelOrClose = true;
 
                 if (shouldCancelOrClose)
