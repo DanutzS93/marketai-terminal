@@ -69,7 +69,7 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
   const [filterInstrument, setFilterInstrument] = useState<InstrumentId | 'ALL'>('ALL');
   const [filterTimeframe, setFilterTimeframe] = useState<TimeFrame | 'ALL'>('ALL');
   const [selectedTimeframe, setSelectedTimeframe] = useState<TimeFrame>('1h');
-  const [selectedStrategy, setSelectedStrategy] = useState<string>('Intraday Trend & Breakout');
+  const [selectedStrategy, setSelectedStrategy] = useState<string>('Auto Smart Structure (Limit, Stop sau Market)');
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [selectedSignalForDetails, setSelectedSignalForDetails] = useState<TradingSignal | null>(null);
   const [selectedSignalForChart, setSelectedSignalForChart] = useState<TradingSignal | null>(null);
@@ -262,10 +262,33 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
               <option value="1D">TF 1D (Macro)</option>
             </select>
 
+            <select
+              value={selectedStrategy}
+              onChange={(e) => setSelectedStrategy(e.target.value)}
+              className="bg-slate-900 text-white text-xs px-3 py-2 rounded-lg border border-white/15 focus:outline-none focus:border-indigo-400 font-semibold cursor-pointer max-w-[215px] truncate"
+              title={lang === 'ro' ? 'Tip Ordin & Strategie Execuție' : 'Order Type & Execution Strategy'}
+            >
+              <option value="Auto Smart Structure (Limit, Stop sau Market)">
+                {lang === 'ro' ? '🎯 Auto (Limit / Stop / Market)' : '🎯 Auto (Limit / Stop / Market)'}
+              </option>
+              <option value="Key Level Reversal (Buy Limit / Sell Limit)">
+                {lang === 'ro' ? '🔄 Zone Reversal (Buy/Sell Limit)' : '🔄 Zone Reversal (Buy/Sell Limit)'}
+              </option>
+              <option value="SMC Order Block & FVG Pullback (Limit)">
+                {lang === 'ro' ? '🛡️ SMC Pullback & FVG (Limit)' : '🛡️ SMC Pullback & FVG (Limit)'}
+              </option>
+              <option value="Breakout Confirmation (Buy Stop / Sell Stop)">
+                {lang === 'ro' ? '⚡ Spargere Nivel (Buy/Sell Stop)' : '⚡ Breakout (Buy/Sell Stop)'}
+              </option>
+              <option value="Immediate Momentum (Market Execution)">
+                {lang === 'ro' ? '🚀 Execuție Imediată (Market)' : '🚀 Market Execution (Instant)'}
+              </option>
+            </select>
+
             <button
               onClick={() => onGenerateSignal(selectedInstrument, selectedTimeframe, selectedStrategy)}
               disabled={isGenerating}
-              className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white font-bold text-xs shadow-[0_0_20px_rgba(99,102,241,0.4)] transition disabled:opacity-50 cursor-pointer border border-indigo-400/40"
+              className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white font-bold text-xs shadow-[0_0_20px_rgba(99,102,241,0.4)] transition disabled:opacity-50 cursor-pointer border border-indigo-400/40 shrink-0"
             >
               <Zap className={`w-4 h-4 ${isGenerating ? 'animate-bounce text-amber-300' : 'text-amber-300'}`} />
               <span>

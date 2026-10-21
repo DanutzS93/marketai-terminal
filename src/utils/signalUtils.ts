@@ -66,6 +66,18 @@ export function calculateExecutionType(
   if (!entryPrice || !currentPrice) {
     return isBuy ? 'BUY MARKET' : 'SELL MARKET';
   }
+
+  // Explicit hint handling: if hint explicitly dictates a pending order type, honor it!
+  if (hintUpper.includes('LIMIT')) {
+    return isBuy ? 'BUY LIMIT' : 'SELL LIMIT';
+  }
+  if (hintUpper.includes('STOP')) {
+    return isBuy ? 'BUY STOP' : 'SELL STOP';
+  }
+  if (hintUpper.includes('MARKET') || hintUpper === 'MARKET EXECUTION') {
+    return isBuy ? 'BUY MARKET' : 'SELL MARKET';
+  }
+
   const diffRatio = Math.abs(entryPrice - currentPrice) / currentPrice;
 
   // If entry price is virtually identical to current market price (< 0.03% difference), it's a MARKET order

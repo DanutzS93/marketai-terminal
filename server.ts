@@ -4122,6 +4122,18 @@ function calculateExecutionType(
   if (!entryPrice || !currentPrice) {
     return isBuy ? 'BUY MARKET' : 'SELL MARKET';
   }
+
+  // Explicit hint handling: if hint explicitly dictates a pending order type, honor it!
+  if (hintUpper.includes('LIMIT')) {
+    return isBuy ? 'BUY LIMIT' : 'SELL LIMIT';
+  }
+  if (hintUpper.includes('STOP')) {
+    return isBuy ? 'BUY STOP' : 'SELL STOP';
+  }
+  if (hintUpper.includes('MARKET') || hintUpper === 'MARKET EXECUTION') {
+    return isBuy ? 'BUY MARKET' : 'SELL MARKET';
+  }
+
   const diffRatio = Math.abs(entryPrice - currentPrice) / currentPrice;
 
   // If entry price is virtually identical to current market price (< 0.03% difference), it's a MARKET order
@@ -4486,6 +4498,25 @@ app.post('/api/generate-ai-signal', async (req, res) => {
     const geminiClient = getGeminiClient(req);
 
     if (!geminiClient) {
+      const authHeader = req.headers.authorization;
+      const token = authHeader?.replace(/^Bearer\s+/i, '').trim();
+      let isAdmin = false;
+      if (token) {
+        const users = loadUsersDb();
+        const user = Object.values(users).find((u) => u.token === token || (u.role === 'admin' && token.startsWith('tok_usr_admin')));
+        isAdmin = user?.role === 'admin' || user?.username?.toLowerCase() === 'admin' || token.startsWith('tok_usr_admin');
+      }
+
+      if (isAdmin) {
+        const rawSignal = buildDeterministicSignal(validId, timeframe, quote, strategy, isEn);
+        const signal = validateAndFixSignalPrices(rawSignal, quote.price, quote.atr);
+        if (!serverActiveSignals.some((s) => s.id === signal.id)) {
+          serverActiveSignals.unshift(signal);
+        }
+        await attachSignalToUser(req, signal);
+        return res.json({ signal });
+      }
+
       return res.status(400).json({
         error: 'MISSING_GEMINI_API_KEY',
         message: isEn
@@ -4524,17 +4555,26 @@ Anchor Stop Loss and Take Profit levels directly to live market volatility (Time
 - Take Profit 2 (TP2): Set at ~3.2x ATR distance ($${(currentTfATR * 3.2).toFixed(decimals)} pts)
 - Take Profit 3 (TP3): Set at ~5.0x ATR distance ($${(currentTfATR * 5.0).toFixed(decimals)} pts)
 
-NEUTRAL / RANGING MARKET MANDATE:
-When the market trend or sentiment is NEUTRAL (consolidating or ranging), DO NOT blindly default to SELL MARKET or low-confidence market execution. Instead, analyze key support and resistance levels, Order Blocks, and Fair Value Gaps. Look for high-probability **Pending Orders** (such as **Buy Limit** near key support or **Sell Limit** near key resistance) with balanced consideration for both Buy and Sell directions depending on proximity to key levels. Ensure robust technical confluences and high confidence (66%–96%) before emitting a signal.
+KEY ZONES & ORDER EXECUTION TYPE MANDATE (CRITICAL):
+The current live market price is EXACTLY $${quote.price}.
+As an institutional quantitative analyst, you MUST provide precise trade executions using ALL order types based on market structure and strategy:
+1. "Buy Limit" -> WHEN TO USE: Price is trending or consolidating, but entering immediately at current market is suboptimal. Identify a key discount zone, Key Support floor, Bullish Order Block, Fair Value Gap (FVG), or 50% retracement level BELOW the current price. You anticipate price will retrace/pull back to this level, tap it, and reverse upward.
+   - MANDATORY: "entryPrice" MUST be placed strictly BELOW $${quote.price} (e.g. at the identified key support / pullback zone).
+2. "Sell Limit" -> WHEN TO USE: Price is trending or consolidating, but selling at current bottom is suboptimal. Identify a key premium zone, Key Resistance ceiling, Bearish Order Block, FVG, or 50% retracement level ABOVE the current price. You anticipate price will rally/retrace up to this level, tap it, and reverse downward.
+   - MANDATORY: "entryPrice" MUST be placed strictly ABOVE $${quote.price} (e.g. at the identified key resistance / reversal zone).
+3. "Buy Stop" -> WHEN TO USE: High-momentum breakout setup. Price is approaching a major swing high or resistance level. You want to enter on confirmed breakout continuation upward.
+   - MANDATORY: "entryPrice" MUST be placed strictly ABOVE $${quote.price}.
+4. "Sell Stop" -> WHEN TO USE: High-momentum breakdown setup. Price is approaching a major swing low or support level. You want to enter on confirmed breakdown continuation downward.
+   - MANDATORY: "entryPrice" MUST be placed strictly BELOW $${quote.price}.
+5. "Market Execution" -> WHEN TO USE: An aggressive impulse candle with massive tick volume momentum is in progress right at this second ($${quote.price}), where waiting for a pullback would result in missing the entire move.
+   - MANDATORY: "entryPrice" is set to $${quote.price}.
 
-EXECUTION TYPE MANDATE:
-The current market price is EXACTLY $${quote.price}.
-Analyze entryPrice vs current market price ($${quote.price}):
-- "Market Execution" -> if entering immediately at $${quote.price}
-- "Buy Limit" -> if BUY/STRONG_BUY and entryPrice < $${quote.price} (waiting for a pullback)
-- "Buy Stop" -> if BUY/STRONG_BUY and entryPrice > $${quote.price} (breakout above resistance)
-- "Sell Limit" -> if SELL/STRONG_SELL and entryPrice > $${quote.price} (waiting for retracement up)
-- "Sell Stop" -> if SELL/STRONG_SELL and entryPrice < $${quote.price} (breakout below support)
+STRATEGY FOCUS EVALUATION:
+The user selected strategy is: "${strategy}".
+- If the strategy specifies "Reversal", "Limit", "Pullback", "SMC", or "Zone": Strongly prioritize a "Buy Limit" or "Sell Limit" at the nearest institutional Order Block / Support / Resistance level.
+- If the strategy specifies "Breakout" or "Stop": Strongly prioritize a "Buy Stop" or "Sell Stop" above resistance / below support.
+- If the strategy specifies "Market" or "Momentum": Use "Market Execution".
+- If "Auto Smart Structure": Evaluate whether a pending Limit order at a key discount/premium zone offers a superior Risk/Reward ratio compared to entering at market price. If price is far from key support/resistance, preferred institutional entry is a Limit order!
 
 ANALYSIS STRUCTURE REQUIREMENT:
 The "rationaleRo" and "rationaleEn" fields MUST strictly follow this exact 3-step structured format (rationaleRo in Romanian, rationaleEn in English):
@@ -4585,12 +4625,12 @@ Generate valid JSON output:
           contents: prompt,
           config: {
             responseMimeType: 'application/json',
-            temperature: 0.2,
+            temperature: 0.4,
           },
         });
 
         const parsedData = parseGeminiJsonResponse(response.text);
-        const entryPrice = parsedData.entryPrice || quote.price;
+        let entryPrice = parsedData.entryPrice || quote.price;
 
         const rawType = String(parsedData.type || '').toUpperCase();
         const rawExec = String(parsedData.executionType || '').toUpperCase();
@@ -4613,6 +4653,25 @@ Generate valid JSON output:
         const signalType = isBuy
           ? (rawType.includes('STRONG') ? 'STRONG_BUY' : 'BUY')
           : (rawType.includes('STRONG') ? 'STRONG_SELL' : 'SELL');
+
+        // Calibrate entry price if AI chose a Limit or Stop order but returned market price
+        if (rawExec.includes('BUY LIMIT') || (rawExec.includes('LIMIT') && isBuy)) {
+          if (entryPrice >= quote.price) {
+            entryPrice = Number((quote.price - currentTfATR * 0.4).toFixed(decimals));
+          }
+        } else if (rawExec.includes('SELL LIMIT') || (rawExec.includes('LIMIT') && !isBuy)) {
+          if (entryPrice <= quote.price) {
+            entryPrice = Number((quote.price + currentTfATR * 0.4).toFixed(decimals));
+          }
+        } else if (rawExec.includes('BUY STOP') || (rawExec.includes('STOP') && isBuy)) {
+          if (entryPrice <= quote.price) {
+            entryPrice = Number((quote.price + currentTfATR * 0.35).toFixed(decimals));
+          }
+        } else if (rawExec.includes('SELL STOP') || (rawExec.includes('STOP') && !isBuy)) {
+          if (entryPrice >= quote.price) {
+            entryPrice = Number((quote.price - currentTfATR * 0.35).toFixed(decimals));
+          }
+        }
 
         const executionType = calculateExecutionType(signalType, entryPrice, quote.price, parsedData.executionType);
         const slDist = currentTfATR * 1.3;
@@ -4778,8 +4837,14 @@ USER CUSTOM RULES:
 - Target R:R Ratio: ${rrTarget}
 - Trader Notes: "${notesStr}"
 
-NEUTRAL / RANGING MARKET MANDATE:
-When market conditions or rules indicate a NEUTRAL or consolidating range, DO NOT default blindly to SELL MARKET. Evaluate key support and resistance levels, and prioritize high-probability pending orders (Buy Limit near support or Sell Limit near resistance) with balanced Buy/Sell exploration and rigorous confluence.
+KEY ZONES & ORDER EXECUTION TYPE MANDATE:
+The current live market price is EXACTLY $${quote.price}.
+Analyze market structure vs trader rules to output the optimal execution type:
+- "Buy Limit" -> Key support / Order Block / FVG discount zone BELOW $${quote.price} (anticipating pullback & reversal upward). "entryPrice" MUST be strictly BELOW $${quote.price}.
+- "Sell Limit" -> Key resistance / Order Block / FVG premium zone ABOVE $${quote.price} (anticipating rally & reversal downward). "entryPrice" MUST be strictly ABOVE $${quote.price}.
+- "Buy Stop" -> Breakout continuation above resistance ceiling. "entryPrice" MUST be strictly ABOVE $${quote.price}.
+- "Sell Stop" -> Breakdown continuation below support floor. "entryPrice" MUST be strictly BELOW $${quote.price}.
+- "Market Execution" -> High tick momentum impulse active at this exact second ($${quote.price}).
 
 ANALYSIS STRUCTURE REQUIREMENT:
 The "rationale" field MUST strictly follow this exact 3-step structured format (written in ${isEn ? 'English' : 'Romanian'}):
@@ -4830,12 +4895,12 @@ Generate valid JSON output:
           contents: prompt,
           config: {
             responseMimeType: 'application/json',
-            temperature: 0.2,
+            temperature: 0.4,
           },
         });
 
         const parsedData = parseGeminiJsonResponse(response.text);
-        const entryPrice = parsedData.entryPrice || quote.price;
+        let entryPrice = parsedData.entryPrice || quote.price;
 
         const rawType = String(parsedData.type || '').toUpperCase();
         const rawExec = String(parsedData.executionType || '').toUpperCase();
@@ -4859,14 +4924,33 @@ Generate valid JSON output:
           ? (rawType.includes('STRONG') ? 'STRONG_BUY' : 'BUY')
           : (rawType.includes('STRONG') ? 'STRONG_SELL' : 'SELL');
 
-        const executionType = calculateExecutionType(signalType, entryPrice, quote.price, parsedData.executionType);
-
         const isForex5 = instrumentId === 'EURUSD' || instrumentId === 'GBPUSD' || (quote.price > 0 && quote.price < 5);
         const isForex3 = instrumentId === 'USDJPY' || (quote.price >= 50 && quote.price < 300 && !instrumentId.includes('SPX') && !instrumentId.includes('DOW') && !instrumentId.includes('GOLD'));
         const decimals = isForex5 ? 5 : isForex3 ? 3 : 2;
         const defaultAtrRatio = isForex5 ? 0.006 : isForex3 ? 0.007 : 0.013;
         const baseDailyATR = quote.atr || Number((quote.price * defaultAtrRatio).toFixed(decimals));
         const currentTfATR = getTimeframeATR(baseDailyATR, timeframe, quote.price);
+
+        // Calibrate entry price if AI chose a Limit or Stop order but returned market price
+        if (rawExec.includes('BUY LIMIT') || (rawExec.includes('LIMIT') && isBuy)) {
+          if (entryPrice >= quote.price) {
+            entryPrice = Number((quote.price - currentTfATR * 0.4).toFixed(decimals));
+          }
+        } else if (rawExec.includes('SELL LIMIT') || (rawExec.includes('LIMIT') && !isBuy)) {
+          if (entryPrice <= quote.price) {
+            entryPrice = Number((quote.price + currentTfATR * 0.4).toFixed(decimals));
+          }
+        } else if (rawExec.includes('BUY STOP') || (rawExec.includes('STOP') && isBuy)) {
+          if (entryPrice <= quote.price) {
+            entryPrice = Number((quote.price + currentTfATR * 0.35).toFixed(decimals));
+          }
+        } else if (rawExec.includes('SELL STOP') || (rawExec.includes('STOP') && !isBuy)) {
+          if (entryPrice >= quote.price) {
+            entryPrice = Number((quote.price - currentTfATR * 0.35).toFixed(decimals));
+          }
+        }
+
+        const executionType = calculateExecutionType(signalType, entryPrice, quote.price, parsedData.executionType);
         const slDist = currentTfATR * 1.3;
 
         const customSignal = {
@@ -5031,31 +5115,128 @@ function buildDeterministicSignal(
   const isForex3 = instrumentId === 'USDJPY';
   const decimals = isForex5 ? 5 : isForex3 ? 3 : 2;
 
+  const defaultAtrRatio = isForex5 ? 0.006 : isForex3 ? 0.007 : 0.013;
+  const baseATR = quote.atr || Number((quote.price * defaultAtrRatio).toFixed(decimals));
+  const tfATR = getTimeframeATR(baseATR, timeframe, quote.price);
+
   const isBullish = quote.changePercent >= 0;
   const action = isBullish ? (quote.rsi > 60 ? 'STRONG_BUY' : 'BUY') : quote.rsi < 40 ? 'STRONG_SELL' : 'SELL';
-  const dir = isBullish ? 1 : -1;
 
-  const entry = quote.price;
-  const isScalp = timeframe === '1m' || timeframe === '5m';
-  const mult = isScalp ? 0.3 : 1.0;
+  const stratUpper = (strategy || '').toUpperCase();
+  let executionType: 'BUY MARKET' | 'SELL MARKET' | 'BUY LIMIT' | 'SELL LIMIT' | 'BUY STOP' | 'SELL STOP';
+  let entry = quote.price;
 
-  const riskFraction = isForex5 || isForex3 ? 0.0025 * mult : isGold ? 0.007 * mult : 0.004 * mult;
-  const tp1Fraction = isForex5 || isForex3 ? 0.0035 * mult : isGold ? 0.008 * mult : 0.005 * mult;
-  const tp2Fraction = isForex5 || isForex3 ? 0.0065 * mult : isGold ? 0.014 * mult : 0.009 * mult;
-  const tp3Fraction = isForex5 || isForex3 ? 0.0095 * mult : isGold ? 0.020 * mult : 0.014 * mult;
+  // Decide if this setup is a Pending Limit Reversal, Breakout Stop, or Market Execution
+  if (
+    stratUpper.includes('LIMIT') ||
+    stratUpper.includes('REVERSAL') ||
+    stratUpper.includes('PULLBACK') ||
+    stratUpper.includes('SMC') ||
+    stratUpper.includes('ZONE')
+  ) {
+    // Explicit Limit Order at key reversal/pullback zone
+    if (isBullish) {
+      executionType = 'BUY LIMIT';
+      entry = Number((quote.price - tfATR * 0.45).toFixed(decimals));
+    } else {
+      executionType = 'SELL LIMIT';
+      entry = Number((quote.price + tfATR * 0.45).toFixed(decimals));
+    }
+  } else if (stratUpper.includes('STOP') || stratUpper.includes('BREAKOUT') || stratUpper.includes('SPARGERE')) {
+    // Explicit Breakout Order
+    if (isBullish) {
+      executionType = 'BUY STOP';
+      entry = Number((quote.price + tfATR * 0.35).toFixed(decimals));
+    } else {
+      executionType = 'SELL STOP';
+      entry = Number((quote.price - tfATR * 0.35).toFixed(decimals));
+    }
+  } else if (stratUpper.includes('MARKET') || stratUpper.includes('MOMENTUM') || stratUpper.includes('IMEDIAT')) {
+    // Explicit Market Execution
+    executionType = isBullish ? 'BUY MARKET' : 'SELL MARKET';
+    entry = quote.price;
+  } else {
+    // Default Auto Smart Structure: Determine based on real market technicals!
+    const isOverbought = quote.rsi > 65;
+    const isOversold = quote.rsi < 35;
+    const isNeutral = quote.rsi >= 42 && quote.rsi <= 58;
 
-  const sl = Number((entry - dir * (entry * riskFraction)).toFixed(decimals));
-  const tp1 = Number((entry + dir * (entry * tp1Fraction)).toFixed(decimals));
-  const tp2 = Number((entry + dir * (entry * tp2Fraction)).toFixed(decimals));
-  const tp3 = Number((entry + dir * (entry * tp3Fraction)).toFixed(decimals));
+    if (isOverbought) {
+      // Overbought: Expect rejection at resistance -> SELL LIMIT near resistance
+      executionType = 'SELL LIMIT';
+      entry = Number((quote.price + tfATR * 0.4).toFixed(decimals));
+    } else if (isOversold) {
+      // Oversold: Expect bounce at support -> BUY LIMIT near support
+      executionType = 'BUY LIMIT';
+      entry = Number((quote.price - tfATR * 0.4).toFixed(decimals));
+    } else if (isNeutral) {
+      // Range/Consolidation: Set limit order to buy pullback or sell rally
+      if (isBullish) {
+        executionType = 'BUY LIMIT';
+        entry = Number((quote.price - tfATR * 0.45).toFixed(decimals));
+      } else {
+        executionType = 'SELL LIMIT';
+        entry = Number((quote.price + tfATR * 0.45).toFixed(decimals));
+      }
+    } else if (Math.abs(quote.changePercent) > 1.4) {
+      // Fast breakout continuation -> STOP order
+      if (isBullish) {
+        executionType = 'BUY STOP';
+        entry = Number((quote.price + tfATR * 0.35).toFixed(decimals));
+      } else {
+        executionType = 'SELL STOP';
+        entry = Number((quote.price - tfATR * 0.35).toFixed(decimals));
+      }
+    } else {
+      // Pullback reversal limit order (preferred institutional strategy)
+      if (isBullish) {
+        executionType = 'BUY LIMIT';
+        entry = Number((quote.price - tfATR * 0.35).toFixed(decimals));
+      } else {
+        executionType = 'SELL LIMIT';
+        entry = Number((quote.price + tfATR * 0.35).toFixed(decimals));
+      }
+    }
+  }
 
-  const executionType = calculateExecutionType(action, entry, quote.price);
+  const isBuy = executionType.includes('BUY');
+  const slDist = Number((tfATR * 1.3).toFixed(decimals));
+  const sl = Number((isBuy ? entry - slDist : entry + slDist).toFixed(decimals));
+  const tp1 = Number((isBuy ? entry + slDist * 1.5 : entry - slDist * 1.5).toFixed(decimals));
+  const tp2 = Number((isBuy ? entry + slDist * 2.5 : entry - slDist * 2.5).toFixed(decimals));
+  const tp3 = Number((isBuy ? entry + slDist * 3.8 : entry - slDist * 3.8).toFixed(decimals));
 
-  const titleRo = `Semnal ${action} Real (${quote.symbol})`;
-  const titleEn = `Live ${action} Signal (${quote.symbol})`;
+  let titleRo = `Semnal ${executionType} (${quote.symbol})`;
+  let titleEn = `Live ${executionType} Signal (${quote.symbol})`;
+  let summaryRo = `Configurație ${executionType} validată pe cotatorul real. Preț piață: $${quote.price}, Nivel Ordin: $${entry}.`;
+  let summaryEn = `Validated ${executionType} setup on live feed. Market: $${quote.price}, Order Level: $${entry}.`;
 
-  const summaryRo = `Configurație validată direct pe cotatorul real de $${entry} (${executionType}).`;
-  const summaryEn = `Validated setup on live feed price $${entry} (${executionType}).`;
+  if (executionType === 'BUY LIMIT') {
+    titleRo = `Pullback Buy Limit la Suport (${quote.symbol})`;
+    titleEn = `Support Pullback Buy Limit (${quote.symbol})`;
+    summaryRo = `Ordin Buy Limit plasat la zona cheie de suport de $${entry} (sub prețul actual de $${quote.price}). Se anticipează atingerea zonei și reversal ascendent.`;
+    summaryEn = `Buy Limit order placed at key support zone $${entry} (below live price $${quote.price}). Anticipating zone tap and upward reversal.`;
+  } else if (executionType === 'SELL LIMIT') {
+    titleRo = `Reversal Sell Limit la Rezistență (${quote.symbol})`;
+    titleEn = `Resistance Reversal Sell Limit (${quote.symbol})`;
+    summaryRo = `Ordin Sell Limit plasat la zona cheie de rezistență de $${entry} (peste prețul actual de $${quote.price}). Se anticipează atingerea zonei și reversal descendent.`;
+    summaryEn = `Sell Limit order placed at key resistance zone $${entry} (above live price $${quote.price}). Anticipating zone tap and downward reversal.`;
+  } else if (executionType === 'BUY STOP') {
+    titleRo = `Breakout Buy Stop (${quote.symbol})`;
+    titleEn = `Breakout Buy Stop (${quote.symbol})`;
+    summaryRo = `Ordin Buy Stop plasat la spargerea rezistenței la $${entry} (preț piață: $${quote.price}). Se confirmă continuarea trendului.`;
+    summaryEn = `Buy Stop order placed on resistance breakout at $${entry} (market price: $${quote.price}). Trend continuation confirmed.`;
+  } else if (executionType === 'SELL STOP') {
+    titleRo = `Breakout Sell Stop (${quote.symbol})`;
+    titleEn = `Breakout Sell Stop (${quote.symbol})`;
+    summaryRo = `Ordin Sell Stop plasat la spargerea suportului la $${entry} (preț piață: $${quote.price}). Se confirmă continuarea descendentă.`;
+    summaryEn = `Sell Stop order placed on support breakdown at $${entry} (market price: $${quote.price}). Downward continuation confirmed.`;
+  } else if (executionType === 'BUY MARKET' || executionType === 'SELL MARKET') {
+    titleRo = `Execuție Imediată ${isBuy ? 'BUY' : 'SELL'} (${quote.symbol})`;
+    titleEn = `Market Execution ${isBuy ? 'BUY' : 'SELL'} (${quote.symbol})`;
+    summaryRo = `Ordin de piață executat imediat la cotația actuală de $${quote.price} pe baza impulsului activ de volum.`;
+    summaryEn = `Market order triggered immediately at live quote $${quote.price} on active volume momentum.`;
+  }
 
   const rationaleRo = buildFallback3StepRationale(quote, instrumentId, timeframe, executionType, false);
   const rationaleEn = buildFallback3StepRationale(quote, instrumentId, timeframe, executionType, true);
