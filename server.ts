@@ -57,7 +57,7 @@ import {
   migrateAllDataToSupabase,
   checkSupabaseTablesExist,
 } from './src/utils/supabaseDb';
-import { filter30DaySignals } from './src/utils/signalUtils';
+import { filter30DaySignals, calculateDynamicInstrumentTimeframeSL } from './src/utils/signalUtils';
 
 dotenv.config();
 
@@ -4396,9 +4396,10 @@ function validateAndFixSignalPrices(sig: any, liveMarketPrice?: number, liveATR?
   let execType = calculateExecutionType(normalizedType, entry, mPrice, sig.executionType);
 
   // DYNAMIC ATR CALCULATIONS FOR VOLATILITY-BASED STOP LOSS & TAKE PROFITS
-  const baseATR = liveATR || sig.atrDaily || sig.atr || (mPrice * (decimals === 5 ? 0.006 : decimals === 3 ? 0.007 : 0.013));
   const tf = sig.timeframe || '15m';
-  const tfATR = getTimeframeATR(baseATR, tf, mPrice);
+  const dynamicSLDist = calculateDynamicInstrumentTimeframeSL(sig.instrumentId, sig.symbol, tf, mPrice);
+  const tfATR = Number((dynamicSLDist / 1.2).toFixed(decimals));
+  const baseATR = liveATR || sig.atrDaily || sig.atr || Number((dynamicSLDist * 3.5).toFixed(decimals));
 
   const isScalp = tf === '1m' || tf === '5m' || tf === '15m';
 
@@ -4428,32 +4429,15 @@ function validateAndFixSignalPrices(sig: any, liveMarketPrice?: number, liveATR?
     }
   }
 
-  // SL ATR Multipliers
-  let slATRMult = 1.2;
-  if (tf === '1m') slATRMult = 1.0;
-  else if (tf === '5m') slATRMult = 1.1;
-  else if (tf === '15m') slATRMult = 1.2;
-  else if (tf === '1h') slATRMult = 1.3;
-  else slATRMult = 1.5;
+  // Exact dynamic SL distance based on timeframe
+  const atrSLDist = dynamicSLDist;
 
-  const atrSLDist = Number((tfATR * slATRMult).toFixed(decimals));
-
-  // Determine Stop Loss: STRICTLY calculated from Entry Price so |entry - SL| = atrSLDist
-  let sl = sig.stopLoss;
-  if (isBuy) {
-    const targetSL = Number((entry - atrSLDist).toFixed(decimals));
-    if (!sl || sl >= entry || sl <= 0 || Math.abs(entry - sl) > atrSLDist * 1.8 || Math.abs(entry - sl) < atrSLDist * 0.5) {
-      sl = targetSL;
-    }
-  } else {
-    const targetSL = Number((entry + atrSLDist).toFixed(decimals));
-    if (!sl || sl <= entry || sl <= 0 || Math.abs(sl - entry) > atrSLDist * 1.8 || Math.abs(sl - entry) < atrSLDist * 0.5) {
-      sl = targetSL;
-    }
-  }
+  // Determine Stop Loss: STRICTLY calculated from Entry Price and timeframe-calibrated dynamic distance
+  const sl = Number((isBuy ? entry - atrSLDist : entry + atrSLDist).toFixed(decimals));
 
   // Actual Risk Distance (pts)
-  const actualRisk = Math.abs(entry - sl);
+  const actualRisk = atrSLDist;
+  const slATRMult = 1.2;
 
   // Calibrated Risk:Reward Ratios per Target
   // Scalp (1m, 5m, 15m): TP1 = 1:1.5, TP2 = 1:2.2, TP3 = 1:3.0
@@ -4757,7 +4741,7 @@ Generate valid JSON output:
         }
 
         const executionType = calculateExecutionType(signalType, entryPrice, quote.price, parsedData.executionType);
-        const slDist = currentTfATR * 1.3;
+        const slDist = calculateDynamicInstrumentTimeframeSL(validId, quote.symbol, timeframe, quote.price);
 
         const generatedSignal = {
           id: `sig_${Date.now()}_${validId.toLowerCase()}`,
@@ -5034,7 +5018,7 @@ Generate valid JSON output:
         }
 
         const executionType = calculateExecutionType(signalType, entryPrice, quote.price, parsedData.executionType);
-        const slDist = currentTfATR * 1.3;
+        const slDist = calculateDynamicInstrumentTimeframeSL(instrumentId, quote.symbol, timeframe, quote.price);
 
         const customSignal = {
           id: `custom_sig_${Date.now()}_${instrumentId.toLowerCase()}`,
@@ -5283,11 +5267,11 @@ function buildDeterministicSignal(
   }
 
   const isBuy = executionType.includes('BUY');
-  const slDist = Number((tfATR * 1.3).toFixed(decimals));
+  const slDist = calculateDynamicInstrumentTimeframeSL(instrumentId, quote.symbol, timeframe, quote.price);
   const sl = Number((isBuy ? entry - slDist : entry + slDist).toFixed(decimals));
   const tp1 = Number((isBuy ? entry + slDist * 1.5 : entry - slDist * 1.5).toFixed(decimals));
-  const tp2 = Number((isBuy ? entry + slDist * 2.5 : entry - slDist * 2.5).toFixed(decimals));
-  const tp3 = Number((isBuy ? entry + slDist * 3.8 : entry - slDist * 3.8).toFixed(decimals));
+  const tp2 = Number((isBuy ? entry + slDist * 2.2 : entry - slDist * 2.2).toFixed(decimals));
+  const tp3 = Number((isBuy ? entry + slDist * 3.0 : entry - slDist * 3.0).toFixed(decimals));
 
   let titleRo = `Semnal ${executionType} (${quote.symbol})`;
   let titleEn = `Live ${executionType} Signal (${quote.symbol})`;
@@ -5747,15 +5731,30 @@ app.get('/api/mt5/signals', (req, res) => {
       action = isSellDirection ? 'SELL' : 'BUY';
     }
 
+    const entryPrice = Number(s.entryPrice) || 0;
+    const stopLoss = Number(s.stopLoss) || 0;
+    const tp1 = Number(s.targetPrice1) || 0;
+    const tp2 = Number(s.targetPrice2) || 0;
+    const tp3 = Number(s.targetPrice3) || 0;
+    const slDist = Math.abs(entryPrice - stopLoss);
+    const tp1Dist = Math.abs(tp1 - entryPrice);
+    const tp2Dist = Math.abs(tp2 - entryPrice);
+    const tp3Dist = Math.abs(tp3 - entryPrice);
+
     return {
       signal_id: s.id || `SIG-${Math.floor(Math.random() * 90000 + 10000)}`,
       symbol: mapToMt5Symbol(s.instrumentId),
       action: action,
-      entry: Number(s.entryPrice) || 0,
-      sl: Number(s.stopLoss) || 0,
-      tp1: Number(s.targetPrice1) || 0,
-      tp2: Number(s.targetPrice2) || 0,
-      tp3: Number(s.targetPrice3) || 0,
+      timeframe: s.timeframe || '15m',
+      entry: entryPrice,
+      sl: stopLoss,
+      tp1: tp1,
+      tp2: tp2,
+      tp3: tp3,
+      sl_dist: slDist,
+      tp1_dist: tp1Dist,
+      tp2_dist: tp2Dist,
+      tp3_dist: tp3Dist,
       expiration: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
       status: 'ACTIVE',
     };

@@ -379,6 +379,89 @@ export function getTimeframeATR(baseDailyATR?: number, timeframe?: string, curre
   return Number((rawATR * tfFactor).toFixed(decimals));
 }
 
+export function calculateDynamicInstrumentTimeframeSL(
+  instrumentId?: string,
+  symbol?: string,
+  timeframe?: string,
+  currentPrice?: number
+): number {
+  const p = currentPrice || 1000;
+  const tf = (timeframe || '15m').toLowerCase();
+  const id = (instrumentId || '').toUpperCase();
+  const sym = (symbol || '').toUpperCase();
+
+  // 1. DOW JONES (US30 / DJ30 / YM)
+  if (id.includes('DOW') || id.includes('US30') || sym.includes('US30') || sym.includes('DJ30') || sym.includes('YM')) {
+    if (tf === '1m') return 35.0;
+    if (tf === '5m') return 70.0;
+    if (tf === '15m') return 140.0;
+    if (tf === '1h') return 280.0;
+    if (tf === '4h') return 520.0;
+    return 850.0; // 1D
+  }
+
+  // 2. NASDAQ 100 (NAS100 / NQ)
+  if (id.includes('NAS') || id.includes('NQ') || sym.includes('NAS') || sym.includes('NQ') || sym.includes('US100') || sym.includes('USTEC')) {
+    if (tf === '1m') return 22.0;
+    if (tf === '5m') return 45.0;
+    if (tf === '15m') return 90.0;
+    if (tf === '1h') return 180.0;
+    if (tf === '4h') return 340.0;
+    return 550.0; // 1D
+  }
+
+  // 3. GOLD (XAU/USD / GC)
+  if (id.includes('GOLD') || id.includes('XAU') || id.includes('GC') || sym.includes('XAU') || sym.includes('GOLD') || sym.includes('GC')) {
+    if (tf === '1m') return 2.2;
+    if (tf === '5m') return 4.5;
+    if (tf === '15m') return 8.5;
+    if (tf === '1h') return 18.0;
+    if (tf === '4h') return 35.0;
+    return 60.0; // 1D
+  }
+
+  // 4. S&P 500 (SPX500 / ES)
+  if (id.includes('SPX') || id.includes('ES') || sym.includes('SPX') || sym.includes('ES') || sym.includes('US500')) {
+    if (tf === '1m') return 5.0;
+    if (tf === '5m') return 10.0;
+    if (tf === '15m') return 18.0;
+    if (tf === '1h') return 38.0;
+    if (tf === '4h') return 70.0;
+    return 120.0; // 1D
+  }
+
+  // 5. FOREX EUR/USD & GBP/USD
+  if (id.includes('EUR') || id.includes('GBP') || sym.includes('EUR') || sym.includes('GBP')) {
+    if (tf === '1m') return 0.0007; // 7 pips
+    if (tf === '5m') return 0.0013; // 13 pips
+    if (tf === '15m') return 0.0022; // 22 pips
+    if (tf === '1h') return 0.0045; // 45 pips
+    if (tf === '4h') return 0.0080; // 80 pips
+    return 0.0140; // 140 pips (1D)
+  }
+
+  // 6. FOREX USD/JPY
+  if (id.includes('JPY') || sym.includes('JPY')) {
+    if (tf === '1m') return 0.08;
+    if (tf === '5m') return 0.16;
+    if (tf === '15m') return 0.30;
+    if (tf === '1h') return 0.60;
+    if (tf === '4h') return 1.10;
+    return 1.80;
+  }
+
+  // General fallback: % of price based on timeframe
+  let factor = 0.0025; // 15m default
+  if (tf === '1m') factor = 0.0008;
+  else if (tf === '5m') factor = 0.0015;
+  else if (tf === '15m') factor = 0.0025;
+  else if (tf === '1h') factor = 0.0055;
+  else if (tf === '4h') factor = 0.0100;
+  else if (tf === '1d') factor = 0.0160;
+
+  return Number((p * factor).toFixed(2));
+}
+
 export function validateAndFixSignalPrices(sig: TradingSignal, liveMarketPrice?: number, liveATR?: number): TradingSignal {
   if (!sig) return sig;
   const mPrice = liveMarketPrice || sig.currentMarketPrice || sig.entryPrice;
@@ -416,10 +499,10 @@ export function validateAndFixSignalPrices(sig: TradingSignal, liveMarketPrice?:
   let execType = calculateExecutionType(normalizedType, entry, mPrice, sig.executionType);
 
   // DYNAMIC ATR CALCULATIONS FOR VOLATILITY-BASED STOP LOSS & TAKE PROFITS
-  const defaultAtrRatio = isForex5 ? 0.006 : isForex3 ? 0.007 : 0.013;
-  const baseATR = liveATR || sig.atrDaily || sig.atr || (mPrice * defaultAtrRatio);
   const tf = (sig.timeframe as string) || '15m';
-  const tfATR = getTimeframeATR(baseATR, tf, mPrice);
+  const dynamicSLDist = calculateDynamicInstrumentTimeframeSL(sig.instrumentId, sig.symbol, tf, mPrice);
+  const tfATR = Number((dynamicSLDist / 1.2).toFixed(decimals));
+  const baseATR = liveATR || sig.atrDaily || sig.atr || Number((dynamicSLDist * 3.5).toFixed(decimals));
 
   const isScalp = tf === '1m' || tf === '5m' || tf === '15m';
 
@@ -450,32 +533,15 @@ export function validateAndFixSignalPrices(sig: TradingSignal, liveMarketPrice?:
     }
   }
 
-  // SL ATR Multipliers: exact calibration per timeframe
-  let slATRMult = 1.2;
-  if (tf === '1m') slATRMult = 1.0;
-  else if (tf === '5m') slATRMult = 1.1;
-  else if (tf === '15m') slATRMult = 1.2;
-  else if (tf === '1h') slATRMult = 1.3;
-  else slATRMult = 1.5;
+  // Exact dynamic SL distance based on timeframe
+  const atrSLDist = dynamicSLDist;
 
-  const atrSLDist = Number((tfATR * slATRMult).toFixed(decimals));
-
-  // Determine Stop Loss: STRICTLY calculated from Entry Price so |entry - SL| = atrSLDist
-  let sl = sig.stopLoss;
-  if (isBuy) {
-    const targetSL = Number((entry - atrSLDist).toFixed(decimals));
-    if (!sl || sl >= entry || sl <= 0 || Math.abs(entry - sl) > atrSLDist * 1.8 || Math.abs(entry - sl) < atrSLDist * 0.5) {
-      sl = targetSL;
-    }
-  } else {
-    const targetSL = Number((entry + atrSLDist).toFixed(decimals));
-    if (!sl || sl <= entry || sl <= 0 || Math.abs(sl - entry) > atrSLDist * 1.8 || Math.abs(sl - entry) < atrSLDist * 0.5) {
-      sl = targetSL;
-    }
-  }
+  // Determine Stop Loss: STRICTLY calculated from Entry Price and timeframe-calibrated dynamic distance
+  const sl = Number((isBuy ? entry - atrSLDist : entry + atrSLDist).toFixed(decimals));
 
   // Actual Risk Distance (pts)
-  const actualRisk = Math.abs(entry - sl);
+  const actualRisk = atrSLDist;
+  const slATRMult = 1.2;
 
   // Calibrated Risk:Reward Ratios per Target
   // Scalp (1m, 5m, 15m): TP1 = 1:1.5, TP2 = 1:2.2, TP3 = 1:3.0

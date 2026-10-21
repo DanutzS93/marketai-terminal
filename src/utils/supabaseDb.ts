@@ -87,8 +87,8 @@ CREATE TABLE IF NOT EXISTS public.app_invite_codes (
 ALTER TABLE public.app_users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.app_invite_codes ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Allow public select for app_users" ON public.app_users FOR ALL USING (true);
-CREATE POLICY "Allow public select for app_invite_codes" ON public.app_invite_codes FOR ALL USING (true);
+CREATE POLICY "Allow full access for app_users" ON public.app_users FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow full access for app_invite_codes" ON public.app_invite_codes FOR ALL USING (true) WITH CHECK (true);
 `;
 
 /**

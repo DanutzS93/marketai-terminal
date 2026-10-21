@@ -226,6 +226,93 @@ string ExtractJsonNestedValue(string json, string parentKey, string key)
 }
 
 //+------------------------------------------------------------------+
+//| Dynamic Timeframe-calibrated Minimum Safe SL Distance            |
+//+------------------------------------------------------------------+
+double GetMinimumSafeSLDistance(string sym, string tf, double currentPrice)
+{
+   string s = sym;
+   StringToUpper(s);
+   string t = tf;
+   StringToLower(t);
+   
+   // Dow Jones (US30, DJ30, WS30, YM)
+   if(StringFind(s, "US30") != -1 || StringFind(s, "DJ30") != -1 || StringFind(s, "DOW") != -1 || StringFind(s, "WS30") != -1 || StringFind(s, "YM") != -1)
+   {
+      if(t == "1m")  return 35.0;
+      if(t == "5m")  return 70.0;
+      if(t == "15m") return 140.0;
+      if(t == "1h")  return 280.0;
+      if(t == "4h")  return 520.0;
+      return 850.0;
+   }
+   
+   // Nasdaq (NAS100, US100, USTEC, NQ)
+   if(StringFind(s, "NAS") != -1 || StringFind(s, "US100") != -1 || StringFind(s, "USTEC") != -1 || StringFind(s, "NQ") != -1)
+   {
+      if(t == "1m")  return 22.0;
+      if(t == "5m")  return 45.0;
+      if(t == "15m") return 90.0;
+      if(t == "1h")  return 180.0;
+      if(t == "4h")  return 340.0;
+      return 550.0;
+   }
+   
+   // Gold (XAUUSD, GOLD, GC)
+   if(StringFind(s, "XAU") != -1 || StringFind(s, "GOLD") != -1 || StringFind(s, "GC") != -1)
+   {
+      if(t == "1m")  return 2.2;
+      if(t == "5m")  return 4.5;
+      if(t == "15m") return 8.5;
+      if(t == "1h")  return 18.0;
+      if(t == "4h")  return 35.0;
+      return 60.0;
+   }
+   
+   // S&P 500 (SPX500, US500, ES)
+   if(StringFind(s, "SPX") != -1 || StringFind(s, "US500") != -1 || StringFind(s, "ES") != -1)
+   {
+      if(t == "1m")  return 5.0;
+      if(t == "5m")  return 10.0;
+      if(t == "15m") return 18.0;
+      if(t == "1h")  return 38.0;
+      if(t == "4h")  return 70.0;
+      return 120.0;
+   }
+   
+   // Forex EUR/USD, GBP/USD
+   if(StringFind(s, "EUR") != -1 || StringFind(s, "GBP") != -1)
+   {
+      if(t == "1m")  return 0.0007;
+      if(t == "5m")  return 0.0013;
+      if(t == "15m") return 0.0022;
+      if(t == "1h")  return 0.0045;
+      if(t == "4h")  return 0.0080;
+      return 0.0140;
+   }
+   
+   // Forex USD/JPY
+   if(StringFind(s, "JPY") != -1)
+   {
+      if(t == "1m")  return 0.08;
+      if(t == "5m")  return 0.16;
+      if(t == "15m") return 0.30;
+      if(t == "1h")  return 0.60;
+      if(t == "4h")  return 1.10;
+      return 1.80;
+   }
+   
+   double fallbackPct = 0.0025;
+   if(t == "1m")  fallbackPct = 0.0008;
+   if(t == "5m")  fallbackPct = 0.0015;
+   if(t == "15m") fallbackPct = 0.0025;
+   if(t == "1h")  fallbackPct = 0.0055;
+   if(t == "4h")  fallbackPct = 0.0100;
+   if(t == "1d")  fallbackPct = 0.0160;
+   
+   return (currentPrice > 0 ? currentPrice : 1000.0) * fallbackPct;
+}
+
+//+------------------------------------------------------------------+
 //| Calculate dynamic lot size based on % risk & distance to SL      |
 //+------------------------------------------------------------------+
 double CalculateLotSize(string sym, double entryPrice, double slPrice, double riskPct)
@@ -918,6 +1005,13 @@ void FetchAndExecuteSignals()
          double tp2   = NormalizeDouble(StringToDouble(ExtractJsonValue(sigJson, "tp2")), digits);
          double tp3   = NormalizeDouble(StringToDouble(ExtractJsonValue(sigJson, "tp3")), digits);
          
+         string timeframe = ExtractJsonValue(sigJson, "timeframe");
+         if(timeframe == "") timeframe = "15m";
+         double slDist  = StringToDouble(ExtractJsonValue(sigJson, "sl_dist"));
+         double tp1Dist = StringToDouble(ExtractJsonValue(sigJson, "tp1_dist"));
+         double tp2Dist = StringToDouble(ExtractJsonValue(sigJson, "tp2_dist"));
+         double tp3Dist = StringToDouble(ExtractJsonValue(sigJson, "tp3_dist"));
+         
          // Determine direction based on action string AND price orientation
          bool isSell = (StringFind(action, "SELL") != -1 || StringFind(action, "SHORT") != -1);
          if(!isSell && sl > 0 && ((entry > 0 && sl > entry) || (ask > 0 && sl > ask)))
@@ -925,21 +1019,16 @@ void FetchAndExecuteSignals()
             isSell = true;
          }
 
-         // Fallback SL/TP3 if 0
-         if(!isSell)
-         {
-            if(sl <= 0)  sl  = NormalizeDouble(ask - 300 * point, digits);
-            if(tp3 <= 0) tp3 = NormalizeDouble(ask + 600 * point, digits);
-            if(tp1 <= 0) tp1 = NormalizeDouble(ask + 200 * point, digits);
-            if(tp2 <= 0) tp2 = NormalizeDouble(ask + 400 * point, digits);
-         }
-         else
-         {
-            if(sl <= 0)  sl  = NormalizeDouble(bid + 300 * point, digits);
-            if(tp3 <= 0) tp3 = NormalizeDouble(bid - 600 * point, digits);
-            if(tp1 <= 0) tp1 = NormalizeDouble(bid - 200 * point, digits);
-            if(tp2 <= 0) tp2 = NormalizeDouble(bid - 400 * point, digits);
-         }
+         // Calculate intended distances with dynamic timeframe protection
+         double intendedSlDist = slDist;
+         if(intendedSlDist <= 0 && entry > 0 && sl > 0) intendedSlDist = MathAbs(entry - sl);
+         double refPrice = (entry > 0) ? entry : (isSell ? bid : ask);
+         double minSafeSL = GetMinimumSafeSLDistance(targetSymbol, timeframe, refPrice);
+         if(intendedSlDist < minSafeSL) intendedSlDist = minSafeSL;
+
+         double intendedTp1Dist = (tp1Dist > 0) ? tp1Dist : (intendedSlDist * 1.5);
+         double intendedTp2Dist = (tp2Dist > 0) ? tp2Dist : (intendedSlDist * 2.2);
+         double intendedTp3Dist = (tp3Dist > 0) ? tp3Dist : (intendedSlDist * 3.0);
 
          // Validate and auto-adjust pending orders if market price has already reached or crossed the level
          string orderExecAction = action;
@@ -986,45 +1075,50 @@ void FetchAndExecuteSignals()
             }
          }
 
-         // Ensure SL & TP strictly comply with broker minimum distance
-         if(entry > 0.0)
+         // STRICT RE-ALIGNMENT OF SL & TPs:
+         // 1. For Market Orders (or converted pending): SL and TPs MUST be computed relative to actual execution price (ask/bid)!
+         if(!isPendingOrder || entry <= 0.0)
          {
-            // Pending orders: distance relative to entry price
+            double tradePrice = isSell ? bid : ask;
             if(!isSell)
             {
-               double maxAllowedSL = NormalizeDouble(entry - minDistance, digits);
-               if(sl >= maxAllowedSL) sl = maxAllowedSL;
-
-               double minAllowedTP = NormalizeDouble(entry + minDistance, digits);
-               if(tp3 <= minAllowedTP) tp3 = minAllowedTP;
+               sl  = NormalizeDouble(tradePrice - intendedSlDist, digits);
+               tp1 = NormalizeDouble(tradePrice + intendedTp1Dist, digits);
+               tp2 = NormalizeDouble(tradePrice + intendedTp2Dist, digits);
+               tp3 = NormalizeDouble(tradePrice + intendedTp3Dist, digits);
+               if(sl >= (bid - minDistance)) sl = NormalizeDouble(bid - minDistance, digits);
+               if(tp3 <= (ask + minDistance)) tp3 = NormalizeDouble(ask + minDistance, digits);
             }
             else
             {
-               double minAllowedSL = NormalizeDouble(entry + minDistance, digits);
-               if(sl <= minAllowedSL) sl = minAllowedSL;
-
-               double maxAllowedTP = NormalizeDouble(entry - minDistance, digits);
-               if(tp3 >= maxAllowedTP) tp3 = maxAllowedTP;
+               sl  = NormalizeDouble(tradePrice + intendedSlDist, digits);
+               tp1 = NormalizeDouble(tradePrice - intendedTp1Dist, digits);
+               tp2 = NormalizeDouble(tradePrice - intendedTp2Dist, digits);
+               tp3 = NormalizeDouble(tradePrice - intendedTp3Dist, digits);
+               if(sl <= (ask + minDistance)) sl = NormalizeDouble(ask + minDistance, digits);
+               if(tp3 >= (bid - minDistance)) tp3 = NormalizeDouble(bid - minDistance, digits);
             }
          }
          else
          {
-            // Market orders: In MT5, BUY SL is checked against Bid, SELL SL against Ask
+            // 2. For Pending Orders: SL and TPs relative to entry
             if(!isSell)
             {
-               double maxAllowedSL = NormalizeDouble(bid - minDistance, digits);
-               if(sl >= maxAllowedSL) sl = maxAllowedSL;
-
-               double minAllowedTP = NormalizeDouble(ask + minDistance, digits);
-               if(tp3 <= minAllowedTP) tp3 = minAllowedTP;
+               sl  = NormalizeDouble(entry - intendedSlDist, digits);
+               tp1 = NormalizeDouble(entry + intendedTp1Dist, digits);
+               tp2 = NormalizeDouble(entry + intendedTp2Dist, digits);
+               tp3 = NormalizeDouble(entry + intendedTp3Dist, digits);
+               if(sl >= (entry - minDistance)) sl = NormalizeDouble(entry - minDistance, digits);
+               if(tp3 <= (entry + minDistance)) tp3 = NormalizeDouble(entry + minDistance, digits);
             }
             else
             {
-               double minAllowedSL = NormalizeDouble(ask + minDistance, digits);
-               if(sl <= minAllowedSL) sl = minAllowedSL;
-
-               double maxAllowedTP = NormalizeDouble(bid - minDistance, digits);
-               if(tp3 >= maxAllowedTP) tp3 = maxAllowedTP;
+               sl  = NormalizeDouble(entry + intendedSlDist, digits);
+               tp1 = NormalizeDouble(entry - intendedTp1Dist, digits);
+               tp2 = NormalizeDouble(entry - intendedTp2Dist, digits);
+               tp3 = NormalizeDouble(entry - intendedTp3Dist, digits);
+               if(sl <= (entry + minDistance)) sl = NormalizeDouble(entry + minDistance, digits);
+               if(tp3 >= (entry - minDistance)) tp3 = NormalizeDouble(entry - minDistance, digits);
             }
          }
 
@@ -1050,7 +1144,7 @@ void FetchAndExecuteSignals()
             if(tp2 > 0)   tp2   = NormalizeDouble(MathRound(tp2 / tickSize) * tickSize, digits);
          }
          
-         // DYNAMIC LOT SIZE CALCULATION BASED ON % RISK & SL DISTANCE
+         // DYNAMIC LOT SIZE CALCULATION BASED ON % RISK & REAL SL DISTANCE
          double tradePrice = (entry > 0) ? entry : (isSell ? bid : ask);
          double finalLot = CalculateLotSize(targetSymbol, tradePrice, sl, liveRiskPercent);
          
@@ -1082,11 +1176,31 @@ void FetchAndExecuteSignals()
          }
 
          // Fallback 1: If pending order failed for ANY reason (10015 invalid price, 10016 invalid stops, 10013, 10014),
-         // or if it was converted to a market order, execute directly at market price!
+         // or if it was converted to a market order, execute directly at market price with properly recalibrated SL/TP!
          if(!orderSuccess && isPendingOrder)
          {
             Print("[MarketAI] Plasarea ordinului pending (", orderExecAction, " la ", entry, ") a fost respinsă de broker (Cod: ", trade.ResultRetcode(), " - ", trade.ResultRetcodeDescription(), "). Se execută imediat la prețul curent al pieței (MARKET ORDER)...");
             SetupTradeFillingMode(targetSymbol);
+            double execPrice = isSell ? bid : ask;
+            if(!isSell)
+            {
+               sl  = NormalizeDouble(execPrice - intendedSlDist, digits);
+               tp1 = NormalizeDouble(execPrice + intendedTp1Dist, digits);
+               tp2 = NormalizeDouble(execPrice + intendedTp2Dist, digits);
+               tp3 = NormalizeDouble(execPrice + intendedTp3Dist, digits);
+               if(sl >= (bid - minDistance)) sl = NormalizeDouble(bid - minDistance, digits);
+               if(tp3 <= (ask + minDistance)) tp3 = NormalizeDouble(ask + minDistance, digits);
+            }
+            else
+            {
+               sl  = NormalizeDouble(execPrice + intendedSlDist, digits);
+               tp1 = NormalizeDouble(execPrice - intendedTp1Dist, digits);
+               tp2 = NormalizeDouble(execPrice - intendedTp2Dist, digits);
+               tp3 = NormalizeDouble(execPrice - intendedTp3Dist, digits);
+               if(sl <= (ask + minDistance)) sl = NormalizeDouble(ask + minDistance, digits);
+               if(tp3 >= (bid - minDistance)) tp3 = NormalizeDouble(bid - minDistance, digits);
+            }
+            finalLot = CalculateLotSize(targetSymbol, execPrice, sl, liveRiskPercent);
             if(isSell)
                orderSuccess = trade.Sell(finalLot, targetSymbol, 0.0, sl, tp3, orderComment);
             else
@@ -1106,6 +1220,8 @@ void FetchAndExecuteSignals()
          {
             Print("[MarketAI] Broker ECN / restricții stops (Cod ", trade.ResultRetcode(), "). Se reîncearcă plasarea fără SL/TP inițial și aplicarea imediată prin PositionModify...");
             SetupTradeFillingMode(targetSymbol);
+            double execPrice = isSell ? bid : ask;
+            finalLot = CalculateLotSize(targetSymbol, execPrice, sl, liveRiskPercent);
             if(isSell)
                orderSuccess = trade.Sell(finalLot, targetSymbol, 0.0, 0.0, 0.0, orderComment);
             else
@@ -1116,28 +1232,26 @@ void FetchAndExecuteSignals()
                Sleep(150);
                double curBid = SymbolInfoDouble(targetSymbol, SYMBOL_BID);
                double curAsk = SymbolInfoDouble(targetSymbol, SYMBOL_ASK);
-               double curMinDist = MathMax((double)SymbolInfoInteger(targetSymbol, SYMBOL_TRADE_STOPS_LEVEL), (double)SymbolInfoInteger(targetSymbol, SYMBOL_SPREAD)) * point;
-               if(curMinDist < 10.0 * point) curMinDist = 10.0 * point;
-
                if(!isSell)
                {
-                  if(sl >= (curBid - curMinDist)) sl = NormalizeDouble(curBid - curMinDist - 2 * point, digits);
-                  if(tp3 <= (curAsk + curMinDist)) tp3 = NormalizeDouble(curAsk + curMinDist + 2 * point, digits);
-                  if(tickSize > 0)
-                  {
-                     sl = NormalizeDouble(MathFloor(sl / tickSize) * tickSize, digits);
-                     tp3 = NormalizeDouble(MathCeil(tp3 / tickSize) * tickSize, digits);
-                  }
+                  sl  = NormalizeDouble(curAsk - intendedSlDist, digits);
+                  tp3 = NormalizeDouble(curAsk + intendedTp3Dist, digits);
+                  if(sl >= (curBid - minDistance)) sl = NormalizeDouble(curBid - minDistance, digits);
+                  if(tp3 <= (curAsk + minDistance)) tp3 = NormalizeDouble(curAsk + minDistance, digits);
                }
                else
                {
-                  if(sl <= (curAsk + curMinDist)) sl = NormalizeDouble(curAsk + curMinDist + 2 * point, digits);
-                  if(tp3 >= (curBid - curMinDist)) tp3 = NormalizeDouble(curBid - curMinDist - 2 * point, digits);
-                  if(tickSize > 0)
-                  {
-                     sl = NormalizeDouble(MathCeil(sl / tickSize) * tickSize, digits);
-                     tp3 = NormalizeDouble(MathFloor(tp3 / tickSize) * tickSize, digits);
-                  }
+                  sl  = NormalizeDouble(curBid + intendedSlDist, digits);
+                  tp3 = NormalizeDouble(curBid - intendedTp3Dist, digits);
+                  if(sl <= (curAsk + minDistance)) sl = NormalizeDouble(curAsk + minDistance, digits);
+                  if(tp3 >= (curBid - minDistance)) tp3 = NormalizeDouble(curBid - minDistance, digits);
+               }
+               if(tickSize > 0)
+               {
+                  if(!isSell) sl = NormalizeDouble(MathFloor(sl / tickSize) * tickSize, digits);
+                  else sl = NormalizeDouble(MathCeil(sl / tickSize) * tickSize, digits);
+                  if(!isSell) tp3 = NormalizeDouble(MathCeil(tp3 / tickSize) * tickSize, digits);
+                  else tp3 = NormalizeDouble(MathFloor(tp3 / tickSize) * tickSize, digits);
                }
 
                for(int p = PositionsTotal() - 1; p >= 0; p--)
@@ -1242,8 +1356,11 @@ void ManageActivePositions()
          // [A] BUY POSITIONS MANAGEMENT
          if(posType == POSITION_TYPE_BUY)
          {
-            // 1. AUTO BREAK-EVEN & TP1 PARTIAL CLOSE (70%)
-            if(!tp1Hit && activeTp1 > 0 && currentPrice >= activeTp1)
+            double posProfit = PositionGetDouble(POSITION_PROFIT);
+            bool isInProfit = (posProfit > 0.0) && (currentPrice > (openPrice + minDistance));
+
+            // 1. AUTO BREAK-EVEN & TP1 PARTIAL CLOSE (70%) - STRICT PROFIT VERIFICATION
+            if(isInProfit && !tp1Hit && activeTp1 > (openPrice + minDistance) && currentPrice >= activeTp1)
             {
                double partialVolume = NormalizeDouble(volume * 0.7, 2);
                if(partialVolume >= SymbolInfoDouble(targetSymbol, SYMBOL_VOLUME_MIN))
@@ -1251,7 +1368,7 @@ void ManageActivePositions()
                   if(trade.PositionClosePartial(ticket, partialVolume))
                   {
                      tp1Hit = true;
-                     Print("MarketAI: TP1 reached at ", currentPrice, "! Closed 70% partial.");
+                     Print("MarketAI: TP1 reached at ", currentPrice, "! Profit: +$", posProfit, ". Closed 70% partial.");
                      
                      // Move SL to Break-Even + 2 points buffer if Auto Break-Even enabled
                      if(liveAutoBreakEven)
@@ -1271,8 +1388,8 @@ void ManageActivePositions()
                }
             }
             
-            // 2. TP2 PARTIAL CLOSE (10%)
-            if(tp1Hit && !tp2Hit && activeTp2 > 0 && currentPrice >= activeTp2)
+            // 2. TP2 PARTIAL CLOSE (10%) - STRICT PROFIT VERIFICATION
+            if(isInProfit && tp1Hit && !tp2Hit && activeTp2 > activeTp1 && currentPrice >= activeTp2)
             {
                double partialVolume = NormalizeDouble(volume * 0.1, 2);
                if(partialVolume >= SymbolInfoDouble(targetSymbol, SYMBOL_VOLUME_MIN))
@@ -1280,14 +1397,14 @@ void ManageActivePositions()
                   if(trade.PositionClosePartial(ticket, partialVolume))
                   {
                      tp2Hit = true;
-                     Print("MarketAI: TP2 reached at ", currentPrice, "! Closed 10% partial.");
+                     Print("MarketAI: TP2 reached at ", currentPrice, "! Profit: +$", posProfit, ". Closed 10% partial.");
                      SendStatusUpdate(activeSignalId, "RUNNING", "PROFIT", "TP2");
                   }
                }
             }
             
             // 3. SMART TRAILING STOP
-            if(liveTrailingStop)
+            if(liveTrailingStop && isInProfit)
             {
                double profitPoints = (bid - openPrice) / point;
                if(profitPoints >= InpTrailTriggerPoints)
@@ -1310,8 +1427,11 @@ void ManageActivePositions()
          // [B] SELL POSITIONS MANAGEMENT
          else if(posType == POSITION_TYPE_SELL)
          {
-            // 1. AUTO BREAK-EVEN & TP1 PARTIAL CLOSE (70%)
-            if(!tp1Hit && activeTp1 > 0 && currentPrice <= activeTp1)
+            double posProfit = PositionGetDouble(POSITION_PROFIT);
+            bool isInProfit = (posProfit > 0.0) && (currentPrice < (openPrice - minDistance));
+
+            // 1. AUTO BREAK-EVEN & TP1 PARTIAL CLOSE (70%) - STRICT PROFIT VERIFICATION
+            if(isInProfit && !tp1Hit && activeTp1 < (openPrice - minDistance) && currentPrice <= activeTp1)
             {
                double partialVolume = NormalizeDouble(volume * 0.7, 2);
                if(partialVolume >= SymbolInfoDouble(targetSymbol, SYMBOL_VOLUME_MIN))
@@ -1319,7 +1439,7 @@ void ManageActivePositions()
                   if(trade.PositionClosePartial(ticket, partialVolume))
                   {
                      tp1Hit = true;
-                     Print("MarketAI: TP1 reached at ", currentPrice, "! Closed 70% partial.");
+                     Print("MarketAI: TP1 reached at ", currentPrice, "! Profit: +$", posProfit, ". Closed 70% partial.");
                      
                      // Move SL to Break-Even - 2 points buffer if Auto Break-Even enabled
                      if(liveAutoBreakEven)
@@ -1339,8 +1459,8 @@ void ManageActivePositions()
                }
             }
             
-            // 2. TP2 PARTIAL CLOSE (10%)
-            if(tp1Hit && !tp2Hit && activeTp2 > 0 && currentPrice <= activeTp2)
+            // 2. TP2 PARTIAL CLOSE (10%) - STRICT PROFIT VERIFICATION
+            if(isInProfit && tp1Hit && !tp2Hit && activeTp2 < activeTp1 && currentPrice <= activeTp2)
             {
                double partialVolume = NormalizeDouble(volume * 0.1, 2);
                if(partialVolume >= SymbolInfoDouble(targetSymbol, SYMBOL_VOLUME_MIN))
@@ -1348,14 +1468,14 @@ void ManageActivePositions()
                   if(trade.PositionClosePartial(ticket, partialVolume))
                   {
                      tp2Hit = true;
-                     Print("MarketAI: TP2 reached at ", currentPrice, "! Closed 10% partial.");
+                     Print("MarketAI: TP2 reached at ", currentPrice, "! Profit: +$", posProfit, ". Closed 10% partial.");
                      SendStatusUpdate(activeSignalId, "RUNNING", "PROFIT", "TP2");
                   }
                }
             }
             
             // 3. SMART TRAILING STOP
-            if(liveTrailingStop)
+            if(liveTrailingStop && isInProfit)
             {
                double profitPoints = (openPrice - ask) / point;
                if(profitPoints >= InpTrailTriggerPoints)
