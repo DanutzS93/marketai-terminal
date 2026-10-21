@@ -891,8 +891,17 @@ void FetchAndExecuteSignals()
          double tickSize = SymbolInfoDouble(targetSymbol, SYMBOL_TRADE_TICK_SIZE);
          if(tickSize <= 0) tickSize = point;
 
-         double ask = SymbolInfoDouble(targetSymbol, SYMBOL_ASK);
-         double bid = SymbolInfoDouble(targetSymbol, SYMBOL_BID);
+         // Fresh tick retrieval
+         double ask = 0.0;
+         double bid = 0.0;
+         MqlTick lastTick;
+         if(SymbolInfoTick(targetSymbol, lastTick))
+         {
+            ask = lastTick.ask;
+            bid = lastTick.bid;
+         }
+         if(ask <= 0.0) ask = SymbolInfoDouble(targetSymbol, SYMBOL_ASK);
+         if(bid <= 0.0) bid = SymbolInfoDouble(targetSymbol, SYMBOL_BID);
 
          int stopsLevel = (int)SymbolInfoInteger(targetSymbol, SYMBOL_TRADE_STOPS_LEVEL);
          int freezeLevel = (int)SymbolInfoInteger(targetSymbol, SYMBOL_TRADE_FREEZE_LEVEL);
@@ -932,38 +941,48 @@ void FetchAndExecuteSignals()
             if(tp2 <= 0) tp2 = NormalizeDouble(bid - 400 * point, digits);
          }
 
-         // Validate and auto-adjust pending orders if market price has already crossed the level
+         // Validate and auto-adjust pending orders if market price has already reached or crossed the level
          string orderExecAction = action;
+         bool isPendingOrder = (StringFind(action, "LIMIT") != -1 || StringFind(action, "STOP") != -1);
+
          if(StringFind(action, "BUY_LIMIT") != -1)
          {
-            if(entry <= 0 || entry >= (bid - minDistance))
+            if(entry <= 0 || (bid > 0 && entry >= (bid - minDistance)))
             {
+               Print("[MarketAI] Prețul pieței (", bid, ") a atins/depășit nivelul BUY_LIMIT (", entry, "). Se comută automat pe ordin la piață (BUY)...");
                orderExecAction = "BUY";
                entry = 0.0;
+               isPendingOrder = false;
             }
          }
          else if(StringFind(action, "SELL_LIMIT") != -1)
          {
-            if(entry <= 0 || entry <= (ask + minDistance))
+            if(entry <= 0 || (ask > 0 && entry <= (ask + minDistance)))
             {
+               Print("[MarketAI] Prețul pieței (", ask, ") a atins/depășit nivelul SELL_LIMIT (", entry, "). Se comută automat pe ordin la piață (SELL)...");
                orderExecAction = "SELL";
                entry = 0.0;
+               isPendingOrder = false;
             }
          }
          else if(StringFind(action, "BUY_STOP") != -1)
          {
-            if(entry <= 0 || entry <= (ask + minDistance))
+            if(entry <= 0 || (ask > 0 && entry <= (ask + minDistance)))
             {
+               Print("[MarketAI] Prețul pieței (", ask, ") a atins/depășit nivelul BUY_STOP (", entry, "). Se comută automat pe ordin la piață (BUY)...");
                orderExecAction = "BUY";
                entry = 0.0;
+               isPendingOrder = false;
             }
          }
          else if(StringFind(action, "SELL_STOP") != -1)
          {
-            if(entry <= 0 || entry >= (bid - minDistance))
+            if(entry <= 0 || (bid > 0 && entry >= (bid - minDistance)))
             {
+               Print("[MarketAI] Prețul pieței (", bid, ") a atins/depășit nivelul SELL_STOP (", entry, "). Se comută automat pe ordin la piață (SELL)...");
                orderExecAction = "SELL";
                entry = 0.0;
+               isPendingOrder = false;
             }
          }
 
@@ -1039,35 +1058,54 @@ void FetchAndExecuteSignals()
          string orderComment = sigId;
          if(StringLen(orderComment) > 31) orderComment = StringSubstr(sigId, 0, 31);
          
-         if(StringFind(orderExecAction, "BUY_LIMIT") != -1 && entry > 0)
+         // 1. Try placing as pending order if applicable
+         if(isPendingOrder && entry > 0)
          {
-            orderSuccess = trade.BuyLimit(finalLot, entry, targetSymbol, sl, tp3, 0, 0, orderComment);
-         }
-         else if(StringFind(orderExecAction, "SELL_LIMIT") != -1 && entry > 0)
-         {
-            orderSuccess = trade.SellLimit(finalLot, entry, targetSymbol, sl, tp3, 0, 0, orderComment);
-         }
-         else if(StringFind(orderExecAction, "BUY_STOP") != -1 && entry > 0)
-         {
-            orderSuccess = trade.BuyStop(finalLot, entry, targetSymbol, sl, tp3, 0, 0, orderComment);
-         }
-         else if(StringFind(orderExecAction, "SELL_STOP") != -1 && entry > 0)
-         {
-            orderSuccess = trade.SellStop(finalLot, entry, targetSymbol, sl, tp3, 0, 0, orderComment);
-         }
-         else if(isSell)
-         {
-            orderSuccess = trade.Sell(finalLot, targetSymbol, 0.0, sl, tp3, orderComment);
-         }
-         else
-         {
-            orderSuccess = trade.Buy(finalLot, targetSymbol, 0.0, sl, tp3, orderComment);
+            // Pending orders in MT5 require ORDER_FILLING_RETURN (FOK/IOC causes error 10015/10013)
+            trade.SetTypeFilling(ORDER_FILLING_RETURN);
+            if(StringFind(orderExecAction, "BUY_LIMIT") != -1)
+            {
+               orderSuccess = trade.BuyLimit(finalLot, entry, targetSymbol, sl, tp3, ORDER_TIME_GTC, 0, orderComment);
+            }
+            else if(StringFind(orderExecAction, "SELL_LIMIT") != -1)
+            {
+               orderSuccess = trade.SellLimit(finalLot, entry, targetSymbol, sl, tp3, ORDER_TIME_GTC, 0, orderComment);
+            }
+            else if(StringFind(orderExecAction, "BUY_STOP") != -1)
+            {
+               orderSuccess = trade.BuyStop(finalLot, entry, targetSymbol, sl, tp3, ORDER_TIME_GTC, 0, orderComment);
+            }
+            else if(StringFind(orderExecAction, "SELL_STOP") != -1)
+            {
+               orderSuccess = trade.SellStop(finalLot, entry, targetSymbol, sl, tp3, ORDER_TIME_GTC, 0, orderComment);
+            }
          }
 
-         // Two-stage fallback: If broker returns 10016/10015 (Invalid Stops / ECN Market Execution restriction)
-         if(!orderSuccess && (trade.ResultRetcode() == 10016 || trade.ResultRetcode() == 10015))
+         // Fallback 1: If pending order failed for ANY reason (10015 invalid price, 10016 invalid stops, 10013, 10014),
+         // or if it was converted to a market order, execute directly at market price!
+         if(!orderSuccess && isPendingOrder)
          {
-            Print("[MarketAI] Broker a returnat ", trade.ResultRetcode(), " (Invalid Stops/Price). Se reîncearcă plasarea fără SL/TP inițial și aplicarea imediată prin PositionModify...");
+            Print("[MarketAI] Plasarea ordinului pending (", orderExecAction, " la ", entry, ") a fost respinsă de broker (Cod: ", trade.ResultRetcode(), " - ", trade.ResultRetcodeDescription(), "). Se execută imediat la prețul curent al pieței (MARKET ORDER)...");
+            SetupTradeFillingMode(targetSymbol);
+            if(isSell)
+               orderSuccess = trade.Sell(finalLot, targetSymbol, 0.0, sl, tp3, orderComment);
+            else
+               orderSuccess = trade.Buy(finalLot, targetSymbol, 0.0, sl, tp3, orderComment);
+         }
+         else if(!isPendingOrder)
+         {
+            SetupTradeFillingMode(targetSymbol);
+            if(isSell)
+               orderSuccess = trade.Sell(finalLot, targetSymbol, 0.0, sl, tp3, orderComment);
+            else
+               orderSuccess = trade.Buy(finalLot, targetSymbol, 0.0, sl, tp3, orderComment);
+         }
+
+         // Fallback 2: ECN Market Execution restriction (broker does not accept SL/TP on initial market order)
+         if(!orderSuccess && (trade.ResultRetcode() == 10016 || trade.ResultRetcode() == 10015 || trade.ResultRetcode() == 10013))
+         {
+            Print("[MarketAI] Broker ECN / restricții stops (Cod ", trade.ResultRetcode(), "). Se reîncearcă plasarea fără SL/TP inițial și aplicarea imediată prin PositionModify...");
+            SetupTradeFillingMode(targetSymbol);
             if(isSell)
                orderSuccess = trade.Sell(finalLot, targetSymbol, 0.0, 0.0, 0.0, orderComment);
             else
@@ -1131,12 +1169,14 @@ void FetchAndExecuteSignals()
             tp1Hit = false;
             tp2Hit = false;
             
-            Print("[MarketAI SUCCES] Tranzactie executata cu succes (", action, ") Lot: ", finalLot, " (Risc: ", liveRiskPercent, "%) pe ", targetSymbol, " Signal ID: ", sigId, " SL: ", sl, " TP3: ", tp3);
+            Print("[MarketAI SUCCES] Tranzacție executată cu succes (", action, ") Lot: ", finalLot, " (Risc: ", liveRiskPercent, "%) pe ", targetSymbol, " Signal ID: ", sigId, " SL: ", sl, " TP3: ", tp3);
             SendStatusUpdate(sigId, "RUNNING", "OPENED", "ENTRY");
          }
          else
          {
-            Print("[MarketAI EROARE ORDIN] Ordinul nu a putut fi plasat pe ", targetSymbol, "! Actiune: ", action, " Lot: ", finalLot, " Cod MT5: ", trade.ResultRetcode(), " (", trade.ResultRetcodeDescription(), ")");
+            Print("[MarketAI EROARE ORDIN] Ordinul nu a putut fi plasat pe ", targetSymbol, "! Acțiune: ", action, " Lot: ", finalLot, " Cod MT5: ", trade.ResultRetcode(), " (", trade.ResultRetcodeDescription(), ")");
+            // Evităm repetarea erorii în buclă la fiecare 4 secunde
+            MarkSignalAsProcessed(sigId);
          }
       }
    }
