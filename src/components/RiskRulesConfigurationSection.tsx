@@ -64,15 +64,27 @@ export const RiskRulesConfigurationSection: React.FC<RiskRulesConfigurationSecti
   const [customLeverage, setCustomLeverage] = useState<string>('100');
   const [isCustomLeverage, setIsCustomLeverage] = useState<boolean>(false);
 
-  // Risk Rules Parameters
+  // Risk Rules Parameters (Default standard mode: Trailing/BE disabled, Max Trades 50)
   const [riskPerTrade, setRiskPerTrade] = useState<number>(user?.riskSettings?.riskPerTrade ?? 1);
   const [maxDailyLoss, setMaxDailyLoss] = useState<number>(user?.riskSettings?.maxDailyLoss ?? 3000);
-  const [maxTradesPerDay, setMaxTradesPerDay] = useState<number>(user?.riskSettings?.maxTradesPerDay ?? 10);
-  const [maxTradesPerSymbol, setMaxTradesPerSymbol] = useState<number>(user?.riskSettings?.maxTradesPerSymbol ?? 3);
+  const [maxTradesPerDay, setMaxTradesPerDay] = useState<number>(
+    user?.riskSettings?.maxTradesPerDay && user.riskSettings.maxTradesPerDay !== 10
+      ? user.riskSettings.maxTradesPerDay
+      : 50
+  );
+  const [maxTradesPerSymbol, setMaxTradesPerSymbol] = useState<number>(
+    user?.riskSettings?.maxTradesPerSymbol && user.riskSettings.maxTradesPerSymbol !== 3
+      ? user.riskSettings.maxTradesPerSymbol
+      : 50
+  );
   const [dailyProfitTarget, setDailyProfitTarget] = useState<number>(user?.riskSettings?.dailyProfitTarget ?? 5000);
   const [minConfidence, setMinConfidence] = useState<number>(user?.riskSettings?.minSignalScore ?? 75);
-  const [autoBreakEven, setAutoBreakEven] = useState<boolean>(user?.riskSettings?.autoBreakEven ?? true);
-  const [trailingStop, setTrailingStop] = useState<boolean>(user?.riskSettings?.trailingStop ?? true);
+  const [autoBreakEven, setAutoBreakEven] = useState<boolean>(
+    user?.riskSettings?.isCustomized ? !!user.riskSettings.autoBreakEven : false
+  );
+  const [trailingStop, setTrailingStop] = useState<boolean>(
+    user?.riskSettings?.isCustomized ? !!user.riskSettings.trailingStop : false
+  );
   const [trailingStopPoints, setTrailingStopPoints] = useState<number>(user?.riskSettings?.trailingStopPoints ?? 50);
   const [trailingStopBaseAsset, setTrailingStopBaseAsset] = useState<InstrumentId>(
     (user?.riskSettings?.trailingStopBaseAsset as InstrumentId) || (initialSelectedInstrument as InstrumentId) || 'NASDAQ'
@@ -225,6 +237,7 @@ export const RiskRulesConfigurationSection: React.FC<RiskRulesConfigurationSecti
               trailingStopPointsPerAsset: trailingStopConversions.pointsMap,
               trailingStopCustomOverrides,
               leverage,
+              isCustomized: true,
             },
           }),
         });
@@ -246,6 +259,7 @@ export const RiskRulesConfigurationSection: React.FC<RiskRulesConfigurationSecti
           trailingStopPointsPerAsset: trailingStopConversions.pointsMap,
           trailingStopCustomOverrides,
           leverage,
+          isCustomized: true,
         };
       }
 
@@ -577,7 +591,7 @@ export const RiskRulesConfigurationSection: React.FC<RiskRulesConfigurationSecti
                   value={maxTradesPerDay}
                   onChange={(e) => setMaxTradesPerDay(Number(e.target.value))}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2.5 px-3 text-white font-mono font-bold text-sm focus:outline-none focus:border-cyan-500 transition"
-                  placeholder="10"
+                  placeholder="50"
                 />
               </div>
 
@@ -590,7 +604,7 @@ export const RiskRulesConfigurationSection: React.FC<RiskRulesConfigurationSecti
                   value={maxTradesPerSymbol}
                   onChange={(e) => setMaxTradesPerSymbol(Number(e.target.value))}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2.5 px-3 text-white font-mono font-bold text-sm focus:outline-none focus:border-cyan-500 transition"
-                  placeholder="3"
+                  placeholder="50"
                 />
               </div>
             </div>

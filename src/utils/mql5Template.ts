@@ -39,12 +39,12 @@ input double   InpDefaultLotSize        = 0.10;           // Fixed / Fallback Lo
 input group "=== [4] Daily Risk Guards (Prop Firm / Account Safety) ==="
 input double   InpMaxDailyLoss          = 3000.0;         // Max Daily Loss ($) - Halts trading when reached
 input double   InpDailyProfitTarget     = 5000.0;         // Daily Profit Target ($) - Locks profits when reached (0 to disable)
-input int      InpMaxTradesPerDay       = 10;             // Max Trades allowed per calendar day
-input int      InpMaxTradesPerSymbol    = 3;              // Max Concurrent trades per symbol
+input int      InpMaxTradesPerDay       = 50;             // Max Trades allowed per calendar day
+input int      InpMaxTradesPerSymbol    = 50;             // Max Concurrent trades per symbol
 
 input group "=== [5] Position Management & Smart Trailing ==="
-input bool     InpAutoBreakEven         = true;           // Auto move SL to Break-Even at TP1 (+2 points buffer)
-input bool     InpSmartTrailingStop     = true;           // Dynamic Trailing Stop to lock in running trend profits
+input bool     InpAutoBreakEven         = false;          // Auto move SL to Break-Even at TP1 (+2 points buffer)
+input bool     InpSmartTrailingStop     = false;          // Dynamic Trailing Stop to lock in running trend profits
 input int      InpTrailTriggerPoints    = 150;            // Points in profit required to activate Trailing Stop
 input int      InpTrailDistancePoints   = 200;            // Distance in points behind current price to trail SL
 input int      InpTrailStepPoints       = 50;             // Step in points before moving SL again
@@ -64,10 +64,10 @@ bool   tp2Hit = false;
 double liveRiskPercent        = 1.0;
 double liveMaxDailyLoss       = 3000.0;
 double liveDailyProfitTarget  = 5000.0;
-int    liveMaxTradesPerDay    = 10;
-int    liveMaxTradesPerSymbol = 3;
-bool   liveAutoBreakEven      = true;
-bool   liveTrailingStop       = true;
+int    liveMaxTradesPerDay    = 50;
+int    liveMaxTradesPerSymbol = 50;
+bool   liveAutoBreakEven      = false;
+bool   liveTrailingStop       = false;
 int    liveTrailDistancePoints = InpTrailDistancePoints;
 int    liveMinConfidence      = 75;
 

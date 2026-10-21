@@ -215,6 +215,7 @@ export interface UserProfile {
     trailingStopPointsPerAsset?: Partial<Record<InstrumentId, number>>;
     trailingStopCustomOverrides?: Partial<Record<InstrumentId, number>>;
     leverage?: number;
+    isCustomized?: boolean;
   };
   tradeJournal?: TradeJournalEntry[];
 }

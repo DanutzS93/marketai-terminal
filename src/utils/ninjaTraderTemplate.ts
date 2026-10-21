@@ -137,9 +137,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                 AutoMapToMicro       = false;
                 OrderMode            = MarketAiOrderMode.RespectSignalOrderType;
                 PollIntervalSeconds  = 2;
-                EnableTrailingStop   = true;
+                EnableTrailingStop   = false;
                 TrailingStopTicks    = 80;
-                AutoBreakEven        = true;
+                AutoBreakEven        = false;
             }
             else if (State == State.Configure)
             {
@@ -321,6 +321,10 @@ namespace NinjaTrader.NinjaScript.Strategies
                 string trailingStopStr = ExtractJsonString(json, "trailingStop");
                 if (!string.IsNullOrEmpty(trailingStopStr))
                     EnableTrailingStop = (trailingStopStr.ToLower() == "true");
+
+                string autoBreakEvenStr = ExtractJsonString(json, "autoBreakEven");
+                if (!string.IsNullOrEmpty(autoBreakEvenStr))
+                    AutoBreakEven = (autoBreakEvenStr.ToLower() == "true");
 
                 string instName = Instrument.MasterInstrument.Name.ToUpper();
                 double tickSz = Instrument.MasterInstrument.TickSize;
