@@ -80,10 +80,14 @@ export const RiskRulesConfigurationSection: React.FC<RiskRulesConfigurationSecti
   const [dailyProfitTarget, setDailyProfitTarget] = useState<number>(user?.riskSettings?.dailyProfitTarget ?? 5000);
   const [minConfidence, setMinConfidence] = useState<number>(user?.riskSettings?.minSignalScore ?? 75);
   const [autoBreakEven, setAutoBreakEven] = useState<boolean>(
-    user?.riskSettings?.isCustomized ? !!user.riskSettings.autoBreakEven : false
+    typeof user?.riskSettings?.autoBreakEven === 'boolean'
+      ? user.riskSettings.autoBreakEven
+      : false
   );
   const [trailingStop, setTrailingStop] = useState<boolean>(
-    user?.riskSettings?.isCustomized ? !!user.riskSettings.trailingStop : false
+    typeof user?.riskSettings?.trailingStop === 'boolean'
+      ? user.riskSettings.trailingStop
+      : false
   );
   const [trailingStopPoints, setTrailingStopPoints] = useState<number>(user?.riskSettings?.trailingStopPoints ?? 50);
   const [trailingStopBaseAsset, setTrailingStopBaseAsset] = useState<InstrumentId>(
@@ -206,6 +210,49 @@ export const RiskRulesConfigurationSection: React.FC<RiskRulesConfigurationSecti
 
   const handleResetAllOverrides = () => {
     setTrailingStopCustomOverrides({});
+  };
+
+  const handleToggleAutoBreakEven = async (checked: boolean) => {
+    setAutoBreakEven(checked);
+    if (user) {
+      if (!user.riskSettings) user.riskSettings = {};
+      user.riskSettings.autoBreakEven = checked;
+      user.riskSettings.isCustomized = true;
+    }
+    if (authToken) {
+      try {
+        await fetch('/api/user/sync-data', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${authToken}`,
+          },
+          body: JSON.stringify({
+            accountBalance,
+            leverage,
+            riskSettings: {
+              ...(user?.riskSettings || {}),
+              riskPerTrade,
+              maxDailyLoss,
+              dailyProfitTarget,
+              maxTradesPerDay,
+              maxTradesPerSymbol,
+              minSignalScore: minConfidence,
+              autoBreakEven: checked,
+              trailingStop,
+              trailingStopPoints,
+              trailingStopBaseAsset,
+              trailingStopPointsPerAsset: trailingStopConversions.pointsMap,
+              trailingStopCustomOverrides,
+              leverage,
+              isCustomized: true,
+            },
+          }),
+        });
+      } catch (err) {
+        console.error('Failed to sync autoBreakEven immediately:', err);
+      }
+    }
   };
 
   const handleSaveSettings = async () => {
@@ -611,20 +658,29 @@ export const RiskRulesConfigurationSection: React.FC<RiskRulesConfigurationSecti
 
             {/* Advanced EA Guard Toggles */}
             <div className="pt-4 border-t border-slate-800 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="flex items-center justify-between p-3 rounded-xl bg-slate-950 border border-slate-800/80">
-                <div>
-                  <span className="text-xs font-bold text-slate-200 block">
-                    {lang === 'ro' ? 'Break-Even la TP1' : 'Auto Break-Even at TP1'}
-                  </span>
-                  <span className="text-[10px] text-slate-500">
-                    {lang === 'ro' ? 'Muta SL la Entry automat' : 'Moves SL to Entry on TP1'}
+              <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-950 border border-slate-800/80 hover:border-slate-700 transition">
+                <div className="pr-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-200 block">
+                      {lang === 'ro' ? 'Break-Even la TP1' : 'Auto Break-Even at TP1'}
+                    </span>
+                    <span className={`px-1.5 py-0.2 rounded text-[9px] font-mono font-bold uppercase ${
+                      autoBreakEven 
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' 
+                        : 'bg-slate-800 text-slate-400 border border-slate-700'
+                    }`}>
+                      {autoBreakEven ? (lang === 'ro' ? 'Activ' : 'Active') : (lang === 'ro' ? 'Inactiv' : 'Disabled')}
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 block mt-0.5">
+                    {lang === 'ro' ? 'Închide 70% la TP1 și mută automat SL la Entry (Zero Risc)' : 'Closes 70% at TP1 and auto-moves SL to Entry (Zero Risk)'}
                   </span>
                 </div>
                 <input
                   type="checkbox"
                   checked={autoBreakEven}
-                  onChange={(e) => setAutoBreakEven(e.target.checked)}
-                  className="w-4 h-4 accent-indigo-500 rounded cursor-pointer"
+                  onChange={(e) => handleToggleAutoBreakEven(e.target.checked)}
+                  className="w-5 h-5 accent-indigo-500 rounded cursor-pointer shrink-0"
                 />
               </div>
 
