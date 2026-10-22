@@ -98,7 +98,7 @@ export interface TradingSignal {
   targetPrice3: number;
   riskRewardRatio: string;
   confidencePercent: number;
-  status: 'ACTIVE' | 'TARGET_HIT' | 'EXPIRED' | 'CANCELLED';
+  status: 'ACTIVE' | 'TARGET_HIT' | 'EXPIRED' | 'CANCELLED' | 'CLOSED';
   outcomeStatus?: 'PENDING' | 'RUNNING' | 'TP1_HIT' | 'TP2_HIT' | 'TP3_HIT' | 'SL_HIT' | 'CANCELLED' | 'ACTIVE';
   firstHitMilestone?: 'TP1' | 'TP2' | 'TP3' | 'SL' | 'ENTRY' | 'PENDING' | 'CANCELLED';
   isBeHitAfterTp1?: boolean;
@@ -109,6 +109,9 @@ export interface TradingSignal {
   ninjaTraderPlaced?: boolean;
   ninjaTraderPlacedAt?: string;
   pnl?: number;
+  realizedProfit?: number;
+  exitPrice?: number;
+  closedAt?: string;
   accountSource?: 'MT5' | 'NINJATRADER' | 'SIM' | 'AUTO';
   cancelReason?: string;
   cancelReasonRo?: string;
@@ -217,6 +220,7 @@ export interface UserProfile {
     leverage?: number;
     isCustomized?: boolean;
   };
+  signals?: TradingSignal[];
   tradeJournal?: TradeJournalEntry[];
 }
 

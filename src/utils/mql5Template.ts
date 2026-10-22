@@ -11,8 +11,8 @@ export function getMql5EaCode(
 //+------------------------------------------------------------------+
 #property copyright "MarketAI Signals"
 #property link      "https://ai.studio"
-#property version   "4.60"
-#property description "MarketAI MT5 Auto-Trading Bridge with Real-Time Risk Rules & Smart Trailing Engine"
+#property version   "4.70"
+#property description "MarketAI MT5 Auto-Trading Bridge with Real-Time Risk Rules, Dynamic Trailing & Exact Broker PnL Sync"
 
 #include <Trade\\Trade.mqh>
 CTrade trade;
@@ -59,6 +59,22 @@ double activeTp2 = 0;
 double activeTp3 = 0;
 bool   tp1Hit = false;
 bool   tp2Hit = false;
+
+struct TrackedTrade {
+   string signalId;
+   ulong  positionId;
+   ulong  positionTicket;
+   string symbol;
+   long   posType;
+   double openPrice;
+   double volume;
+   bool   tp1Hit;
+   bool   tp2Hit;
+   bool   isClosed;
+   double finalPnl;
+   datetime openTime;
+};
+TrackedTrade trackedTrades[];
 
 // Effective Live Risk Rules (can be overridden by Web API in real-time)
 double liveRiskPercent        = 1.0;
@@ -578,7 +594,7 @@ void UpdateChartHUD()
    int symTrades = GetSymbolActiveCount(targetSymbol);
    
    string hud = "=======================================================\\n" +
-                "  MarketAI Signals MT5 Bridge v4.60 (Pro Risk Engine)  \\n" +
+                "  MarketAI Signals MT5 Bridge v4.70 (Real PnL Sync Engine)  \\n" +
                 "=======================================================\\n" +
                 " Connected Account : #" + IntegerToString(login) + " (" + serverName + ")\\n" +
                 " Balance / Equity   : $" + DoubleToString(balance, 2) + " / $" + DoubleToString(equity, 2) + "\\n" +
@@ -621,7 +637,11 @@ int OnInit()
    long login = AccountInfoInteger(ACCOUNT_LOGIN);
    string serverName = AccountInfoString(ACCOUNT_SERVER);
    string company = AccountInfoString(ACCOUNT_COMPANY);
-   Print("MarketAI MT5 Bridge v4.60 initialized. Target Symbol: ", targetSymbol, " Magic: ", InpMagicNumber, " Connected Account: #", login, " (", serverName, ") [", company, "]");
+   Print("MarketAI MT5 Bridge v4.70 initialized with Exact Broker PnL Engine. Target Symbol: ", targetSymbol, " Magic: ", InpMagicNumber, " Connected Account: #", login, " (", serverName, ") [", company, "]");
+   
+   // Register any existing open positions and sync historical closed trades from MT5
+   RegisterOpenPositions();
+   SyncClosedHistoricalTrades();
    
    // Send immediate initial sync on startup
    SendAccountSync();
@@ -638,7 +658,22 @@ void OnDeinit(const int reason)
 {
    EventKillTimer();
    Comment("");
-   Print("MarketAI MT5 Bridge v4.60 stopped.");
+   Print("MarketAI MT5 Bridge v4.70 stopped.");
+}
+
+//+------------------------------------------------------------------+
+//| TradeTransaction function: triggers instantly on any deal/fill   |
+//+------------------------------------------------------------------+
+void OnTradeTransaction(const MqlTradeTransaction &trans,
+                        const MqlTradeRequest &request,
+                        const MqlTradeResult &result)
+{
+   if(trans.type == TRADE_TRANSACTION_DEAL_ADD)
+   {
+      CheckAndReportTrackedTrades();
+      SendAccountSync();
+      UpdateChartHUD();
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -646,8 +681,19 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTimer()
 {
+   static int syncCounter = 0;
+   syncCounter++;
+
    FetchAndExecuteSignals();
    ManageActivePositions();
+   CheckAndReportTrackedTrades();
+
+   // Sync historical closed trades periodically every ~24 seconds
+   if(syncCounter % 6 == 0)
+   {
+      SyncClosedHistoricalTrades();
+   }
+
    SendAccountSync();
    UpdateChartHUD();
 }
@@ -679,10 +725,84 @@ void SendAccountSync()
 }
 
 //+------------------------------------------------------------------+
-//| Send status update back to MarketAI                              |
+//| Extract signal ID from order or deal comment                     |
 //+------------------------------------------------------------------+
-void SendStatusUpdate(string signalId, string status, string outcome, string milestone)
+string ExtractSignalIdFromText(string text)
 {
+   if(text == "") return "";
+   int p = StringFind(text, "sig_");
+   if(p == -1) p = StringFind(text, "SIG_");
+   if(p == -1) p = StringFind(text, "SIG-");
+   if(p == -1) p = StringFind(text, "sig-");
+   if(p != -1)
+   {
+      string sub = StringSubstr(text, p);
+      int len = StringLen(sub);
+      for(int i = 0; i < len; i++)
+      {
+         ushort c = StringGetCharacter(sub, i);
+         if(c == ' ' || c == ';' || c == ',' || c == ')' || c == ']' || c == '\\"' || c == '\\r' || c == '\\n')
+         {
+            return StringSubstr(sub, 0, i);
+         }
+      }
+      return sub;
+   }
+   if(StringFind(text, "MarketAI ") == 0)
+   {
+      return StringSubstr(text, 9);
+   }
+   return "";
+}
+
+//+------------------------------------------------------------------+
+//| Calculate exact cumulative realized P&L for a position ticket    |
+//| Sums profit, swap, commission across all entry and exit deals    |
+//+------------------------------------------------------------------+
+double GetRealizedProfitForPosition(ulong posId, double &lastExitPrice)
+{
+   double totalProfit = 0.0;
+   lastExitPrice = 0.0;
+   
+   if(HistorySelect(0, TimeCurrent() + 86400))
+   {
+      int dealsTotal = HistoryDealsTotal();
+      for(int i = 0; i < dealsTotal; i++)
+      {
+         ulong dealTicket = HistoryDealGetTicket(i);
+         if(dealTicket > 0)
+         {
+            long dealPosId = HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
+            if(dealPosId == (long)posId)
+            {
+               long entryType = HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
+               if(entryType == DEAL_ENTRY_OUT || entryType == DEAL_ENTRY_INOUT)
+               {
+                  totalProfit += HistoryDealGetDouble(dealTicket, DEAL_PROFIT);
+                  totalProfit += HistoryDealGetDouble(dealTicket, DEAL_SWAP);
+                  totalProfit += HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
+                  totalProfit += HistoryDealGetDouble(dealTicket, DEAL_FEE);
+                  lastExitPrice = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
+               }
+               else if(entryType == DEAL_ENTRY_IN)
+               {
+                  totalProfit += HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
+                  totalProfit += HistoryDealGetDouble(dealTicket, DEAL_FEE);
+               }
+            }
+         }
+      }
+   }
+   return NormalizeDouble(totalProfit, 2);
+}
+
+//+------------------------------------------------------------------+
+//| Send trade execution, update & realized P&L to MarketAI Web API  |
+//+------------------------------------------------------------------+
+void SendTradeUpdate(string signalId, string status, string outcome, string milestone, double pnl = 0.0, double exitPrice = 0.0)
+{
+   if(signalId == "") return;
+   
    uchar data[];
    uchar result[];
    string result_headers;
@@ -696,7 +816,25 @@ void SendStatusUpdate(string signalId, string status, string outcome, string mil
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
    
-   string payload = "{\\"signal_id\\":\\"" + signalId + "\\",\\"status\\":\\"" + status + "\\",\\"outcomeStatus\\":\\"" + outcome + "\\",\\"milestone\\":\\"" + milestone + "\\",\\"accountNumber\\":\\"" + IntegerToString(login) + "\\",\\"accountServer\\":\\"" + serverName + "\\",\\"accountCurrency\\":\\"" + currency + "\\",\\"accountCompany\\":\\"" + company + "\\",\\"accountBalance\\":" + DoubleToString(balance, 2) + ",\\"equity\\":" + DoubleToString(equity, 2) + "}";
+   string exitPriceJson = "";
+   if(exitPrice > 0.0)
+   {
+      exitPriceJson = ",\\"exitPrice\\":" + DoubleToString(exitPrice, 5);
+   }
+   
+   string payload = "{\\"signal_id\\":\\"" + signalId + "\\"," +
+                    "\\"status\\":\\"" + status + "\\"," +
+                    "\\"outcomeStatus\\":\\"" + outcome + "\\"," +
+                    "\\"milestone\\":\\"" + milestone + "\\"," +
+                    "\\"pnl\\":" + DoubleToString(pnl, 2) + "," +
+                    "\\"profit\\":" + DoubleToString(pnl, 2) + exitPriceJson + "," +
+                    "\\"accountNumber\\":\\"" + IntegerToString(login) + "\\"," +
+                    "\\"accountServer\\":\\"" + serverName + "\\"," +
+                    "\\"accountCurrency\\":\\"" + currency + "\\"," +
+                    "\\"accountCompany\\":\\"" + company + "\\"," +
+                    "\\"accountBalance\\":" + DoubleToString(balance, 2) + "," +
+                    "\\"equity\\":" + DoubleToString(equity, 2) + "}";
+                    
    ArrayResize(data, StringLen(payload));
    StringToCharArray(payload, data, 0, StringLen(payload), CP_UTF8);
    
@@ -707,7 +845,195 @@ void SendStatusUpdate(string signalId, string status, string outcome, string mil
    int res = WebRequest("POST", updateURL, headers, 4000, data, result, result_headers);
    if(res == 200)
    {
-      Print("MarketAI: Status updated for signal ", signalId, " -> ", milestone);
+      Print("[MarketAI] Status & Realized PnL updated for signal ", signalId, " -> ", milestone, " | PnL: $", DoubleToString(pnl, 2), (exitPrice > 0 ? (" @ " + DoubleToString(exitPrice, 2)) : ""));
+   }
+}
+
+// Backward compatibility wrapper
+void SendStatusUpdate(string signalId, string status, string outcome, string milestone)
+{
+   SendTradeUpdate(signalId, status, outcome, milestone, 0.0, 0.0);
+}
+
+//+------------------------------------------------------------------+
+//| Register or update tracked signal trade in memory                |
+//+------------------------------------------------------------------+
+void RegisterTrackedTrade(string sigId, ulong posTicket, ulong posId, string sym, long pType, double oPrice, double vol)
+{
+   if(sigId == "" || posId == 0) return;
+   for(int i = 0; i < ArraySize(trackedTrades); i++)
+   {
+      if(trackedTrades[i].positionId == posId || trackedTrades[i].signalId == sigId)
+      {
+         trackedTrades[i].positionTicket = posTicket;
+         trackedTrades[i].positionId = posId;
+         trackedTrades[i].signalId = sigId;
+         trackedTrades[i].symbol = sym;
+         trackedTrades[i].posType = pType;
+         trackedTrades[i].openPrice = oPrice;
+         trackedTrades[i].volume = vol;
+         return;
+      }
+   }
+   int sz = ArraySize(trackedTrades);
+   ArrayResize(trackedTrades, sz + 1);
+   trackedTrades[sz].signalId = sigId;
+   trackedTrades[sz].positionId = posId;
+   trackedTrades[sz].positionTicket = posTicket;
+   trackedTrades[sz].symbol = sym;
+   trackedTrades[sz].posType = pType;
+   trackedTrades[sz].openPrice = oPrice;
+   trackedTrades[sz].volume = vol;
+   trackedTrades[sz].tp1Hit = false;
+   trackedTrades[sz].tp2Hit = false;
+   trackedTrades[sz].isClosed = false;
+   trackedTrades[sz].finalPnl = 0.0;
+   trackedTrades[sz].openTime = TimeCurrent();
+}
+
+//+------------------------------------------------------------------+
+//| Scan and register currently open MT5 positions for this EA       |
+//+------------------------------------------------------------------+
+void RegisterOpenPositions()
+{
+   for(int p = PositionsTotal() - 1; p >= 0; p--)
+   {
+      ulong t = PositionGetTicket(p);
+      if(t > 0 && PositionGetInteger(POSITION_MAGIC) == InpMagicNumber)
+      {
+         string comm = PositionGetString(POSITION_COMMENT);
+         string sigId = ExtractSignalIdFromText(comm);
+         if(sigId != "")
+         {
+            ulong posId = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
+            string sym = PositionGetString(POSITION_SYMBOL);
+            long pType = PositionGetInteger(POSITION_TYPE);
+            double oPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+            double vol = PositionGetDouble(POSITION_VOLUME);
+            RegisterTrackedTrade(sigId, t, posId, sym, pType, oPrice, vol);
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Check tracked positions and report closed trades immediately     |
+//+------------------------------------------------------------------+
+void CheckAndReportTrackedTrades()
+{
+   for(int i = 0; i < ArraySize(trackedTrades); i++)
+   {
+      if(trackedTrades[i].isClosed) continue;
+      
+      ulong posId = trackedTrades[i].positionId;
+      bool stillOpen = false;
+      
+      for(int p = PositionsTotal() - 1; p >= 0; p--)
+      {
+         ulong pTicket = PositionGetTicket(p);
+         if(pTicket > 0)
+         {
+            ulong pId = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
+            if(pId == posId || pTicket == trackedTrades[i].positionTicket)
+            {
+               stillOpen = true;
+               break;
+            }
+         }
+      }
+      
+      if(!stillOpen)
+      {
+         // Position is closed in MT5!
+         double exitPrice = 0.0;
+         double realPnl = GetRealizedProfitForPosition(posId, exitPrice);
+         trackedTrades[i].isClosed = true;
+         trackedTrades[i].finalPnl = realPnl;
+         
+         string outcome = (realPnl > 0.01) ? "TP1_HIT" : ((realPnl < -0.01) ? "SL_HIT" : "BREAKEVEN");
+         if(trackedTrades[i].tp2Hit && realPnl > 0.01) outcome = "TP2_HIT";
+         
+         Print("[MarketAI] Trade closed in MT5 for Signal ", trackedTrades[i].signalId, " (Pos #", posId, ")! Realized PnL: $", DoubleToString(realPnl, 2), " Exit Price: ", exitPrice);
+         SendTradeUpdate(trackedTrades[i].signalId, "CLOSED", outcome, "POSITION_CLOSED", realPnl, exitPrice);
+         
+         if(activeSignalId == trackedTrades[i].signalId)
+         {
+            activeSignalId = "";
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Historical Deals Scanner: Synchronize closed trades from MT5     |
+//+------------------------------------------------------------------+
+void SyncClosedHistoricalTrades()
+{
+   // Select past 30 days of trade history
+   datetime fromTime = TimeCurrent() - (30 * 86400);
+   if(HistorySelect(fromTime, TimeCurrent() + 86400))
+   {
+      int dealsTotal = HistoryDealsTotal();
+      long syncedPosIds[];
+      
+      for(int i = dealsTotal - 1; i >= 0; i--)
+      {
+         ulong dealTicket = HistoryDealGetTicket(i);
+         if(dealTicket > 0)
+         {
+            long magic = HistoryDealGetInteger(dealTicket, DEAL_MAGIC);
+            if(magic == InpMagicNumber || InpMagicNumber == 0)
+            {
+               string comment = HistoryDealGetString(dealTicket, DEAL_COMMENT);
+               string sigId = ExtractSignalIdFromText(comment);
+               
+               if(sigId == "")
+               {
+                  ulong ordTicket = (ulong)HistoryDealGetInteger(dealTicket, DEAL_ORDER);
+                  if(HistoryOrderSelect(ordTicket))
+                  {
+                     sigId = ExtractSignalIdFromText(HistoryOrderGetString(ordTicket, ORDER_COMMENT));
+                  }
+               }
+               
+               long posId = HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
+               if(sigId != "" && posId > 0)
+               {
+                  bool already = false;
+                  for(int k = 0; k < ArraySize(syncedPosIds); k++)
+                  {
+                     if(syncedPosIds[k] == posId) { already = true; break; }
+                  }
+                  if(already) continue;
+                  
+                  int sz = ArraySize(syncedPosIds);
+                  ArrayResize(syncedPosIds, sz + 1);
+                  syncedPosIds[sz] = posId;
+                  
+                  // Verify if currently open
+                  bool isOpen = false;
+                  for(int p = PositionsTotal() - 1; p >= 0; p--)
+                  {
+                     ulong pTicket = PositionGetTicket(p);
+                     if(pTicket > 0 && (ulong)PositionGetInteger(POSITION_IDENTIFIER) == (ulong)posId)
+                     {
+                        isOpen = true;
+                        break;
+                     }
+                  }
+                  
+                  if(!isOpen)
+                  {
+                     double exitPrice = 0.0;
+                     double realPnl = GetRealizedProfitForPosition((ulong)posId, exitPrice);
+                     string outcome = (realPnl > 0.01) ? "TP1_HIT" : ((realPnl < -0.01) ? "SL_HIT" : "BREAKEVEN");
+                     
+                     SendTradeUpdate(sigId, "CLOSED", outcome, "HISTORICAL_SYNC", realPnl, exitPrice);
+                  }
+               }
+            }
+         }
+      }
    }
 }
 
@@ -844,8 +1170,11 @@ void FetchAndExecuteSignals()
                   if(shouldClose)
                   {
                      trade.PositionClose(posTicket);
-                     Print("MarketAI: Position #", posTicket, " (Signal: ", sigToCheck, ") closed via Web Terminal command!");
-                     SendStatusUpdate(sigToCheck, "CLOSED", "MANUAL_CLOSED", "CLOSED_VIA_TERMINAL");
+                     Sleep(100);
+                     double exitPr = 0.0;
+                     double realizedPnl = GetRealizedProfitForPosition(posTicket, exitPr);
+                     Print("MarketAI: Position #", posTicket, " (Signal: ", sigToCheck, ") closed via Web Terminal command! Realized PnL: $", DoubleToString(realizedPnl, 2));
+                     SendTradeUpdate(sigToCheck, "CLOSED", (realizedPnl > 0 ? "TP1_HIT" : "SL_HIT"), "CLOSED_VIA_TERMINAL", realizedPnl, exitPr);
                      if(activeSignalId == sigToCheck) activeSignalId = "";
                   }
                }
@@ -1430,7 +1759,10 @@ void ManageActivePositions()
                   }
 
                   tp1Hit = true;
-                  SendStatusUpdate(activeSignalId, "RUNNING", "PROFIT", "TP1_BREAK_EVEN");
+                  Sleep(100);
+                  double exitPr = 0.0;
+                  double currentRealized = GetRealizedProfitForPosition(ticket, exitPr);
+                  SendTradeUpdate(activeSignalId, "RUNNING", "PROFIT", "TP1_BREAK_EVEN", currentRealized, currentPrice);
                }
             }
             
@@ -1538,7 +1870,10 @@ void ManageActivePositions()
                   }
 
                   tp1Hit = true;
-                  SendStatusUpdate(activeSignalId, "RUNNING", "PROFIT", "TP1_BREAK_EVEN");
+                  Sleep(100);
+                  double exitPr = 0.0;
+                  double currentRealized = GetRealizedProfitForPosition(ticket, exitPr);
+                  SendTradeUpdate(activeSignalId, "RUNNING", "PROFIT", "TP1_BREAK_EVEN", currentRealized, currentPrice);
                }
             }
             

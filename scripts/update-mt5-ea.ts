@@ -104,9 +104,18 @@ export function updateMt5Ea(): void {
         }
 
         if (fs.existsSync(logFile)) {
-          const logContent = fs.readFileSync(logFile, 'utf8');
-          const lastLine = logContent.trim().split('\n').pop() || '';
-          console.log(`🔨 Compilare ${path.basename(target)}: ${lastLine}`);
+          let logContent = '';
+          try {
+            logContent = fs.readFileSync(logFile, 'utf16le');
+          } catch (e) {
+            logContent = fs.readFileSync(logFile, 'utf8');
+          }
+          const lines = logContent.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+          const resultLine = lines.find(l => l.includes('Result:')) || lines.find(l => l.includes('error')) || lines.pop() || '';
+          console.log(`🔨 Compilare ${path.basename(target)}: ${resultLine}`);
+          if (!resultLine.includes('0 errors') && resultLine.includes('error')) {
+            console.error(`❌ Erori la compilare:\n${lines.filter(l => !l.includes('0 errors') && l.includes('error')).join('\n')}`);
+          }
           try { fs.unlinkSync(logFile); } catch (e) {}
         }
       }

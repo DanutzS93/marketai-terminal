@@ -1396,7 +1396,19 @@ export function calculateTradePnLMetrics(
 
   if (signal.pnl !== undefined && typeof signal.pnl === 'number') {
     pnl = Math.round(signal.pnl * 100) / 100;
-    rr = Math.round((pnl / dollarRisk) * 100) / 100;
+    rr = dollarRisk > 0 ? Math.round((pnl / dollarRisk) * 100) / 100 : 0;
+    if (accountSource === 'MT5') {
+      accountBadge = user?.mt5AccountNumber ? `MT5 #${user.mt5AccountNumber} [REALIZAT]` : 'MT5 REALIZAT';
+      accountBadgeStyle = 'liquid-emerald text-emerald-300 border-emerald-500/60 shadow-[0_0_10px_rgba(16,185,129,0.25)] font-bold';
+    } else if (accountSource === 'NINJATRADER') {
+      accountBadge = user?.ninjaTraderAccountNumber ? `NT8 #${user.ninjaTraderAccountNumber} [REALIZAT]` : 'NT8 REALIZAT';
+      accountBadgeStyle = 'liquid-amber text-orange-300 border-orange-500/60 shadow-[0_0_10px_rgba(249,115,22,0.25)] font-bold';
+    }
+    if (signal.status === 'CLOSED' || ['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT'].includes(status)) {
+      statusLabel = pnl > 0 ? (status === 'TP1_HIT' ? 'TP1 Realizat (Broker)' : 'Profit Realizat') : pnl < 0 ? 'SL Realizat (Broker)' : 'BE Realizat';
+    } else {
+      statusLabel = pnl > 0 ? 'Profit Parțial' : 'Activ Broker';
+    }
   } else if (status === 'SL_HIT') {
     rr = -1.0;
     pnl = -dollarRisk;

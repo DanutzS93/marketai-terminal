@@ -5913,7 +5913,7 @@ app.post('/api/mt5/update', async (req, res) => {
   }
   if (!body || typeof body !== 'object') body = {};
 
-  const { signal_id, status, outcomeStatus, milestone, accountBalance, equity, accountNumber, accountServer, accountCurrency, accountCompany, pnl, profit } = body;
+  const { signal_id, status, outcomeStatus, milestone, accountBalance, equity, accountNumber, accountServer, accountCurrency, accountCompany, pnl, profit, exitPrice } = body;
   console.log(`[MT5 EA Update] Signal ${signal_id} status: ${status}, outcome: ${outcomeStatus}, milestone: ${milestone}, balance: ${accountBalance}, accNum: ${accountNumber}, pnl: ${pnl ?? profit}`);
 
   if (matchedUser) {
@@ -5939,32 +5939,77 @@ app.post('/api/mt5/update', async (req, res) => {
         matchedUser.mt5ProcessedSignalIds.push(sIdStr);
       }
 
+      const incomingPnl = pnl !== undefined ? pnl : profit;
+
       if (matchedUser.signals) {
-        const target = matchedUser.signals.find((s: any) => s.id === signal_id || s.signal_id === signal_id);
+        const target = matchedUser.signals.find((s: any) => 
+          s.id === signal_id || 
+          s.signal_id === signal_id ||
+          (signal_id && s.id && (s.id.startsWith(signal_id) || signal_id.startsWith(s.id)))
+        );
         if (target) {
           target.mt5Placed = true;
           target.mt5PlacedAt = target.mt5PlacedAt || new Date().toISOString();
           target.accountSource = 'MT5';
-          if (pnl !== undefined && !isNaN(Number(pnl))) target.pnl = Number(pnl);
-          else if (profit !== undefined && !isNaN(Number(profit))) target.pnl = Number(profit);
-          target.outcomeStatus = outcomeStatus || target.outcomeStatus || 'RUNNING';
-          target.status = status || target.status || 'ACTIVE';
+          if (incomingPnl !== undefined && !isNaN(Number(incomingPnl))) {
+            target.pnl = Math.round(Number(incomingPnl) * 100) / 100;
+            target.realizedProfit = target.pnl;
+          }
+          if (exitPrice !== undefined && !isNaN(Number(exitPrice)) && Number(exitPrice) > 0) {
+            target.exitPrice = Number(exitPrice);
+          }
+          if (status === 'CLOSED') {
+            target.status = 'CLOSED';
+            target.closedAt = target.closedAt || new Date().toISOString();
+          } else if (status) {
+            target.status = status;
+          }
+          target.outcomeStatus = outcomeStatus || target.outcomeStatus || (target.pnl !== undefined && target.pnl > 0 ? 'TP1_HIT' : target.pnl !== undefined && target.pnl < 0 ? 'SL_HIT' : 'RUNNING');
           if (milestone === 'ENTRY') {
             target.isEntryTriggered = true;
             target.firstHitMilestone = 'ENTRY';
           }
+
+          // Auto-sync into user's trade journal
+          if (!matchedUser.tradeJournal) matchedUser.tradeJournal = [];
+          const jEntry = matchedUser.tradeJournal.find(
+            (j: any) => j.linkedSignalId === target.id || j.id === `sig_journal_${target.id}`
+          );
+          if (jEntry) {
+            if (target.pnl !== undefined) {
+              jEntry.pnl = target.pnl;
+              jEntry.status = target.pnl > 0 ? 'WIN' : (target.pnl < 0 ? 'LOSS' : 'BREAKEVEN');
+              jEntry.outcomeLabel = target.pnl > 0 ? `MT5 Profit (+$${target.pnl.toFixed(2)})` : target.pnl < 0 ? `MT5 Pierdere (-$${Math.abs(target.pnl).toFixed(2)})` : 'MT5 BE ($0.00)';
+            }
+            if (target.exitPrice !== undefined) jEntry.exitPrice = target.exitPrice;
+            if (target.status === 'CLOSED') jEntry.closedAt = target.closedAt || new Date().toISOString();
+          }
         }
       }
 
-      const serverTarget = serverActiveSignals.find((s) => s.id === signal_id || s.signal_id === signal_id);
+      const serverTarget = serverActiveSignals.find((s) => 
+        s.id === signal_id || 
+        s.signal_id === signal_id ||
+        (signal_id && s.id && (s.id.startsWith(signal_id) || signal_id.startsWith(s.id)))
+      );
       if (serverTarget) {
         serverTarget.mt5Placed = true;
         serverTarget.mt5PlacedAt = serverTarget.mt5PlacedAt || new Date().toISOString();
         serverTarget.accountSource = 'MT5';
-        if (pnl !== undefined && !isNaN(Number(pnl))) serverTarget.pnl = Number(pnl);
-        else if (profit !== undefined && !isNaN(Number(profit))) serverTarget.pnl = Number(profit);
-        serverTarget.outcomeStatus = outcomeStatus || serverTarget.outcomeStatus || 'RUNNING';
-        serverTarget.status = status || serverTarget.status || 'ACTIVE';
+        if (incomingPnl !== undefined && !isNaN(Number(incomingPnl))) {
+          serverTarget.pnl = Math.round(Number(incomingPnl) * 100) / 100;
+          serverTarget.realizedProfit = serverTarget.pnl;
+        }
+        if (exitPrice !== undefined && !isNaN(Number(exitPrice)) && Number(exitPrice) > 0) {
+          serverTarget.exitPrice = Number(exitPrice);
+        }
+        if (status === 'CLOSED') {
+          serverTarget.status = 'CLOSED';
+          serverTarget.closedAt = serverTarget.closedAt || new Date().toISOString();
+        } else if (status) {
+          serverTarget.status = status;
+        }
+        serverTarget.outcomeStatus = outcomeStatus || serverTarget.outcomeStatus || (serverTarget.pnl !== undefined && serverTarget.pnl > 0 ? 'TP1_HIT' : serverTarget.pnl !== undefined && serverTarget.pnl < 0 ? 'SL_HIT' : 'RUNNING');
         if (milestone === 'ENTRY') {
           serverTarget.isEntryTriggered = true;
           serverTarget.firstHitMilestone = 'ENTRY';
@@ -6312,20 +6357,44 @@ app.post(['/api/ninjatrader/update', '/api/nt8/update'], async (req, res) => {
       }
 
       if (matchedUser.signals && Array.isArray(matchedUser.signals)) {
-        const target = matchedUser.signals.find((s: any) => s.id === signal_id || s.signal_id === signal_id);
+        const target = matchedUser.signals.find((s: any) => 
+          s.id === signal_id || 
+          s.signal_id === signal_id ||
+          (signal_id && s.id && (s.id.startsWith(signal_id) || signal_id.startsWith(s.id)))
+        );
         if (target) {
           target.ninjaTraderPlaced = true;
           target.ninjaTraderPlacedAt = target.ninjaTraderPlacedAt || new Date().toISOString();
           target.accountSource = 'NINJATRADER';
           const incomingPnl = pnl ?? profit ?? (status === 'CLOSED' ? realizedPnL : unrealizedPnL);
           if (incomingPnl !== undefined && !isNaN(Number(incomingPnl))) {
-            target.pnl = Number(incomingPnl);
+            target.pnl = Math.round(Number(incomingPnl) * 100) / 100;
+            target.realizedProfit = target.pnl;
           }
-          target.outcomeStatus = outcomeStatus || target.outcomeStatus || 'RUNNING';
-          target.status = status || target.status || 'ACTIVE';
+          if (status === 'CLOSED') {
+            target.status = 'CLOSED';
+            target.closedAt = target.closedAt || new Date().toISOString();
+          } else if (status) {
+            target.status = status;
+          }
+          target.outcomeStatus = outcomeStatus || target.outcomeStatus || (target.pnl !== undefined && target.pnl > 0 ? 'TP1_HIT' : target.pnl !== undefined && target.pnl < 0 ? 'SL_HIT' : 'RUNNING');
           if (milestone === 'ENTRY') {
             target.isEntryTriggered = true;
             target.firstHitMilestone = 'ENTRY';
+          }
+
+          // Auto-sync into user's trade journal
+          if (!matchedUser.tradeJournal) matchedUser.tradeJournal = [];
+          const jEntry = matchedUser.tradeJournal.find(
+            (j: any) => j.linkedSignalId === target.id || j.id === `sig_journal_${target.id}`
+          );
+          if (jEntry) {
+            if (target.pnl !== undefined) {
+              jEntry.pnl = target.pnl;
+              jEntry.status = target.pnl > 0 ? 'WIN' : (target.pnl < 0 ? 'LOSS' : 'BREAKEVEN');
+              jEntry.outcomeLabel = target.pnl > 0 ? `NT8 Profit (+$${target.pnl.toFixed(2)})` : target.pnl < 0 ? `NT8 Pierdere (-$${Math.abs(target.pnl).toFixed(2)})` : 'NT8 BE ($0.00)';
+            }
+            if (target.status === 'CLOSED') jEntry.closedAt = target.closedAt || new Date().toISOString();
           }
         }
       }
@@ -6336,6 +6405,80 @@ app.post(['/api/ninjatrader/update', '/api/nt8/update'], async (req, res) => {
   } else {
     return res.status(401).json({ error: 'Unauthorized NinjaTrader API Key' });
   }
+});
+
+// Endpoint to update or override broker realized PnL on any signal
+app.post('/api/signals/update-pnl', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.replace(/^Bearer\s+/i, '').trim();
+  const apiKey = (req.headers['x-api-key'] || req.query.apiKey) as string;
+
+  const users = loadUsersDb();
+  let targetUser: StoredUser | null = null;
+  if (token) targetUser = Object.values(users).find((u) => u.token === token) || null;
+  if (!targetUser && apiKey) {
+    targetUser = Object.values(users).find((u) => u.mt5ApiKey === apiKey || u.apiKeys?.mt5ApiKey === apiKey || u.ninjaTraderApiKey === apiKey) || null;
+  }
+  if (!targetUser) return res.status(401).json({ error: 'Unauthorized' });
+
+  const { signalId, pnl, exitPrice, outcomeStatus, status } = req.body;
+  if (!signalId) return res.status(400).json({ error: 'signalId is required' });
+
+  let updated = false;
+  if (targetUser.signals) {
+    const s = targetUser.signals.find((sig: any) => 
+      sig.id === signalId || 
+      sig.signal_id === signalId ||
+      (signalId && sig.id && (sig.id.startsWith(signalId) || signalId.startsWith(sig.id)))
+    );
+    if (s) {
+      if (pnl !== undefined && !isNaN(Number(pnl))) {
+        s.pnl = Math.round(Number(pnl) * 100) / 100;
+        s.realizedProfit = s.pnl;
+      }
+      if (exitPrice !== undefined && !isNaN(Number(exitPrice))) s.exitPrice = Number(exitPrice);
+      if (status) s.status = status;
+      if (outcomeStatus) s.outcomeStatus = outcomeStatus;
+      s.accountSource = s.accountSource || 'MT5';
+      updated = true;
+    }
+  }
+
+  // Also update tradeJournal if present
+  if (!targetUser.tradeJournal) targetUser.tradeJournal = [];
+  const j = targetUser.tradeJournal.find((entry: any) => 
+    entry.linkedSignalId === signalId || 
+    entry.id === `sig_journal_${signalId}`
+  );
+  if (j) {
+    if (pnl !== undefined && !isNaN(Number(pnl))) {
+      j.pnl = Math.round(Number(pnl) * 100) / 100;
+      j.status = j.pnl > 0 ? 'WIN' : (j.pnl < 0 ? 'LOSS' : 'BREAKEVEN');
+      j.outcomeLabel = j.pnl > 0 ? `MT5 Profit (+$${j.pnl.toFixed(2)})` : j.pnl < 0 ? `MT5 Pierdere (-$${Math.abs(j.pnl).toFixed(2)})` : 'MT5 BE ($0.00)';
+    }
+    if (exitPrice !== undefined && !isNaN(Number(exitPrice))) j.exitPrice = Number(exitPrice);
+    if (status === 'CLOSED') j.closedAt = j.closedAt || new Date().toISOString();
+  }
+
+  // Update server active signals if applicable
+  const serverS = serverActiveSignals.find((sig) => 
+    sig.id === signalId || 
+    sig.signal_id === signalId ||
+    (signalId && sig.id && (sig.id.startsWith(signalId) || signalId.startsWith(sig.id)))
+  );
+  if (serverS) {
+    if (pnl !== undefined && !isNaN(Number(pnl))) {
+      serverS.pnl = Math.round(Number(pnl) * 100) / 100;
+      serverS.realizedProfit = serverS.pnl;
+    }
+    if (exitPrice !== undefined && !isNaN(Number(exitPrice))) serverS.exitPrice = Number(exitPrice);
+    if (status) serverS.status = status;
+    if (outcomeStatus) serverS.outcomeStatus = outcomeStatus;
+  }
+
+  await saveUsersDb(users, targetUser.id);
+  console.log(`[Signal PnL Updated] User ${targetUser.username} signal ${signalId}: PnL set to $${pnl}`);
+  return res.json({ success: true, updated, signalId, pnl });
 });
 
 async function startServer() {

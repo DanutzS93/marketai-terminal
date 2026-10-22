@@ -630,6 +630,36 @@ export default function App() {
     );
   };
 
+  const handleUpdateSignalPnl = async (signalId: string, pnl: number) => {
+    setSignals((prev) =>
+      prev.map((s) => (s.id === signalId ? { ...s, pnl, realizedProfit: pnl, accountSource: s.accountSource || 'MT5' } : s))
+    );
+    if (user && user.signals) {
+      setUser((prev) => {
+        if (!prev) return prev;
+        const updated = (prev.signals || []).map((s) =>
+          s.id === signalId ? { ...s, pnl, realizedProfit: pnl, accountSource: s.accountSource || 'MT5' } : s
+        );
+        return { ...prev, signals: updated };
+      });
+    }
+
+    if (user && authToken) {
+      try {
+        await fetch('/api/signals/update-pnl', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${authToken}`,
+          },
+          body: JSON.stringify({ signalId, pnl }),
+        });
+      } catch (err) {
+        console.warn('Backend update signal PnL failed:', err);
+      }
+    }
+  };
+
   const handleDeleteSignal = (signalId: string) => {
     setSignals((prev) => prev.filter((s) => s.id !== signalId));
 
@@ -1364,6 +1394,7 @@ export default function App() {
               onCloseAllTrades={handleCloseAllTrades}
               onDeleteAllSignals={handleDeleteAllSignals}
               onResetSignals={handleResetSignals}
+              onUpdateSignalPnl={handleUpdateSignalPnl}
               user={user}
               quotes={quotes}
             />

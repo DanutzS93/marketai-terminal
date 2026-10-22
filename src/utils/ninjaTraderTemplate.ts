@@ -216,6 +216,25 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
         }
 
+        protected override void OnPositionUpdate(Position position, double averagePrice, int quantity, MarketPosition marketPosition)
+        {
+            if (position.Instrument == Instrument && marketPosition == MarketPosition.Flat && !string.IsNullOrEmpty(activeSignalId))
+            {
+                double realizedPnL = 0;
+                double exitPrice = 0;
+                if (SystemPerformance.AllTrades.Count > 0)
+                {
+                    var lastTrade = SystemPerformance.AllTrades[SystemPerformance.AllTrades.Count - 1];
+                    realizedPnL = lastTrade.ProfitCurrency;
+                    exitPrice = lastTrade.ExitPrice;
+                }
+
+                string outcome = realizedPnL > 0 ? "TP1_HIT" : (realizedPnL < 0 ? "SL_HIT" : "BREAKEVEN");
+                NotifyServerOrderClosed(activeSignalId, outcome, realizedPnL, exitPrice);
+                activeSignalId = "";
+            }
+        }
+
         #region Background Polling & Execution
         private void OnPollTimerCallback(object state)
         {
@@ -487,6 +506,39 @@ namespace NinjaTrader.NinjaScript.Strategies
                         Account.ConnectionName ?? "NinjaTrader",
                         Account.Get(AccountItem.CashValue, Currency.UsDollar),
                         Account.Get(AccountItem.BuyingPower, Currency.UsDollar)
+                    );
+
+                    var content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
+                    var request = new HttpRequestMessage(HttpMethod.Post, UpdateUrl) { Content = content };
+                    if (!string.IsNullOrEmpty(MarketAiApiKey))
+                        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", MarketAiApiKey);
+
+                    await httpClient.SendAsync(request);
+                }
+                catch { }
+            });
+        }
+
+        private void NotifyServerOrderClosed(string sigId, string outcome, double pnl, double exitPrice)
+        {
+            Task.Run(async () =>
+            {
+                try
+                {
+                    double cash = Account != null ? Account.Get(AccountItem.CashValue, Currency.UsDollar) : 0;
+                    double equity = Account != null ? Account.Get(AccountItem.BuyingPower, Currency.UsDollar) : 0;
+
+                    string jsonBody = string.Format(
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        "{{\\"signal_id\\":\\"{0}\\",\\"status\\":\\"CLOSED\\",\\"outcomeStatus\\":\\"{1}\\",\\"milestone\\":\\"CLOSED\\",\\"pnl\\":{2},\\"profit\\":{2},\\"exitPrice\\":{3},\\"accountNumber\\":\\"{4}\\",\\"accountServer\\":\\"NinjaTrader 8\\",\\"accountCompany\\":\\"{5}\\",\\"accountBalance\\":{6},\\"equity\\":{7}}}",
+                        sigId,
+                        outcome,
+                        pnl.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
+                        exitPrice.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
+                        Account != null ? Account.Name : "",
+                        Account != null ? (Account.ConnectionName ?? "NinjaTrader") : "NinjaTrader",
+                        cash.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
+                        equity.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)
                     );
 
                     var content = new StringContent(jsonBody, Encoding.UTF8, "application/json");

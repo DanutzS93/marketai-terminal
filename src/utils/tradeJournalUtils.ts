@@ -91,6 +91,24 @@ export function convertSignalToJournalEntry(
   const dKey = getLocalDateKey(signal.createdAt);
   const timeStr = formatTimeFromDate(signal.createdAt);
 
+  const hasRealPnl = signal.pnl !== undefined && typeof signal.pnl === 'number';
+  const realPnl = hasRealPnl ? Math.round(signal.pnl! * 100) / 100 : undefined;
+
+  let finalStatus = status;
+  let finalLabel = label;
+  if (hasRealPnl && realPnl !== undefined) {
+    if (realPnl > 0) {
+      finalStatus = 'WIN';
+      finalLabel = `MT5 Realizat (+$${realPnl.toFixed(2)})`;
+    } else if (realPnl < 0) {
+      finalStatus = 'LOSS';
+      finalLabel = `MT5 Realizat (-$${Math.abs(realPnl).toFixed(2)})`;
+    } else {
+      finalStatus = 'BREAKEVEN';
+      finalLabel = 'MT5 BE ($0.00)';
+    }
+  }
+
   return {
     id: `sig_journal_${signal.id}`,
     date: dKey,
@@ -104,14 +122,16 @@ export function convertSignalToJournalEntry(
     stopLoss: signal.stopLoss,
     takeProfit: signal.targetPrice2 || signal.targetPrice1,
     exitPrice:
-      status === 'WIN'
+      signal.exitPrice ||
+      (finalStatus === 'WIN'
         ? signal.targetPrice2 || signal.targetPrice1
-        : status === 'LOSS'
+        : finalStatus === 'LOSS'
         ? signal.stopLoss
-        : currPrice,
+        : currPrice),
     rrAchieved: rr,
-    status,
-    outcomeLabel: label,
+    pnl: realPnl,
+    status: finalStatus,
+    outcomeLabel: finalLabel,
     setup: signal.title || 'AI Strategy Signal',
     notes: signal.summary || signal.rationale || '',
     timeframe: signal.timeframe,
@@ -120,7 +140,9 @@ export function convertSignalToJournalEntry(
     generatedAt: signal.createdAt,
     entryDate: dKey,
     entryTime: timeStr,
-    closedAt: (status === 'WIN' || status === 'LOSS' || status === 'BREAKEVEN') ? (signal.updatedAt || new Date().toISOString()) : undefined,
+    closedAt: (finalStatus === 'WIN' || finalStatus === 'LOSS' || finalStatus === 'BREAKEVEN')
+      ? (signal.closedAt || signal.updatedAt || new Date().toISOString())
+      : undefined,
     createdAt: signal.createdAt,
   };
 }

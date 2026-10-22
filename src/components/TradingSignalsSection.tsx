@@ -48,6 +48,7 @@ interface TradingSignalsSectionProps {
   onCloseAllTrades?: () => Promise<void> | void;
   onDeleteAllSignals?: () => void;
   onResetSignals?: () => void;
+  onUpdateSignalPnl?: (signalId: string, pnl: number) => void;
   user?: UserProfile | null;
   quotes?: Record<InstrumentId, MarketQuote>;
 }
@@ -66,6 +67,7 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
   onCloseAllTrades,
   onDeleteAllSignals,
   onResetSignals,
+  onUpdateSignalPnl,
   user,
   quotes,
 }) => {
@@ -1531,6 +1533,7 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
         lang={lang}
         onOpenCalcModal={onOpenCalcModal}
         onOpenChartModal={(sig) => setSelectedSignalForChart(sig)}
+        onUpdateSignalPnl={onUpdateSignalPnl}
         user={user}
         quotes={quotes}
       />

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   X,
   Target,
@@ -19,6 +19,9 @@ import {
   AlertOctagon,
   ShieldCheck,
   Zap,
+  Edit2,
+  Check,
+  DollarSign,
 } from 'lucide-react';
 import { TradingSignal, UserProfile, MarketQuote } from '../types';
 import { getOutcomeBadgeDetails, getLocalizedSignalText, formatFullDateTime, getCancellationReason, calculateExecutionType, getOrCalculateVolumeProfileLevels, formatSignalPrice, calculateTradePnLMetrics } from '../utils/signalUtils';
@@ -31,6 +34,7 @@ interface SignalDetailsModalProps {
   lang: 'ro' | 'en';
   onOpenCalcModal?: () => void;
   onOpenChartModal?: (signal: TradingSignal) => void;
+  onUpdateSignalPnl?: (signalId: string, pnl: number) => void;
   user?: UserProfile | null;
   quotes?: Record<string, MarketQuote>;
 }
@@ -42,9 +46,12 @@ export const SignalDetailsModal: React.FC<SignalDetailsModalProps> = ({
   lang,
   onOpenCalcModal,
   onOpenChartModal,
+  onUpdateSignalPnl,
   user,
   quotes,
 }) => {
+  const [isEditingPnl, setIsEditingPnl] = useState(false);
+  const [editPnlInput, setEditPnlInput] = useState('');
   if (!isOpen || !signal) return null;
 
   const isBuy = signal.type.includes('BUY');
@@ -152,35 +159,100 @@ export const SignalDetailsModal: React.FC<SignalDetailsModalProps> = ({
             const pnlData = calculateTradePnLMetrics(signal, user, quotes);
             const isPos = pnlData.pnl > 0;
             const isNeg = pnlData.pnl < 0;
+            const hasExplicitPnl = signal.pnl !== undefined && typeof signal.pnl === 'number';
+
+            const handleSaveCustomPnl = () => {
+              const val = parseFloat(editPnlInput);
+              if (!isNaN(val) && onUpdateSignalPnl) {
+                onUpdateSignalPnl(signal.id, val);
+                setIsEditingPnl(false);
+              }
+            };
+
             return (
-              <div className="p-3.5 rounded-xl bg-[#091122]/90 border border-white/10 shadow-lg flex flex-wrap items-center justify-between gap-3 text-xs font-mono backdrop-blur-md">
-                <div className="flex items-center gap-2">
-                  <span className="text-slate-400 font-sans font-semibold uppercase text-[11px]">
-                    {lang === 'ro' ? 'PNL Curent Sincronizat:' : 'Synchronized P&L:'}
-                  </span>
-                  <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase ${pnlData.accountBadgeStyle}`}>
-                    {pnlData.accountBadge}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className={`text-base font-black tracking-tight ${
-                    isPos
-                      ? 'text-emerald-400'
-                      : isNeg
-                      ? 'text-rose-400'
-                      : 'text-slate-400'
-                  }`}>
-                    {isPos
-                      ? `+$${pnlData.pnl.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                      : isNeg
-                      ? `-$${Math.abs(pnlData.pnl).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                      : '$0.00'}
-                  </span>
-                  {pnlData.rr !== 0 && (
-                    <span className={`text-xs font-bold ${isPos ? 'text-emerald-300' : 'text-rose-300'}`}>
-                      ({isPos ? '+' : ''}{pnlData.rr}R)
+              <div className="p-3.5 rounded-xl bg-[#091122]/90 border border-white/10 shadow-lg space-y-2 backdrop-blur-md">
+                <div className="flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-400 font-sans font-semibold uppercase text-[11px]">
+                      {hasExplicitPnl
+                        ? (lang === 'ro' ? 'Profit Realizat Broker:' : 'Broker Realized Profit:')
+                        : (lang === 'ro' ? 'PNL Curent Sincronizat:' : 'Synchronized P&L:')}
                     </span>
-                  )}
+                    <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase ${pnlData.accountBadgeStyle}`}>
+                      {pnlData.accountBadge}
+                    </span>
+                    {hasExplicitPnl && (
+                      <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold uppercase">
+                        ✓ {lang === 'ro' ? 'Verificat' : 'Verified'}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {!isEditingPnl ? (
+                      <>
+                        <span className={`text-base font-black tracking-tight ${
+                          isPos
+                            ? 'text-emerald-400'
+                            : isNeg
+                            ? 'text-rose-400'
+                            : 'text-slate-400'
+                        }`}>
+                          {isPos
+                            ? `+$${pnlData.pnl.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                            : isNeg
+                            ? `-$${Math.abs(pnlData.pnl).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                            : '$0.00'}
+                        </span>
+                        {pnlData.rr !== 0 && (
+                          <span className={`text-xs font-bold ${isPos ? 'text-emerald-300' : 'text-rose-300'}`}>
+                            ({isPos ? '+' : ''}{pnlData.rr}R)
+                          </span>
+                        )}
+                        {onUpdateSignalPnl && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditPnlInput(pnlData.pnl ? String(pnlData.pnl) : '');
+                              setIsEditingPnl(true);
+                            }}
+                            className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-cyan-300 transition"
+                            title={lang === 'ro' ? 'Ajustează manual profitul MT5' : 'Manually adjust MT5 profit'}
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </>
+                    ) : (
+                      <div className="flex items-center gap-1.5 animate-fadeIn">
+                        <span className="text-slate-400 font-bold">$</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={editPnlInput}
+                          onChange={(e) => setEditPnlInput(e.target.value)}
+                          placeholder="ex: 35.50"
+                          className="w-24 px-2 py-0.5 rounded bg-black/60 border border-cyan-500/50 text-white font-mono text-xs focus:outline-none"
+                          autoFocus
+                        />
+                        <button
+                          type="button"
+                          onClick={handleSaveCustomPnl}
+                          className="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-sans text-xs font-bold transition flex items-center gap-1"
+                        >
+                          <Check className="w-3 h-3" />
+                          <span>{lang === 'ro' ? 'Salvează' : 'Save'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setIsEditingPnl(false)}
+                          className="px-1.5 py-0.5 rounded bg-white/10 text-slate-300 hover:text-white text-xs"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             );
