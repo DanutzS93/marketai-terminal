@@ -395,7 +395,7 @@ export const RiskRulesConfigurationSection: React.FC<RiskRulesConfigurationSecti
               </h3>
             </div>
             <span className="text-xs text-slate-400 font-mono">
-              EA v4.60 Real-Time Sync
+              EA v4.70 Real-Time Sync
             </span>
           </div>
 
@@ -427,7 +427,7 @@ export const RiskRulesConfigurationSection: React.FC<RiskRulesConfigurationSecti
                     {lang === 'ro' ? 'Sincronizare Activă' : 'Live Sync Active'}
                   </span>
                   <span className="text-[10px] text-emerald-500 font-mono font-bold">
-                    EA v4.60 Guard
+                    EA v4.70 Guard
                   </span>
                 </div>
               </div>
@@ -439,7 +439,7 @@ export const RiskRulesConfigurationSection: React.FC<RiskRulesConfigurationSecti
                     {lang === 'ro' ? 'Cont MT5 în așteptare conectare EA...' : 'MT5 Account awaiting EA bridge connection...'}
                   </span>
                 </div>
-                <span className="text-[10px] font-mono text-slate-500">v4.00</span>
+                <span className="text-[10px] font-mono text-slate-500">v4.70</span>
               </div>
             )}
 

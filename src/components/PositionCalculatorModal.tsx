@@ -282,8 +282,8 @@ export const PositionCalculatorModal: React.FC<PositionCalculatorModalProps> = (
           <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
           <p>
             {lang === 'ro'
-              ? `EA v4.00 Protecție: Calculul respectă specificația ${currentSpec.name} și levierul 1:${leverage}.`
-              : `EA v4.00 Guard: Accurate calculation for ${currentSpec.name} with 1:${leverage} leverage.`}
+              ? `EA v4.70 Protecție: Calculul respectă specificația ${currentSpec.name} și levierul 1:${leverage}.`
+              : `EA v4.70 Guard: Accurate calculation for ${currentSpec.name} with 1:${leverage} leverage.`}
           </p>
         </div>
       </div>
