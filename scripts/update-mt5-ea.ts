@@ -61,8 +61,8 @@ export function updateMt5Ea(): void {
 
     const bridgeFile = path.join(expertsDir, 'MarketAI-Bridge.mq5');
     let apiKey = 'mt5_live_admin001_xx5qn7du';
-    let endpoint = 'https://marketai-terminal.onrender.com/api/mt5/signals';
-    let updateUrl = 'https://marketai-terminal.onrender.com/api/mt5/update';
+    let endpoint = 'https://marketai-terminal.fly.dev/api/mt5/signals';
+    let updateUrl = 'https://marketai-terminal.fly.dev/api/mt5/update';
 
     // Daca exista deja un fisier, pastram parametrii de conectare existenti
     if (fs.existsSync(bridgeFile)) {
@@ -79,7 +79,7 @@ export function updateMt5Ea(): void {
       endpoint,
       updateUrl,
       apiKey,
-      'https://marketai-terminal.onrender.com'
+      'https://marketai-terminal.fly.dev'
     );
 
     // Salvam atat ca MarketAI-Bridge.mq5 cat si ca MarketAi.mq5
