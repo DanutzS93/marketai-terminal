@@ -1,8 +1,8 @@
 import fs from 'fs';
 import path from 'path';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
-import { getMql5EaCode } from '../src/utils/mql5Template.js';
+import { getMql5EaCode } from '../src/utils/mql5Template';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,7 +29,8 @@ function findMt5ExpertsDirs(): string[] {
 
 function findMetaEditor(): string | null {
   const candidates = [
-    path.join(process.env.APPDATA || '', 'MetaTrader 5', 'MetaEditor64.exe'),
+    path.join(process.env.APPDATA || '', 'MetaTrader 5', 'metaeditor64.exe'),
+    path.join(process.env.LOCALAPPDATA || '', 'MetaTrader 5', 'metaeditor64.exe'),
     'C:\\Program Files\\MetaTrader 5\\metaeditor64.exe',
     'C:\\Program Files (x86)\\MetaTrader 5\\metaeditor64.exe'
   ];
@@ -60,7 +61,7 @@ export function updateMt5Ea(): void {
     console.log(`📁 Director gasit: ${expertsDir}`);
 
     const bridgeFile = path.join(expertsDir, 'MarketAI-Bridge.mq5');
-    let apiKey = 'mt5_live_admin001_xx5qn7du';
+    let apiKey = 'mt5_live_admin001_wdyjbn7o';
     let endpoint = 'https://marketai-terminal.fly.dev/api/mt5/signals';
     let updateUrl = 'https://marketai-terminal.fly.dev/api/mt5/update';
 
@@ -70,9 +71,9 @@ export function updateMt5Ea(): void {
       const keyMatch = existing.match(/InpApiKey\s*=\s*"([^"]+)"/);
       if (keyMatch && keyMatch[1]) apiKey = keyMatch[1];
       const epMatch = existing.match(/InpEndpointURL\s*=\s*"([^"]+)"/);
-      if (epMatch && epMatch[1]) endpoint = epMatch[1];
+      if (epMatch && epMatch[1] && !epMatch[1].includes('onrender.com')) endpoint = epMatch[1];
       const upMatch = existing.match(/InpUpdateURL\s*=\s*"([^"]+)"/);
-      if (upMatch && upMatch[1]) updateUrl = upMatch[1];
+      if (upMatch && upMatch[1] && !upMatch[1].includes('onrender.com')) updateUrl = upMatch[1];
     }
 
     const mqlCode = getMql5EaCode(
@@ -95,10 +96,7 @@ export function updateMt5Ea(): void {
       if (metaEditor) {
         const logFile = path.join(expertsDir, `compile_${path.basename(target, '.mq5')}.log`);
         try {
-          execSync(
-            `cmd.exe /c ""${metaEditor}" /compile:"${target}" /log:"${logFile}""`,
-            { stdio: 'ignore' }
-          );
+          execFileSync(metaEditor, [`/compile:${target}`, `/log:${logFile}`], { stdio: 'ignore' });
         } catch (e) {
           // MetaEditor returns non-zero even on successful generation with code info
         }
@@ -126,6 +124,6 @@ export function updateMt5Ea(): void {
 }
 
 // Daca este rulat direct prin node / tsx
-if (process.argv[1] && process.argv[1].endsWith('update-mt5-ea.ts')) {
+if (process.argv[1] && (process.argv[1].endsWith('update-mt5-ea.ts') || process.argv[1].endsWith('update-mt5-ea.js'))) {
   updateMt5Ea();
 }

@@ -639,6 +639,11 @@ int OnInit()
    string company = AccountInfoString(ACCOUNT_COMPANY);
    Print("MarketAI MT5 Bridge v4.70 initialized with Exact Broker PnL Engine. Target Symbol: ", targetSymbol, " Magic: ", InpMagicNumber, " Connected Account: #", login, " (", serverName, ") [", company, "]");
    
+   if(StringFind(InpEndpointURL, "onrender.com") >= 0 || StringFind(InpUpdateURL, "onrender.com") >= 0 || (StringFind(InpEndpointURL, "fly.dev") < 0 && StringFind(InpEndpointURL, "localhost") < 0))
+   {
+      Print("[MarketAI OK] Conexiunea a fost redirectionata automat catre serverul activ Fly.dev: ${currentOrigin} !");
+   }
+   
    // Register any existing open positions and sync historical closed trades from MT5
    RegisterOpenPositions();
    SyncClosedHistoricalTrades();
@@ -721,7 +726,18 @@ void SendAccountSync()
    StringToCharArray(payload, data, 0, StringLen(payload), CP_UTF8);
    
    string accountURL = "${currentOrigin}/api/mt5/account?apiKey=" + InpApiKey;
-   WebRequest("POST", accountURL, headers, 4000, data, result, result_headers);
+   int res = WebRequest("POST", accountURL, headers, 4000, data, result, result_headers);
+   if(res == -1)
+   {
+      int err = GetLastError();
+      static datetime lastAccErr = 0;
+      if(TimeCurrent() - lastAccErr > 60)
+      {
+         if(err == 4014 || err == 4060)
+            Print("[MarketAI EROARE ", err, "] URL-ul '", "${currentOrigin}", "' NU este autorizat in MT5! Adaugati '", "${currentOrigin}", "' in Tools -> Options -> Expert Advisors -> Allow WebRequest for listed URL.");
+         lastAccErr = TimeCurrent();
+      }
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -839,6 +855,10 @@ void SendTradeUpdate(string signalId, string status, string outcome, string mile
    StringToCharArray(payload, data, 0, StringLen(payload), CP_UTF8);
    
    string updateURL = InpUpdateURL;
+   if(StringFind(updateURL, "onrender.com") >= 0 || updateURL == "" || (StringFind(updateURL, "fly.dev") < 0 && StringFind(updateURL, "localhost") < 0))
+   {
+      updateURL = "${mt5UpdateEndpoint}";
+   }
    if(StringFind(updateURL, "?") < 0) updateURL = updateURL + "?apiKey=" + InpApiKey;
    else updateURL = updateURL + "&apiKey=" + InpApiKey;
 
@@ -846,6 +866,12 @@ void SendTradeUpdate(string signalId, string status, string outcome, string mile
    if(res == 200)
    {
       Print("[MarketAI] Status & Realized PnL updated for signal ", signalId, " -> ", milestone, " | PnL: $", DoubleToString(pnl, 2), (exitPrice > 0 ? (" @ " + DoubleToString(exitPrice, 2)) : ""));
+   }
+   else if(res == -1)
+   {
+      int err = GetLastError();
+      if(err == 4014 || err == 4060)
+         Print("[MarketAI EROARE ", err, "] URL-ul '", "${currentOrigin}", "' NU este autorizat in MT5! Adaugati '", "${currentOrigin}", "' in Tools -> Options -> Expert Advisors -> Allow WebRequest for listed URL.");
    }
 }
 
@@ -1070,6 +1096,10 @@ void FetchAndExecuteSignals()
    string headers = "Authorization: Bearer " + InpApiKey + "\\r\\n" +
                     "Content-Type: application/json\\r\\n";
    string url = InpEndpointURL;
+   if(StringFind(url, "onrender.com") >= 0 || url == "" || (StringFind(url, "fly.dev") < 0 && StringFind(url, "localhost") < 0))
+   {
+      url = "${mt5Endpoint}";
+   }
    if(StringFind(url, "?") < 0) url = url + "?symbol=" + targetSymbol + "&apiKey=" + InpApiKey;
    else url = url + "&symbol=" + targetSymbol + "&apiKey=" + InpApiKey;
    
@@ -1081,8 +1111,8 @@ void FetchAndExecuteSignals()
       static datetime lastWebErr = 0;
       if(TimeCurrent() - lastWebErr > 30)
       {
-         if(err == 4060)
-            Print("[MarketAI EROARE 4060] URL-ul WebRequest nu este autorizat in MT5! Adaugati '", url, "' sau '${currentOrigin}' in Tools -> Options -> Expert Advisors -> Allow WebRequest for listed URL.");
+         if(err == 4060 || err == 4014)
+            Print("[MarketAI EROARE ", err, "] URL-ul WebRequest NU este autorizat in MT5! Adaugati obligatoriu '", "${currentOrigin}", "' in Tools -> Options -> Expert Advisors -> Allow WebRequest for listed URL.");
          else
             Print("[MarketAI EROARE WebRequest ", err, "] Conexiunea la server a esuat. Verificati internetul sau firewall-ul. URL: ", url);
          lastWebErr = TimeCurrent();

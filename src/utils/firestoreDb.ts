@@ -172,7 +172,9 @@ function writeLocalUsersFile(users: Record<string, StoredUser>): void {
     for (const [k, v] of Object.entries(users)) {
       sanitized[k] = sanitizeUserObj(v as StoredUser);
     }
-    fs.writeFileSync(DB_FILE, JSON.stringify(sanitized, null, 2), 'utf-8');
+    fs.writeFile(DB_FILE, JSON.stringify(sanitized), 'utf-8', (err) => {
+      if (err) console.warn('⚠️ Could not write users_cloud_db.json:', err);
+    });
   } catch (e) {
     console.warn('⚠️ Could not write users_cloud_db.json:', e);
   }
@@ -374,29 +376,59 @@ export function getUsersFromCache(): Record<string, StoredUser> {
   return usersCache;
 }
 
-export async function saveUserToFirestore(user: StoredUser): Promise<void> {
-  usersCache[user.id] = user;
+// High-performance write debouncing & batching for disk and cloud
+const pendingPersistUsers = new Map<string, StoredUser>();
+let persistTimer: NodeJS.Timeout | null = null;
+
+async function flushPendingUsers() {
+  if (pendingPersistUsers.size === 0) return;
+  const toSave = Array.from(pendingPersistUsers.values());
+  pendingPersistUsers.clear();
+
+  // 1. Single asynchronous disk write for all batched users
   writeLocalUsersFile(usersCache);
 
-  // Sync to Supabase if configured
-  if (isSupabaseConfigured()) {
-    saveUserToSupabase(user).catch((e) => console.warn('Supabase save background error:', e));
-  }
-
-  if (isQuotaExhausted) return;
-  try {
-    const cleanUser = JSON.parse(JSON.stringify(user));
-    await withTimeout(setDoc(doc(firestoreDb, 'users', user.id), cleanUser), 2000, `setDoc(user ${user.id})`);
-    console.log(`✅ User ${user.username} (${user.id}) saved to Firestore!`);
-  } catch (err: any) {
-    const msg = String(err?.message || err);
-    if (msg.includes('RESOURCE_EXHAUSTED') || msg.includes('Quota limit exceeded') || msg.includes('timed out')) {
-      isQuotaExhausted = true;
-      disableNetwork(firestoreDb).catch(() => {});
-      console.warn(`[Firestore Offline/Timeout] Daily write limit or timeout reached for user ${user.id}. Stored in local disk & Supabase.`);
-      return;
+  // 2. Persist each user in background without blocking web requests
+  for (const user of toSave) {
+    if (isSupabaseConfigured()) {
+      saveUserToSupabase(user).catch((e) => console.warn('Supabase save background error:', e));
     }
-    console.warn(`⚠️ Could not save user ${user.id} to Firestore:`, msg);
+
+    if (!isQuotaExhausted) {
+      try {
+        const cleanUser = JSON.parse(JSON.stringify(user));
+        await withTimeout(setDoc(doc(firestoreDb, 'users', user.id), cleanUser), 2000, `setDoc(user ${user.id})`);
+      } catch (err: any) {
+        const msg = String(err?.message || err);
+        if (msg.includes('RESOURCE_EXHAUSTED') || msg.includes('Quota limit exceeded') || msg.includes('timed out')) {
+          isQuotaExhausted = true;
+          disableNetwork(firestoreDb).catch(() => {});
+          console.warn(`[Firestore Offline/Timeout] Daily write limit or timeout reached for user ${user.id}. Stored in local disk & Supabase.`);
+          break;
+        }
+      }
+    }
+  }
+}
+
+export async function saveUserToFirestore(user: StoredUser, immediate = false): Promise<void> {
+  // Update in-memory cache instantaneously (0ms latency for all callers)
+  usersCache[user.id] = user;
+  pendingPersistUsers.set(user.id, user);
+
+  if (immediate) {
+    if (persistTimer) {
+      clearTimeout(persistTimer);
+      persistTimer = null;
+    }
+    await flushPendingUsers();
+  } else {
+    if (!persistTimer) {
+      persistTimer = setTimeout(() => {
+        persistTimer = null;
+        flushPendingUsers().catch((e) => console.warn('Background flush error:', e));
+      }, 300);
+    }
   }
 }
 

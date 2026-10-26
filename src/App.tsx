@@ -930,8 +930,7 @@ export default function App() {
         { id: 'USDJPY', tf: '1h', strat: 'Tokyo/NY Session Momentum' },
       ];
 
-      const generated: TradingSignal[] = [];
-      for (const p of pairs) {
+      const promises = pairs.map(async (p) => {
         try {
           const res = await fetch('/api/generate-ai-signal', {
             method: 'POST',
@@ -950,14 +949,16 @@ export default function App() {
           });
           if (res.ok) {
             const data = await res.json();
-            if (data.signal) {
-              generated.push(data.signal);
-            }
+            return (data.signal as TradingSignal) || null;
           }
         } catch (e) {
           console.warn(`Auto signal generation error for ${p.id}:`, e);
         }
-      }
+        return null;
+      });
+
+      const results = await Promise.all(promises);
+      const generated = results.filter((s): s is TradingSignal => Boolean(s));
 
       if (generated.length > 0) {
         setSignals((prev) => [...generated, ...prev]);
