@@ -1730,6 +1730,8 @@ function recordLseTick(sym: string, tickObj: { price: number; bid?: number; ask?
   } else if (sym === 'US30/USD' || sym === 'US30' || sym === 'DOW.F' || sym === 'YM.F') {
     lseLiveTicks['US30/USD'] = tickObj;
     lseLiveTicks['US30'] = tickObj;
+    lseLiveTicks['DOW.F'] = tickObj;
+    lseLiveTicks['YM.F'] = tickObj;
   } else if (sym === 'EUR/USD' || sym === 'EURUSD') {
     lseLiveTicks['EUR/USD'] = tickObj;
     lseLiveTicks['EURUSD'] = tickObj;
@@ -1999,8 +2001,8 @@ const LSE_PARITY_CONFIGS: LseParityConfig[] = [
     name: 'Dow Jones CFD',
     symbol: 'US30',
     tvSymbol: 'FOREXCOM:US30',
-    lseSymbol: 'US30/USD',
-    tickKeys: ['US30/USD', 'US30'],
+    lseSymbol: 'DOW.F',
+    tickKeys: ['DOW.F', 'US30/USD', 'US30', 'YM.F'],
     decimals: 2,
   },
   {
