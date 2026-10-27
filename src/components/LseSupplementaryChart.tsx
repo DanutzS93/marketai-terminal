@@ -10,7 +10,7 @@ interface LseSupplementaryChartProps {
   lang: 'ro' | 'en';
 }
 
-type LsePairKey = 'NQ.F' | 'ES.F' | 'GC.F';
+type LsePairKey = 'NQ.F' | 'ES.F' | 'DOW.F' | 'GC.F';
 
 export const LseSupplementaryChart: React.FC<LseSupplementaryChartProps> = ({
   selectedInstrument,
@@ -28,8 +28,10 @@ export const LseSupplementaryChart: React.FC<LseSupplementaryChartProps> = ({
   useEffect(() => {
     if (selectedInstrument === 'NQ_F' || selectedInstrument === 'NASDAQ') {
       setActivePair('NQ.F');
-    } else if (selectedInstrument === 'ES_F' || selectedInstrument === 'SPX500' || selectedInstrument === 'DOW_JONES') {
+    } else if (selectedInstrument === 'ES_F' || selectedInstrument === 'SPX500') {
       setActivePair('ES.F');
+    } else if (selectedInstrument === 'YM_F' || selectedInstrument === 'DOW_JONES') {
+      setActivePair('DOW.F');
     } else if (selectedInstrument === 'GC_F' || selectedInstrument === 'GOLD') {
       setActivePair('GC.F');
     }
@@ -52,6 +54,12 @@ export const LseSupplementaryChart: React.FC<LseSupplementaryChartProps> = ({
       appInstrument: 'ES_F',
       label: 'ES.F (S&P 500 Futures)',
       basePrice: (quotes?.ES_F?.price && quotes.ES_F.price > 0) ? quotes.ES_F.price : (quotes?.SPX500?.price && quotes.SPX500.price > 0 ? quotes.SPX500.price : 0),
+    },
+    {
+      id: 'DOW.F',
+      appInstrument: 'YM_F',
+      label: 'DOW.F (Dow Jones Futures)',
+      basePrice: (quotes?.YM_F?.price && quotes.YM_F.price > 0) ? quotes.YM_F.price : (quotes?.DOW_JONES?.price && quotes.DOW_JONES.price > 0 ? quotes.DOW_JONES.price : 0),
     },
     {
       id: 'GC.F',

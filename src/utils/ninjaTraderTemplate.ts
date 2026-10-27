@@ -356,7 +356,10 @@ namespace NinjaTrader.NinjaScript.Strategies
                 else if (instName.Contains("GC") || instName.Contains("MGC"))
                     assetPts = ExtractJsonDouble(json, "GC_F");
                 else if (instName.Contains("YM") || instName.Contains("MYM"))
-                    assetPts = ExtractJsonDouble(json, "DOW_JONES");
+                {
+                    assetPts = ExtractJsonDouble(json, "YM_F");
+                    if (assetPts == 0) assetPts = ExtractJsonDouble(json, "DOW_JONES");
+                }
                 else if (instName.Contains("6E"))
                     assetPts = ExtractJsonDouble(json, "EURUSD") * 0.0001;
                 else if (instName.Contains("6B"))

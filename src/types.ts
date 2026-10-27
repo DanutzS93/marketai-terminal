@@ -5,6 +5,7 @@ export type InstrumentId =
   | 'GOLD'
   | 'NQ_F'
   | 'ES_F'
+  | 'YM_F'
   | 'GC_F'
   | 'EURUSD'
   | 'GBPUSD'

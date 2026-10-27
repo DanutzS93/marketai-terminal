@@ -1377,7 +1377,7 @@ function formatVolume(vol: number): string {
 // Fetch real live quotes from Yahoo Finance
 async function fetchYahooQuote(
   symbol: string,
-  id: 'NASDAQ' | 'SPX500' | 'DOW_JONES' | 'GOLD' | 'NQ_F' | 'ES_F' | 'GC_F' | 'EURUSD' | 'GBPUSD' | 'USDJPY',
+  id: 'NASDAQ' | 'SPX500' | 'DOW_JONES' | 'GOLD' | 'NQ_F' | 'ES_F' | 'YM_F' | 'GC_F' | 'EURUSD' | 'GBPUSD' | 'USDJPY',
   name: string,
   tvSymbol: string
 ) {
@@ -1420,7 +1420,7 @@ async function fetchYahooQuote(
     const low = meta.regularMarketDayLow || (closes.length ? Math.min(...closes) : price);
     const open = meta.regularMarketDayOpen || prevClose;
 
-    const symDisplay = id === 'NASDAQ' ? 'NAS100' : id === 'SPX500' ? 'SPX500' : id === 'DOW_JONES' ? 'US30' : id === 'GOLD' ? 'XAU/USD' : id === 'NQ_F' ? 'NQ.F' : id === 'ES_F' ? 'ES.F' : id === 'GC_F' ? 'GC.F' : id === 'EURUSD' ? 'EUR/USD' : id === 'GBPUSD' ? 'GBP/USD' : 'USD/JPY';
+    const symDisplay = id === 'NASDAQ' ? 'NAS100' : id === 'SPX500' ? 'SPX500' : id === 'DOW_JONES' ? 'US30' : id === 'GOLD' ? 'XAU/USD' : id === 'NQ_F' ? 'NQ.F' : id === 'ES_F' ? 'ES.F' : id === 'YM_F' ? 'DOW.F' : id === 'GC_F' ? 'GC.F' : id === 'EURUSD' ? 'EUR/USD' : id === 'GBPUSD' ? 'GBP/USD' : 'USD/JPY';
 
     return {
       id,
@@ -1612,6 +1612,7 @@ let marketDataCache: {
   gold: any;
   nq_f: any;
   es_f: any;
+  ym_f: any;
   gc_f: any;
   eurusd: any;
   gbpusd: any;
@@ -1648,6 +1649,7 @@ let lastLseResult: {
   gold?: any;
   nq_f?: any;
   es_f?: any;
+  ym_f?: any;
   gc_f?: any;
   eurusd?: any;
   gbpusd?: any;
@@ -1687,6 +1689,7 @@ function broadcastQuotesToClients() {
           GOLD: data.gold,
           NQ_F: data.nq_f,
           ES_F: data.es_f,
+          YM_F: data.ym_f,
           GC_F: data.gc_f,
           EURUSD: data.eurusd,
           GBPUSD: data.gbpusd,
@@ -1707,7 +1710,7 @@ function recordLseTick(sym: string, tickObj: { price: number; bid?: number; ask?
   // Store raw tick under the exact symbol received
   lseLiveTicks[sym] = tickObj;
 
-  // Strict INDIVIDUAL mapping: each of the 10 instruments gets ONLY its own corresponding ticks.
+  // Strict INDIVIDUAL mapping: each of the 11 instruments gets ONLY its own corresponding ticks.
   // NO cross-mapping between Spot and Futures!
   if (sym === 'XAU/USD' || sym === 'XAUUSD') {
     lseLiveTicks['XAU/USD'] = tickObj;
@@ -1727,11 +1730,17 @@ function recordLseTick(sym: string, tickObj: { price: number; bid?: number; ask?
   } else if (sym === 'SP500.F' || sym === 'ES.F' || sym === 'ES=F') {
     lseLiveTicks['ES.F'] = tickObj;
     lseLiveTicks['SP500.F'] = tickObj;
-  } else if (sym === 'US30/USD' || sym === 'US30' || sym === 'DOW.F' || sym === 'YM.F') {
+  } else if (sym === 'US30/USD' || sym === 'US30') {
     lseLiveTicks['US30/USD'] = tickObj;
     lseLiveTicks['US30'] = tickObj;
+  } else if (sym === 'DOW.F' || sym === 'YM.F' || sym === 'YM=F') {
     lseLiveTicks['DOW.F'] = tickObj;
     lseLiveTicks['YM.F'] = tickObj;
+    // Fallback for CFD US30 if LSE does not stream US30 ticks separately
+    if (!lseLiveTicks['US30']) {
+      lseLiveTicks['US30'] = tickObj;
+      lseLiveTicks['US30/USD'] = tickObj;
+    }
   } else if (sym === 'EUR/USD' || sym === 'EURUSD') {
     lseLiveTicks['EUR/USD'] = tickObj;
     lseLiveTicks['EURUSD'] = tickObj;
@@ -2033,6 +2042,15 @@ const LSE_PARITY_CONFIGS: LseParityConfig[] = [
     decimals: 2,
   },
   {
+    id: 'YM_F',
+    name: 'Dow Jones Futures',
+    symbol: 'DOW.F',
+    tvSymbol: 'CBOT_MINI:YM1!',
+    lseSymbol: 'DOW.F',
+    tickKeys: ['DOW.F', 'YM.F'],
+    decimals: 2,
+  },
+  {
     id: 'GC_F',
     name: 'Gold Futures',
     symbol: 'GC.F',
@@ -2143,6 +2161,7 @@ async function fetchLondonStrategicEdgeData(
   gold?: any;
   nq_f?: any;
   es_f?: any;
+  ym_f?: any;
   gc_f?: any;
   eurusd?: any;
   gbpusd?: any;
@@ -2164,10 +2183,11 @@ async function fetchLondonStrategicEdgeData(
       gold: quotes[3],
       nq_f: quotes[4],
       es_f: quotes[5],
-      gc_f: quotes[6],
-      eurusd: quotes[7],
-      gbpusd: quotes[8],
-      usdjpy: quotes[9],
+      ym_f: quotes[6],
+      gc_f: quotes[7],
+      eurusd: quotes[8],
+      gbpusd: quotes[9],
+      usdjpy: quotes[10],
     };
     return lastLseResult;
   } catch (e: any) {
@@ -2194,6 +2214,7 @@ async function getRealLiveMarketData(
   let gold = lseResult.gold ? { ...lseResult.gold } : null;
   let nq_f = lseResult.nq_f ? { ...lseResult.nq_f } : null;
   let es_f = lseResult.es_f ? { ...lseResult.es_f } : null;
+  let ym_f = lseResult.ym_f ? { ...lseResult.ym_f } : null;
   let gc_f = lseResult.gc_f ? { ...lseResult.gc_f } : null;
   let eurusd = lseResult.eurusd ? { ...lseResult.eurusd } : null;
   let gbpusd = lseResult.gbpusd ? { ...lseResult.gbpusd } : null;
@@ -2233,6 +2254,7 @@ async function getRealLiveMarketData(
   applyTick(gold, ['XAU/USD', 'XAUUSD'], 2);
   applyTick(nq_f, ['NQ.F', 'NASDAQ100.F'], 2);
   applyTick(es_f, ['ES.F', 'SP500.F'], 2);
+  applyTick(ym_f, ['DOW.F', 'YM.F'], 2);
   applyTick(gc_f, ['GC.F', 'GOLD.F'], 2);
   applyTick(eurusd, ['EUR/USD', 'EURUSD'], 5);
   applyTick(gbpusd, ['GBP/USD', 'GBPUSD'], 5);
@@ -2273,12 +2295,13 @@ async function getRealLiveMarketData(
   gold = sanitizeQuote(gold, 'GOLD', 'Gold Spot (XAU/USD)', 'XAU/USD', 'FOREXCOM:XAUUSD');
   nq_f = sanitizeQuote(nq_f, 'NQ_F', 'Nasdaq 100 Futures', 'NQ.F', 'CME_MINI:NQ1!');
   es_f = sanitizeQuote(es_f, 'ES_F', 'S&P 500 Futures', 'ES.F', 'CME_MINI:ES1!');
+  ym_f = sanitizeQuote(ym_f, 'YM_F', 'Dow Jones Futures', 'DOW.F', 'CBOT_MINI:YM1!');
   gc_f = sanitizeQuote(gc_f, 'GC_F', 'Gold Futures', 'GC.F', 'COMEX:GC1!');
   eurusd = sanitizeQuote(eurusd, 'EURUSD', 'EUR/USD (Euro / US Dollar)', 'EUR/USD', 'FX:EURUSD');
   gbpusd = sanitizeQuote(gbpusd, 'GBPUSD', 'GBP/USD (British Pound / US Dollar)', 'GBP/USD', 'FX:GBPUSD');
   usdjpy = sanitizeQuote(usdjpy, 'USDJPY', 'USD/JPY (US Dollar / Japanese Yen)', 'USD/JPY', 'FX:USDJPY');
 
-  return { nasdaq, spx500, dow, gold, nq_f, es_f, gc_f, eurusd, gbpusd, usdjpy, apiErrors };
+  return { nasdaq, spx500, dow, gold, nq_f, es_f, ym_f, gc_f, eurusd, gbpusd, usdjpy, apiErrors };
 }
 
 // API Route: Get Market Quotes for all CFD, Futures & Forex
@@ -2287,7 +2310,7 @@ app.get('/api/market-data', async (req, res) => {
     const customLseKey = (req.query.lseKey as string) || process.env.LSE_API_KEY;
     const forceRefresh = req.query.force === 'true' || req.query.refresh === 'true';
 
-    const { nasdaq, spx500, dow, gold, nq_f, es_f, gc_f, eurusd, gbpusd, usdjpy, apiErrors } = await getRealLiveMarketData(
+    const { nasdaq, spx500, dow, gold, nq_f, es_f, ym_f, gc_f, eurusd, gbpusd, usdjpy, apiErrors } = await getRealLiveMarketData(
       customLseKey,
       forceRefresh
     );
@@ -2301,6 +2324,7 @@ app.get('/api/market-data', async (req, res) => {
         GOLD: gold,
         NQ_F: nq_f,
         ES_F: es_f,
+        YM_F: ym_f,
         GC_F: gc_f,
         EURUSD: eurusd,
         GBPUSD: gbpusd,
@@ -2333,7 +2357,7 @@ app.get('/api/market-stream', async (req, res) => {
 
   const pushTickData = async () => {
     try {
-      const { nasdaq, spx500, dow, gold, nq_f, es_f, gc_f, eurusd, gbpusd, usdjpy, apiErrors } = await getRealLiveMarketData(
+      const { nasdaq, spx500, dow, gold, nq_f, es_f, ym_f, gc_f, eurusd, gbpusd, usdjpy, apiErrors } = await getRealLiveMarketData(
         customLseKey,
         false
       );
@@ -2346,6 +2370,7 @@ app.get('/api/market-stream', async (req, res) => {
           GOLD: gold,
           NQ_F: nq_f,
           ES_F: es_f,
+          YM_F: ym_f,
           GC_F: gc_f,
           EURUSD: eurusd,
           GBPUSD: gbpusd,
@@ -2448,7 +2473,7 @@ app.get('/api/candles', async (req, res) => {
       fallbackBasePrice = 4020;
     } else if (sNorm.includes('DOW') || sNorm.includes('US30') || sNorm.includes('YM')) {
       yahooSymbol = 'YM=F';
-      tickAliases = ['DOW.F', 'US30', 'US30/USD'];
+      tickAliases = ['DOW.F', 'YM.F', 'US30', 'US30/USD'];
       decimals = 2;
       fallbackBasePrice = 52650;
     } else if (sNorm.includes('SPX') || sNorm.includes('SP500') || sNorm.includes('ES')) {
@@ -4688,13 +4713,14 @@ app.post('/api/generate-ai-signal', async (req, res) => {
           : 'Piața este închisă pentru weekend. Generarea de semnale live se va relua Luni de la ora 01:00.',
       });
     }
-    const validId = (['NASDAQ', 'SPX500', 'DOW_JONES', 'GOLD', 'NQ_F', 'ES_F', 'GC_F', 'EURUSD', 'GBPUSD', 'USDJPY'].includes(instrumentId) ? instrumentId : 'NASDAQ') as
+    const validId = (['NASDAQ', 'SPX500', 'DOW_JONES', 'GOLD', 'NQ_F', 'ES_F', 'YM_F', 'GC_F', 'EURUSD', 'GBPUSD', 'USDJPY'].includes(instrumentId) ? instrumentId : 'NASDAQ') as
       | 'NASDAQ'
       | 'SPX500'
       | 'DOW_JONES'
       | 'GOLD'
       | 'NQ_F'
       | 'ES_F'
+      | 'YM_F'
       | 'GC_F'
       | 'EURUSD'
       | 'GBPUSD'
@@ -4708,6 +4734,7 @@ app.post('/api/generate-ai-signal', async (req, res) => {
       validId === 'GOLD' ? 'gold' :
       validId === 'NQ_F' ? 'nq_f' :
       validId === 'ES_F' ? 'es_f' :
+      validId === 'YM_F' ? 'ym_f' :
       validId === 'GC_F' ? 'gc_f' :
       validId === 'EURUSD' ? 'eurusd' :
       validId === 'GBPUSD' ? 'gbpusd' :
@@ -4998,7 +5025,7 @@ app.post('/api/generate-custom-rule-signal', async (req, res) => {
       return res.status(400).json({ error: isEn ? 'Custom rules incomplete.' : 'Regulile personalizate introduse sunt incomplete.' });
     }
 
-    const instrumentId = (['NASDAQ', 'SPX500', 'DOW_JONES', 'GOLD', 'NQ_F', 'ES_F', 'GC_F', 'EURUSD', 'GBPUSD', 'USDJPY'].includes(rule.instrumentId) ? rule.instrumentId : 'NASDAQ') as 'NASDAQ' | 'SPX500' | 'DOW_JONES' | 'GOLD' | 'NQ_F' | 'ES_F' | 'GC_F' | 'EURUSD' | 'GBPUSD' | 'USDJPY';
+    const instrumentId = (['NASDAQ', 'SPX500', 'DOW_JONES', 'GOLD', 'NQ_F', 'ES_F', 'YM_F', 'GC_F', 'EURUSD', 'GBPUSD', 'USDJPY'].includes(rule.instrumentId) ? rule.instrumentId : 'NASDAQ') as 'NASDAQ' | 'SPX500' | 'DOW_JONES' | 'GOLD' | 'NQ_F' | 'ES_F' | 'YM_F' | 'GC_F' | 'EURUSD' | 'GBPUSD' | 'USDJPY';
     const liveData = await getRealLiveMarketData();
     const quote = liveData[
       instrumentId === 'NASDAQ' ? 'nasdaq' :
@@ -5007,6 +5034,7 @@ app.post('/api/generate-custom-rule-signal', async (req, res) => {
       instrumentId === 'GOLD' ? 'gold' :
       instrumentId === 'NQ_F' ? 'nq_f' :
       instrumentId === 'ES_F' ? 'es_f' :
+      instrumentId === 'YM_F' ? 'ym_f' :
       instrumentId === 'GC_F' ? 'gc_f' :
       instrumentId === 'EURUSD' ? 'eurusd' :
       instrumentId === 'GBPUSD' ? 'gbpusd' :
@@ -5313,7 +5341,7 @@ function buildFallback3StepRationale(quote: any, instrumentId: string, timeframe
 
 // Deterministic Helper based strictly on real quote data
 function buildDeterministicSignal(
-  instrumentId: 'NASDAQ' | 'SPX500' | 'DOW_JONES' | 'GOLD' | 'NQ_F' | 'ES_F' | 'GC_F' | 'EURUSD' | 'GBPUSD' | 'USDJPY',
+  instrumentId: 'NASDAQ' | 'SPX500' | 'DOW_JONES' | 'GOLD' | 'NQ_F' | 'ES_F' | 'YM_F' | 'GC_F' | 'EURUSD' | 'GBPUSD' | 'USDJPY',
   timeframe: string,
   quote: any,
   strategy: string,
@@ -5615,6 +5643,7 @@ function mapToMt5Symbol(instrumentId: string): string {
     case 'GOLD': return 'XAUUSD';
     case 'NQ_F': return 'NQ.F';
     case 'ES_F': return 'ES.F';
+    case 'YM_F': return 'DOW.F';
     case 'GC_F': return 'GC.F';
     case 'EURUSD':
     case 'EUR/USD': return 'EURUSD';
@@ -6241,6 +6270,8 @@ function mapToNinjaTraderSymbol(instrumentId: string, isMicro: boolean = false):
     case 'DOW_JONES':
     case 'US30':
     case 'YM':
+    case 'YM_F':
+    case 'DOW.F':
       return isMicro ? 'MYM' : 'YM';
     case 'GOLD':
     case 'XAUUSD':
@@ -6678,6 +6709,7 @@ async function startServer() {
             GOLD: data.gold,
             NQ_F: data.nq_f,
             ES_F: data.es_f,
+            YM_F: data.ym_f,
             GC_F: data.gc_f,
             EURUSD: data.eurusd,
             GBPUSD: data.gbpusd,

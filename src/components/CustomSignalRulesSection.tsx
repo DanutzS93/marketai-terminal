@@ -189,7 +189,7 @@ export const CustomSignalRulesSection: React.FC<CustomSignalRulesSectionProps> =
                 {lang === 'ro' ? '1. Selectează Activul (Indici / Aur / Futures / Forex)' : '1. Select Asset (Indices / Gold / Futures / Forex)'}
               </label>
               <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-2.5">
-                {(['NASDAQ', 'SPX500', 'DOW_JONES', 'GOLD', 'NQ_F', 'ES_F', 'GC_F', 'EURUSD', 'GBPUSD', 'USDJPY'] as InstrumentId[]).map((id) => {
+                {(['NASDAQ', 'SPX500', 'DOW_JONES', 'GOLD', 'NQ_F', 'ES_F', 'YM_F', 'GC_F', 'EURUSD', 'GBPUSD', 'USDJPY'] as InstrumentId[]).map((id) => {
                   const q = quotes[id];
                   const isSel = selectedInstrument === id;
                   const label =
@@ -205,6 +205,8 @@ export const CustomSignalRulesSection: React.FC<CustomSignalRulesSectionProps> =
                       ? 'NQ.F Fut'
                       : id === 'ES_F'
                       ? 'ES.F Fut'
+                      : id === 'YM_F'
+                      ? 'DOW.F Fut'
                       : id === 'GC_F'
                       ? 'GC.F Fut'
                       : id === 'EURUSD'

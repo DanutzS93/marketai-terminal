@@ -151,6 +151,7 @@ export function evaluateIctConditions(
     GOLD: { name: 'Gold Spot', sym: 'XAUUSD' },
     NQ_F: { name: 'Nasdaq Futures', sym: 'NQ.F' },
     ES_F: { name: 'S&P Futures', sym: 'ES.F' },
+    YM_F: { name: 'Dow Jones Futures', sym: 'DOW.F' },
     GC_F: { name: 'Gold Futures', sym: 'GC.F' },
     EURUSD: { name: 'EUR/USD Forex Spot', sym: 'EUR/USD' },
     GBPUSD: { name: 'GBP/USD Forex Spot', sym: 'GBP/USD' },
@@ -231,7 +232,9 @@ export function getSignalsCountForAssetInSession(
     } else if (targetInst === 'SPX500') {
       matches = matches || inst === 'ES_F' || sym === 'SPX500' || sym === 'SPX';
     } else if (targetInst === 'DOW_JONES') {
-      matches = matches || sym === 'US30' || inst === 'US30' || sym.includes('DOW');
+      matches = matches || inst === 'YM_F' || sym === 'US30' || inst === 'US30' || sym.includes('DOW');
+    } else if (targetInst === 'YM_F') {
+      matches = matches || inst === 'YM_F' || sym === 'DOW.F' || sym.includes('YM');
     } else if (targetInst === 'GOLD') {
       matches = matches || inst === 'GC_F' || sym === 'XAUUSD' || sym === 'GOLD';
     }
@@ -310,6 +313,7 @@ export function generateIctSilverBulletSignal(
     GOLD: { name: 'Gold Spot', sym: 'XAUUSD' },
     NQ_F: { name: 'Nasdaq Futures', sym: 'NQ.F' },
     ES_F: { name: 'S&P Futures', sym: 'ES.F' },
+    YM_F: { name: 'Dow Jones Futures', sym: 'DOW.F' },
     GC_F: { name: 'Gold Futures', sym: 'GC.F' },
     EURUSD: { name: 'EUR/USD Forex Spot', sym: 'EUR/USD' },
     GBPUSD: { name: 'GBP/USD Forex Spot', sym: 'GBP/USD' },

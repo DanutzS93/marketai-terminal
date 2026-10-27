@@ -25,6 +25,7 @@ export const TradingViewWidgetContainer: React.FC<TradingViewWidgetContainerProp
     GOLD: { symbol: 'OANDA:XAUUSD', name: 'Gold Spot (OANDA:XAUUSD)', title: 'Gold Spot (XAU/USD)' },
     NQ_F: { symbol: 'OANDA:NAS100USD', name: 'Nasdaq 100 CFD (OANDA:NAS100USD)', title: 'Nasdaq Futures (NQ.F)' },
     ES_F: { symbol: 'OANDA:SPX500USD', name: 'S&P 500 CFD (OANDA:SPX500USD)', title: 'S&P 500 Futures (ES.F)' },
+    YM_F: { symbol: 'OANDA:US30USD', name: 'Dow Jones CFD (OANDA:US30USD)', title: 'Dow Jones Futures (DOW.F)' },
     GC_F: { symbol: 'OANDA:XAUUSD', name: 'Gold Spot (OANDA:XAUUSD)', title: 'Gold Futures (GC.F)' },
     EURUSD: { symbol: 'FX:EURUSD', name: 'EUR/USD Forex Spot (FX:EURUSD)', title: 'EUR/USD' },
     GBPUSD: { symbol: 'FX:GBPUSD', name: 'GBP/USD Forex Spot (FX:GBPUSD)', title: 'GBP/USD' },
@@ -183,7 +184,7 @@ export const TradingViewWidgetContainer: React.FC<TradingViewWidgetContainerProp
           <span className="text-xs font-bold text-slate-400 uppercase tracking-wider hidden sm:inline mr-1">
             INSTRUMENT:
           </span>
-          {(['NASDAQ', 'SPX500', 'DOW_JONES', 'GOLD', 'NQ_F', 'ES_F', 'GC_F', 'EURUSD', 'GBPUSD', 'USDJPY'] as InstrumentId[]).map((id) => (
+          {(['NASDAQ', 'SPX500', 'DOW_JONES', 'GOLD', 'NQ_F', 'ES_F', 'YM_F', 'GC_F', 'EURUSD', 'GBPUSD', 'USDJPY'] as InstrumentId[]).map((id) => (
             <button
               key={id}
               onClick={() => onSelectInstrument(id)}

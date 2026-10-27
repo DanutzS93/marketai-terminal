@@ -99,6 +99,7 @@ export const SignalPerformanceSummaryCard: React.FC<SignalPerformanceSummaryCard
     { id: 'GOLD', name: 'Gold Spot', symbol: 'XAU/USD' },
     { id: 'NQ_F', name: 'Nasdaq 100 Futures', symbol: 'NQ.F' },
     { id: 'ES_F', name: 'S&P 500 Futures', symbol: 'ES.F' },
+    { id: 'YM_F', name: 'Dow Jones Futures', symbol: 'DOW.F' },
     { id: 'GC_F', name: 'Gold Futures', symbol: 'GC.F' },
     { id: 'EURUSD', name: 'EUR/USD Forex Spot', symbol: 'EUR/USD' },
     { id: 'GBPUSD', name: 'GBP/USD Forex Spot', symbol: 'GBP/USD' },
@@ -244,6 +245,16 @@ export const SignalPerformanceSummaryCard: React.FC<SignalPerformanceSummaryCard
               }`}
             >
               ES.F
+            </button>
+            <button
+              onClick={() => setSelectedAssetFilter('YM_F')}
+              className={`px-2.5 py-1 rounded-lg font-mono font-bold transition cursor-pointer text-xs ${
+                selectedAssetFilter === 'YM_F'
+                  ? 'bg-cyan-500 text-slate-950 shadow-sm'
+                  : 'bg-white/5 hover:bg-white/10 text-slate-300 border border-white/5'
+              }`}
+            >
+              DOW.F
             </button>
             <button
               onClick={() => setSelectedAssetFilter('GC_F')}

@@ -488,6 +488,7 @@ export const MarketOverviewCards: React.FC<MarketOverviewCardsProps> = ({
   const futuresInstruments: { id: InstrumentId; subtitle: string; provider: string; category: string }[] = [
     { id: 'NQ_F', subtitle: 'Nasdaq 100 Futures Contract (NQ.F)', provider: 'LSE / CME', category: 'FUTURES' },
     { id: 'ES_F', subtitle: 'S&P 500 Futures Contract (ES.F)', provider: 'LSE / CME', category: 'FUTURES' },
+    { id: 'YM_F', subtitle: 'Dow Jones Futures Contract (DOW.F)', provider: 'LSE / CBOT', category: 'FUTURES' },
     { id: 'GC_F', subtitle: 'Gold Futures Contract (GC.F)', provider: 'LSE / COMEX', category: 'FUTURES' },
   ];
 
@@ -513,6 +514,8 @@ export const MarketOverviewCards: React.FC<MarketOverviewCardsProps> = ({
           ? 'Nasdaq 100 Futures'
           : id === 'ES_F'
           ? 'S&P 500 Futures'
+          : id === 'YM_F'
+          ? 'Dow Jones Futures'
           : id === 'GC_F'
           ? 'Gold Futures'
           : id === 'EURUSD'
@@ -533,6 +536,8 @@ export const MarketOverviewCards: React.FC<MarketOverviewCardsProps> = ({
           ? 'NQ.F'
           : id === 'ES_F'
           ? 'ES.F'
+          : id === 'YM_F'
+          ? 'DOW.F'
           : id === 'GC_F'
           ? 'GC.F'
           : id === 'EURUSD'

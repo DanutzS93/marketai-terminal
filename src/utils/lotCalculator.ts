@@ -116,6 +116,25 @@ export const INSTRUMENT_SPECS: Record<CalculatorInstrumentId, InstrumentSpec> = 
     specDescriptionRo: '1.00 Lot = 1 Contract Index ($1.00 per 1 punct mișcare)',
     specDescriptionEn: '1.00 Lot = 1 Index Contract ($1.00 per 1 point move)',
   },
+  YM_F: {
+    id: 'YM_F',
+    name: 'Dow Jones E-mini Futures (DOW.F)',
+    symbol: 'DOW.F',
+    category: 'INDICES',
+    defaultPrice: 43800,
+    decimals: 1,
+    pipSize: 1.0,
+    pipLabel: 'pct',
+    contractSize: 5,
+    pointValuePerLot: 5.0, // $5 per point on 1 YM contract
+    minLot: 1.0,
+    maxLot: 50.0,
+    lotStep: 1.0,
+    defaultSLDist: 100.0,
+    unitLabel: 'Contracte E-mini ($5/pt)',
+    specDescriptionRo: '1 Contract E-mini = $5.00 per punct (Micro MYM = $0.50/pt)',
+    specDescriptionEn: '1 E-mini Contract = $5.00 per point (Micro MYM = $0.50/pt)',
+  },
   GOLD: {
     id: 'GOLD',
     name: 'Gold Spot (XAU/USD)',
@@ -427,6 +446,8 @@ export function calculateTrailingStopConversions(params: {
         convertedPoints = Number(targetPriceDist.toFixed(2));
       } else if (id === 'NQ_F' || id === 'ES_F') {
         convertedPoints = Number((Math.round(targetPriceDist / 0.25) * 0.25).toFixed(2));
+      } else if (id === 'YM_F') {
+        convertedPoints = Number((Math.round(targetPriceDist)).toFixed(1));
       } else if (id === 'SPX500' || id === 'DOW_JONES' || id === 'NASDAQ') {
         convertedPoints = Number(targetPriceDist.toFixed(1));
       } else {
@@ -471,6 +492,12 @@ export function calculateTrailingStopConversions(params: {
       mt5Points = Math.round(convertedPoints * 10);
       dollarValuePerUnit = convertedPoints * 1.0;
       secondaryDetail = `$${dollarValuePerUnit.toFixed(1)} / lot CFD`;
+    } else if (id === 'YM_F') {
+      unitLabel = 'pts';
+      ticks = Math.round(convertedPoints / 1.0);
+      dollarValuePerUnit = convertedPoints * 5.0;
+      displayValue = `${convertedPoints.toFixed(1)} pts`;
+      secondaryDetail = `${ticks} ticks • $${dollarValuePerUnit.toFixed(0)} / ct`;
     } else if (id === 'GOLD') {
       unitLabel = '$';
       const pips = convertedPoints * 10;

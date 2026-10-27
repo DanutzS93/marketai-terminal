@@ -22,6 +22,7 @@ const INSTRUMENT_OPTIONS: { id: InstrumentId; name: string; symbol: string }[] =
   { id: 'USDJPY', name: 'US Dollar / Japanese Yen', symbol: 'USDJPY' },
   { id: 'NQ_F', name: 'E-mini NASDAQ Futures', symbol: 'NQ' },
   { id: 'ES_F', name: 'E-mini S&P 500 Futures', symbol: 'ES' },
+  { id: 'YM_F', name: 'E-mini Dow Jones Futures', symbol: 'YM' },
   { id: 'GC_F', name: 'Gold COMEX Futures', symbol: 'GC' },
 ];
 

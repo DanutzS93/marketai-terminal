@@ -548,8 +548,12 @@ void UpdateRiskRulesFromJson(string json)
       assetSpecificPoints = ExtractJsonNestedValue(json, "riskRules", "trailingStopPointsPerAsset.NASDAQ");
    else if(StringFind(symUp, "SPX") >= 0 || StringFind(symUp, "US500") >= 0 || StringFind(symUp, "ES") >= 0)
       assetSpecificPoints = ExtractJsonNestedValue(json, "riskRules", "trailingStopPointsPerAsset.SPX500");
-   else if(StringFind(symUp, "US30") >= 0 || StringFind(symUp, "DJ") >= 0 || StringFind(symUp, "DOW") >= 0)
-      assetSpecificPoints = ExtractJsonNestedValue(json, "riskRules", "trailingStopPointsPerAsset.DOW_JONES");
+   else if(StringFind(symUp, "US30") >= 0 || StringFind(symUp, "DJ") >= 0 || StringFind(symUp, "DOW") >= 0 || StringFind(symUp, "YM") >= 0)
+   {
+      assetSpecificPoints = ExtractJsonNestedValue(json, "riskRules", "trailingStopPointsPerAsset.YM_F");
+      if(assetSpecificPoints == "")
+         assetSpecificPoints = ExtractJsonNestedValue(json, "riskRules", "trailingStopPointsPerAsset.DOW_JONES");
+   }
    else if(StringFind(symUp, "EURUSD") >= 0)
       assetSpecificPoints = ExtractJsonNestedValue(json, "riskRules", "trailingStopPointsPerAsset.EURUSD");
    else if(StringFind(symUp, "GBPUSD") >= 0)

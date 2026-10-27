@@ -266,6 +266,7 @@ export const SignalHistoryStatsModal: React.FC<SignalHistoryStatsModalProps> = (
                 <optgroup label="--- CONTRACTE FUTURES ---">
                   <option value="NQ_F">Nasdaq 100 Futures (NQ.F)</option>
                   <option value="ES_F">S&P 500 Futures (ES.F)</option>
+                  <option value="YM_F">Dow Jones Futures (DOW.F)</option>
                   <option value="GC_F">Gold Futures (GC.F)</option>
                 </optgroup>
                 <optgroup label="--- FOREX SPOT (FX) ---">

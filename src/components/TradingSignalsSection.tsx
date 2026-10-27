@@ -250,6 +250,7 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
               <optgroup label="--- CONTRACTE FUTURES ---" className="bg-slate-900 text-slate-300">
                 <option value="NQ_F">Nasdaq 100 Futures (NQ.F)</option>
                 <option value="ES_F">S&P 500 Futures (ES.F)</option>
+                <option value="YM_F">Dow Jones Futures (DOW.F)</option>
                 <option value="GC_F">Gold Futures (GC.F)</option>
               </optgroup>
               <optgroup label="--- FOREX SPOT (FX) ---" className="bg-slate-900 text-slate-300">
@@ -398,7 +399,7 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
       <div className="flex flex-wrap items-center justify-between gap-3 my-5 bg-slate-950/70 p-2.5 rounded-xl border border-white/10 text-xs backdrop-blur-md shadow-inner">
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-slate-400 font-bold uppercase text-[10px] tracking-wider mr-1 font-mono">{lang === 'ro' ? 'PERECHE:' : 'PAIR:'}</span>
-          {(['ALL', 'NASDAQ', 'SPX500', 'DOW_JONES', 'GOLD', 'NQ_F', 'ES_F', 'GC_F', 'EURUSD', 'GBPUSD', 'USDJPY'] as const).map((id) => (
+          {(['ALL', 'NASDAQ', 'SPX500', 'DOW_JONES', 'GOLD', 'NQ_F', 'ES_F', 'YM_F', 'GC_F', 'EURUSD', 'GBPUSD', 'USDJPY'] as const).map((id) => (
             <button
               key={id}
               onClick={() => setFilterInstrument(id)}
@@ -414,6 +415,8 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
                 ? 'NQ.F Fut'
                 : id === 'ES_F'
                 ? 'ES.F Fut'
+                : id === 'YM_F'
+                ? 'DOW.F Fut'
                 : id === 'GC_F'
                 ? 'GC.F Fut'
                 : id === 'GOLD'

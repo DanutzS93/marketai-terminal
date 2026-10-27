@@ -701,7 +701,7 @@ export const Header: React.FC<HeaderProps> = ({
             </span>
           </div>
 
-          {(['NASDAQ', 'SPX500', 'DOW_JONES', 'GOLD', 'NQ_F', 'ES_F', 'GC_F', 'EURUSD', 'GBPUSD', 'USDJPY'] as InstrumentId[]).map((id) => {
+          {(['NASDAQ', 'SPX500', 'DOW_JONES', 'GOLD', 'NQ_F', 'ES_F', 'YM_F', 'GC_F', 'EURUSD', 'GBPUSD', 'USDJPY'] as InstrumentId[]).map((id) => {
             const q = quotes[id];
             const hasRealPrice = Boolean(q && typeof q.price === 'number' && q.price > 0 && !isNaN(q.price));
             const isPositive = hasRealPrice && (q.changePercent || 0) >= 0;
@@ -720,6 +720,8 @@ export const Header: React.FC<HeaderProps> = ({
                 ? 'NQ.F'
                 : id === 'ES_F'
                 ? 'ES.F'
+                : id === 'YM_F'
+                ? 'DOW.F'
                 : id === 'GC_F'
                 ? 'GC.F'
                 : id === 'EURUSD'

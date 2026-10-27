@@ -1358,7 +1358,7 @@ export function calculateTradePnLMetrics(
   user?: UserProfile | null,
   quotes?: Record<string, MarketQuote>
 ): TradePnLMetrics {
-  const isFutures = signal.instrumentId === 'NQ_F' || signal.instrumentId === 'ES_F' || signal.instrumentId === 'GC_F';
+  const isFutures = signal.instrumentId === 'NQ_F' || signal.instrumentId === 'ES_F' || signal.instrumentId === 'YM_F' || signal.instrumentId === 'GC_F';
   const hasNinja = Boolean(user?.ninjaTraderAccountNumber || signal.ninjaTraderPlaced || signal.accountSource === 'NINJATRADER');
   const hasMt5 = Boolean(user?.mt5AccountNumber || signal.mt5Placed || signal.accountSource === 'MT5');
 

@@ -182,7 +182,7 @@ export const RiskRulesConfigurationSection: React.FC<RiskRulesConfigurationSecti
   const getBasePresets = (baseId: InstrumentId) => {
     if (baseId === 'NASDAQ' || baseId === 'NQ_F') return [25, 50, 75, 100];
     if (baseId === 'SPX500' || baseId === 'ES_F') return [10, 15, 20, 30];
-    if (baseId === 'DOW_JONES') return [50, 100, 150, 200];
+    if (baseId === 'DOW_JONES' || baseId === 'YM_F') return [50, 100, 150, 200];
     if (baseId === 'GOLD' || baseId === 'GC_F') return [4.0, 7.0, 10.0, 15.0];
     if (baseId === 'EURUSD' || baseId === 'GBPUSD') return [15, 25, 35, 50];
     if (baseId === 'USDJPY') return [20, 35, 50, 75];
