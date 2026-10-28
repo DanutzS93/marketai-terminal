@@ -1,4 +1,4 @@
-export const MT5_EA_VERSION = '4.71';
+export const MT5_EA_VERSION = '4.72';
 
 export function getMql5EaCode(
   mt5Endpoint: string,
@@ -14,7 +14,7 @@ export function getMql5EaCode(
 #property copyright "MarketAI Signals"
 #property link      "https://ai.studio"
 #property version   "${MT5_EA_VERSION}"
-#property description "MarketAI MT5 Auto-Trading Bridge with Real-Time Risk Rules, Dynamic Trailing & Exact Broker PnL Sync"
+#property description "MarketAI MT5 Auto-Trading Bridge v${MT5_EA_VERSION} with Hybrid GET/POST Engine & Exact Broker PnL Sync"
 
 #include <Trade\\Trade.mqh>
 CTrade trade;
@@ -1139,18 +1139,26 @@ void FetchAndExecuteSignals()
    string result_headers;
    string cleanKey = GetCleanApiKey();
    string safeSymbol = UrlEncodeParam(targetSymbol);
-   string headers = "Authorization: Bearer " + cleanKey + "\\r\\n" +
-                    "Content-Type: application/json\\r\\n\\r\\n";
-   string url = InpEndpointURL;
-   if(StringFind(url, "onrender.com") >= 0 || url == "" || (StringFind(url, "fly.dev") < 0 && StringFind(url, "localhost") < 0))
-   {
-      url = "${mt5Endpoint}";
-   }
-   url = ForceHttps(url);
-   if(StringFind(url, "?") < 0) url = url + "?apiKey=" + cleanKey + "&symbol=" + safeSymbol;
-   else url = url + "&apiKey=" + cleanKey + "&symbol=" + safeSymbol;
    
-   int res = WebRequest("GET", url, headers, 10000, data, result, result_headers);
+   string origin = ForceHttps("${currentOrigin}");
+   string signalsUrl = origin + "/api/mt5/signals?apiKey=" + cleanKey + "&symbol=" + safeSymbol;
+   
+   // Clean GET request (no Content-Type on body-less GET to prevent Windows WinINet socket/read timeouts 1003)
+   string getHeaders = "Authorization: Bearer " + cleanKey + "\\r\\n" +
+                       "User-Agent: Mozilla/5.0 MarketAI-Bridge/4.72\\r\\n\\r\\n";
+   
+   int res = WebRequest("GET", signalsUrl, getHeaders, 8000, data, result, result_headers);
+   
+   // Resilient Fallback: If GET failed or returned code 1003 (WinINet socket/read timeout), retry via POST with JSON body
+   if(res != 200)
+   {
+      string postHeaders = "Authorization: Bearer " + cleanKey + "\\r\\n" +
+                           "Content-Type: application/json\\r\\n\\r\\n";
+      string postPayload = "{\\\"apiKey\\\":\\\"" + cleanKey + "\\\",\\\"symbol\\\":\\\"" + targetSymbol + "\\\"}";
+      ArrayResize(data, StringLen(postPayload));
+      StringToCharArray(postPayload, data, 0, StringLen(postPayload), CP_UTF8);
+      res = WebRequest("POST", signalsUrl, postHeaders, 8000, data, result, result_headers);
+   }
    
    if(res == -1)
    {
@@ -1159,9 +1167,9 @@ void FetchAndExecuteSignals()
       if(TimeCurrent() - lastWebErr > 30)
       {
          if(err == 4060 || err == 4014)
-            Print("[MarketAI EROARE ", err, "] URL-ul WebRequest NU este autorizat in MT5! Adaugati obligatoriu '", "${currentOrigin}", "' in Tools -> Options -> Expert Advisors -> Allow WebRequest for listed URL.");
+            Print("[MarketAI EROARE ", err, "] URL-ul '", origin, "' NU este autorizat in MT5! Adaugati obligatoriu '", origin, "' in Tools -> Options -> Expert Advisors -> Allow WebRequest for listed URL.");
          else
-            Print("[MarketAI EROARE WebRequest ", err, "] Conexiunea la server a esuat. Verificati internetul sau firewall-ul. URL: ", url);
+            Print("[MarketAI EROARE WebRequest ", err, "] Conexiunea la server a esuat (eroare retea/firewall). URL: ", signalsUrl);
          lastWebErr = TimeCurrent();
       }
       return;
@@ -1173,7 +1181,12 @@ void FetchAndExecuteSignals()
       if(TimeCurrent() - lastHttpErr > 30)
       {
          string errBody = CharArrayToString(result);
-         Print("[MarketAI HTTP ", res, "] Serverul a raspuns cu eroare: ", errBody, " | Verificati cheia InpApiKey: '", cleanKey, "'");
+         if(res == 401)
+            Print("[MarketAI HTTP 401] Cheia API este invalida sau a expirat! Verificati InpApiKey: '", cleanKey, "'");
+         else if(res == 1003)
+            Print("[MarketAI HTTP 1003] Timeout conexiune MT5 la conectarea cu '", origin, "'. Verificati Tools -> Options -> Expert Advisors -> 'Allow WebRequest for listed URL' (trebuie sa contina '", origin, "') si firewall-ul Windows.");
+         else
+            Print("[MarketAI HTTP ", res, "] Serverul a raspuns: ", errBody);
          lastHttpErr = TimeCurrent();
       }
       return;

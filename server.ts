@@ -5857,7 +5857,7 @@ function symbolsMatch(instrumentId: string, signalSymbol: string, brokerSymbol: 
   return false;
 }
 
-app.get('/api/mt5/signals', (req, res) => {
+app.all(['/api/mt5/signals', '/api/mt5/signals/poll'], (req, res) => {
   const token = extractMt5Token(req);
   if (!token) {
     return res.status(401).json({ error: 'Unauthorized MT5 API Token. Include your personal API key in InpApiKey parameter.' });
@@ -5889,7 +5889,7 @@ app.get('/api/mt5/signals', (req, res) => {
   const deletedSet = new Set((matchedUser.deletedSignalIds || []).map(String));
   let targetSignals = userSigs.filter((s) => s && !deletedSet.has(String(s.id)));
 
-  const symbolParam = req.query.symbol as string;
+  const symbolParam = ((req.query.symbol as string) || (req.body && req.body.symbol)) as string;
   const processedSet = new Set((matchedUser?.mt5ProcessedSignalIds || []).map((id) => String(id)));
 
   // Filter signals: only send signals that are NOT cancelled, NOT hit SL/TP3, and NOT already placed in MT5
