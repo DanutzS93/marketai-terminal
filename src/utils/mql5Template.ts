@@ -1,4 +1,4 @@
-export const MT5_EA_VERSION = '4.76';
+export const MT5_EA_VERSION = '4.77';
 
 export function getMql5EaCode(
   mt5Endpoint: string,
@@ -827,7 +827,9 @@ void SendAccountSync()
 string ExtractSignalIdFromText(string text)
 {
    if(text == "") return "";
-   int p = StringFind(text, "sig_");
+   int p = StringFind(text, "custom_sig_");
+   if(p == -1) p = StringFind(text, "scalp_");
+   if(p == -1) p = StringFind(text, "sig_");
    if(p == -1) p = StringFind(text, "SIG_");
    if(p == -1) p = StringFind(text, "SIG-");
    if(p == -1) p = StringFind(text, "sig-");
@@ -1264,55 +1266,57 @@ void FetchAndExecuteSignals()
          {
             string cancelArrStr = StringSubstr(jsonResponse, arrStart, arrEnd - arrStart + 1);
 
-            // 1. Close any open positions in MT5 matching cancelled/closed signals
+            // 1. Close open positions in MT5 matching cancelled/closed signals for THIS targetSymbol
             for(int p = PositionsTotal() - 1; p >= 0; p--)
             {
                ulong posTicket = PositionGetTicket(p);
                if(posTicket > 0 && PositionGetInteger(POSITION_MAGIC) == InpMagicNumber)
                {
+                  string posSym = PositionGetString(POSITION_SYMBOL);
+                  // Strict symbol isolation: EA on this chart only touches positions of its symbol
+                  if(posSym != targetSymbol && posSym != _Symbol && !DoSymbolsMatch(targetSymbol, posSym)) continue;
+
+                  ulong posId = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
                   string comment = PositionGetString(POSITION_COMMENT);
                   string sigToCheck = "";
-                  int posCustom = StringFind(comment, "custom_sig_");
-                  int posScalp  = StringFind(comment, "scalp_");
-                  int posLower  = StringFind(comment, "sig_");
-                  int posUpper  = StringFind(comment, "SIG-");
-                  int posUpper2 = StringFind(comment, "SIG_");
-                  int bestPos = -1;
-                  if(posCustom != -1) bestPos = posCustom;
-                  else if(posScalp != -1) bestPos = posScalp;
-                  else if(posLower != -1) bestPos = posLower;
-                  else if(posUpper != -1) bestPos = posUpper;
-                  else if(posUpper2 != -1) bestPos = posUpper2;
 
-                  if(bestPos != -1)
+                  // Priority 1: Match against registered trackedTrades
+                  for(int k = 0; k < ArraySize(trackedTrades); k++)
                   {
-                     sigToCheck = StringSubstr(comment, bestPos);
-                     int spacePos = StringFind(sigToCheck, " ");
-                     if(spacePos != -1) sigToCheck = StringSubstr(sigToCheck, 0, spacePos);
-                     int quotePos = StringFind(sigToCheck, "\\\"");
-                     if(quotePos != -1) sigToCheck = StringSubstr(sigToCheck, 0, quotePos);
+                     if(!trackedTrades[k].isClosed && (trackedTrades[k].positionTicket == posTicket || trackedTrades[k].positionId == posId))
+                     {
+                        sigToCheck = trackedTrades[k].signalId;
+                        break;
+                     }
                   }
-                  else if(StringFind(comment, "MarketAI ") == 0)
+
+                  // Priority 2: Extract signalId from position comment
+                  if(sigToCheck == "")
                   {
-                     sigToCheck = StringSubstr(comment, 9);
+                     sigToCheck = ExtractSignalIdFromText(comment);
                   }
-                  else if(StringLen(comment) >= 6)
+                  if(sigToCheck == "" && StringLen(comment) >= 6)
                   {
                      sigToCheck = comment;
                   }
 
                   bool shouldClose = false;
-                  if(StringLen(comment) >= 6 && StringFind(cancelArrStr, comment) != -1)
+                  // Strict quoted search prevents false substring matches between different signals
+                  if(StringLen(sigToCheck) >= 6)
                   {
-                     shouldClose = true;
+                     if(StringFind(cancelArrStr, "\\\"" + sigToCheck + "\\\"") != -1 ||
+                        StringFind(cancelArrStr, "\\\"" + sigToCheck) != -1)
+                     {
+                        shouldClose = true;
+                     }
                   }
-                  if(!shouldClose && StringLen(sigToCheck) >= 6 && StringFind(cancelArrStr, sigToCheck) != -1)
+                  if(!shouldClose && StringLen(comment) >= 6)
                   {
-                     shouldClose = true;
-                  }
-                  if(!shouldClose && StringLen(activeSignalId) >= 6 && StringFind(cancelArrStr, activeSignalId) != -1)
-                  {
-                     shouldClose = true;
+                     if(StringFind(cancelArrStr, "\\\"" + comment + "\\\"") != -1 ||
+                        StringFind(cancelArrStr, "\\\"" + comment) != -1)
+                     {
+                        shouldClose = true;
+                     }
                   }
 
                   if(shouldClose)
@@ -1321,62 +1325,46 @@ void FetchAndExecuteSignals()
                      Sleep(100);
                      double exitPr = 0.0;
                      double realizedPnl = GetRealizedProfitForPosition(posTicket, exitPr);
-                     Print("MarketAI: Position #", posTicket, " (Signal: ", (sigToCheck != "" ? sigToCheck : comment), ") closed via Web Terminal command! Realized PnL: $", DoubleToString(realizedPnl, 2));
+                     Print("MarketAI: Position #", posTicket, " (Signal: ", (sigToCheck != "" ? sigToCheck : comment), ") on ", posSym, " closed via Web Terminal command! Realized PnL: $", DoubleToString(realizedPnl, 2));
                      SendTradeUpdate((sigToCheck != "" ? sigToCheck : comment), "CLOSED", (realizedPnl > 0 ? "TP1_HIT" : "SL_HIT"), "CLOSED_VIA_TERMINAL", realizedPnl, exitPr);
                      if(activeSignalId == sigToCheck || activeSignalId == comment) activeSignalId = "";
                   }
                }
             }
 
-            // 2. Delete any pending orders in MT5 matching cancelled/closed signals
+            // 2. Delete pending orders in MT5 matching cancelled/closed signals for THIS targetSymbol
             for(int i = OrdersTotal() - 1; i >= 0; i--)
             {
                ulong ticket = OrderGetTicket(i);
                if(ticket > 0 && OrderGetInteger(ORDER_MAGIC) == InpMagicNumber)
                {
-                  string comment = OrderGetString(ORDER_COMMENT);
-                  string sigToCheck = "";
-                  int posCustom = StringFind(comment, "custom_sig_");
-                  int posScalp  = StringFind(comment, "scalp_");
-                  int posLower  = StringFind(comment, "sig_");
-                  int posUpper  = StringFind(comment, "SIG-");
-                  int posUpper2 = StringFind(comment, "SIG_");
-                  int bestPos = -1;
-                  if(posCustom != -1) bestPos = posCustom;
-                  else if(posScalp != -1) bestPos = posScalp;
-                  else if(posLower != -1) bestPos = posLower;
-                  else if(posUpper != -1) bestPos = posUpper;
-                  else if(posUpper2 != -1) bestPos = posUpper2;
+                  string ordSym = OrderGetString(ORDER_SYMBOL);
+                  // Strict symbol isolation: EA on this chart only deletes orders of its symbol
+                  if(ordSym != targetSymbol && ordSym != _Symbol && !DoSymbolsMatch(targetSymbol, ordSym)) continue;
 
-                  if(bestPos != -1)
-                  {
-                     sigToCheck = StringSubstr(comment, bestPos);
-                     int spacePos = StringFind(sigToCheck, " ");
-                     if(spacePos != -1) sigToCheck = StringSubstr(sigToCheck, 0, spacePos);
-                     int quotePos = StringFind(sigToCheck, "\\\"");
-                     if(quotePos != -1) sigToCheck = StringSubstr(sigToCheck, 0, quotePos);
-                  }
-                  else if(StringFind(comment, "MarketAI ") == 0)
-                  {
-                     sigToCheck = StringSubstr(comment, 9);
-                  }
-                  else if(StringLen(comment) >= 6)
+                  string comment = OrderGetString(ORDER_COMMENT);
+                  string sigToCheck = ExtractSignalIdFromText(comment);
+                  if(sigToCheck == "" && StringLen(comment) >= 6)
                   {
                      sigToCheck = comment;
                   }
 
                   bool shouldDelete = false;
-                  if(StringLen(comment) >= 6 && StringFind(cancelArrStr, comment) != -1)
+                  if(StringLen(sigToCheck) >= 6)
                   {
-                     shouldDelete = true;
+                     if(StringFind(cancelArrStr, "\\\"" + sigToCheck + "\\\"") != -1 ||
+                        StringFind(cancelArrStr, "\\\"" + sigToCheck) != -1)
+                     {
+                        shouldDelete = true;
+                     }
                   }
-                  if(!shouldDelete && StringLen(sigToCheck) >= 6 && StringFind(cancelArrStr, sigToCheck) != -1)
+                  if(!shouldDelete && StringLen(comment) >= 6)
                   {
-                     shouldDelete = true;
-                  }
-                  if(!shouldDelete && StringLen(activeSignalId) >= 6 && StringFind(cancelArrStr, activeSignalId) != -1)
-                  {
-                     shouldDelete = true;
+                     if(StringFind(cancelArrStr, "\\\"" + comment + "\\\"") != -1 ||
+                        StringFind(cancelArrStr, "\\\"" + comment) != -1)
+                     {
+                        shouldDelete = true;
+                     }
                   }
 
                   if(shouldDelete)
@@ -1384,7 +1372,7 @@ void FetchAndExecuteSignals()
                      bool delSuccess = trade.OrderDelete(ticket);
                      if(delSuccess)
                      {
-                        Print("MarketAI: Pending order #", ticket, " (Signal: ", (sigToCheck != "" ? sigToCheck : comment), ") deleted successfully via cancel/23:00 market cutoff.");
+                        Print("MarketAI: Pending order #", ticket, " (Signal: ", (sigToCheck != "" ? sigToCheck : comment), ") on ", ordSym, " deleted successfully via cancel command.");
                         SendTradeUpdate((sigToCheck != "" ? sigToCheck : comment), "CANCELLED", "CANCELLED", "ORDER_DELETED", 0.0, 0.0);
                      }
                      else
