@@ -1,4 +1,4 @@
-export const MT5_EA_VERSION = '4.75';
+export const MT5_EA_VERSION = '4.76';
 
 export function getMql5EaCode(
   mt5Endpoint: string,
@@ -28,7 +28,7 @@ input string   InpUpdateURL             = "${mt5UpdateEndpoint}";
 input string   InpApiKey                = "${apiKey}"; // Cheia MT5 API Personalizata (Asigura izolarea 100% per utilizator)
 input string   InpBrokerSymbol          = "";             // Custom broker symbol (e.g. EURUSD.pro, XAUUSD, NAS100, leave blank for chart symbol)
 input int      InpMagicNumber           = 26082026;       // EA Magic Number
-input int      InpCheckInterval         = 4;              // Check interval in seconds
+input int      InpCheckInterval         = 5;              // Check interval in seconds (5s recommended to avoid socket pileup)
 
 input group "=== [2] Dynamic Web Risk Synchronization ==="
 input bool     InpSyncRiskRulesFromWeb  = true;           // Auto-sync risk rules dynamically from MarketAI Web Panel
@@ -234,7 +234,7 @@ string ExtractJsonValue(string json, string key)
 }
 
 //+------------------------------------------------------------------+
-//| Extract Nested JSON object value                                 |
+//| Extract Nested JSON object value (with brace depth tracking)     |
 //+------------------------------------------------------------------+
 string ExtractJsonNestedValue(string json, string parentKey, string key)
 {
@@ -242,7 +242,24 @@ string ExtractJsonNestedValue(string json, string parentKey, string key)
    if(pPos == -1) return "";
    int bStart = StringFind(json, "{", pPos);
    if(bStart == -1) return "";
-   int bEnd = StringFind(json, "}", bStart);
+   
+   int braceCount = 0;
+   int bEnd = -1;
+   int len = StringLen(json);
+   for(int i = bStart; i < len; i++)
+   {
+      ushort c = StringGetCharacter(json, i);
+      if(c == '{') braceCount++;
+      else if(c == '}')
+      {
+         braceCount--;
+         if(braceCount == 0)
+         {
+            bEnd = i;
+            break;
+         }
+      }
+   }
    if(bEnd == -1) return "";
    
    string subJson = StringSubstr(json, bStart, bEnd - bStart + 1);
@@ -689,6 +706,10 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
 //+------------------------------------------------------------------+
 void OnTimer()
 {
+   static bool isBusy = false;
+   if(isBusy) return;
+   isBusy = true;
+
    static int syncCounter = 0;
    syncCounter++;
 
@@ -696,14 +717,20 @@ void OnTimer()
    ManageActivePositions();
    CheckAndReportTrackedTrades();
 
-   // Sync historical closed trades periodically every ~24 seconds
+   // Sync historical closed trades periodically every ~30 seconds (every 6 timer ticks)
    if(syncCounter % 6 == 0)
    {
       SyncClosedHistoricalTrades();
    }
 
-   SendAccountSync();
+   // Sync account balance periodically (every 3 timer ticks = ~15s)
+   if(syncCounter % 3 == 0)
+   {
+      SendAccountSync();
+   }
+
    UpdateChartHUD();
+   isBusy = false;
 }
 
 //+------------------------------------------------------------------+
@@ -780,7 +807,7 @@ void SendAccountSync()
    
    string origin = ForceHttps("${currentOrigin}");
    string accountURL = origin + "/api/mt5/account?apiKey=" + cleanKey;
-   int res = WebRequest("POST", accountURL, headers, 6000, data, result, result_headers);
+   int res = WebRequest("POST", accountURL, headers, 4000, data, result, result_headers);
    if(res == -1)
    {
       int err = GetLastError();
@@ -921,7 +948,7 @@ void SendTradeUpdate(string signalId, string status, string outcome, string mile
    if(StringFind(updateURL, "?") < 0) updateURL = updateURL + "?apiKey=" + cleanKey;
    else updateURL = updateURL + "&apiKey=" + cleanKey;
 
-   int res = WebRequest("POST", updateURL, headers, 6000, data, result, result_headers);
+   int res = WebRequest("POST", updateURL, headers, 4000, data, result, result_headers);
    if(res == 200)
    {
       Print("[MarketAI] Status & Realized PnL updated for signal ", signalId, " -> ", milestone, " | PnL: $", DoubleToString(pnl, 2), (exitPrice > 0 ? (" @ " + DoubleToString(exitPrice, 2)) : ""));
@@ -1168,19 +1195,19 @@ void FetchAndExecuteSignals()
    ArrayFree(result);
    ResetLastError();
    
-   int res = WebRequest("POST", signalsUrl, postHeaders, 6000, data, result, result_headers);
+   int res = WebRequest("POST", signalsUrl, postHeaders, 4000, data, result, result_headers);
    
    // Resilient fallback to GET if POST was rejected or timed out
    if(res != 200 && res != 401 && res != 403)
    {
       string getHeaders = "Authorization: Bearer " + cleanKey + "\\r\\n" +
                           "Connection: close\\r\\n" +
-                          "User-Agent: Mozilla/5.0 MarketAI-Bridge/4.75\\r\\n";
+                          "User-Agent: Mozilla/5.0 MarketAI-Bridge/4.76\\r\\n";
       char getData[];
       ArrayResize(getData, 0);
       ArrayFree(result);
       ResetLastError();
-      res = WebRequest("GET", signalsUrl, getHeaders, 6000, getData, result, result_headers);
+      res = WebRequest("GET", signalsUrl, getHeaders, 4000, getData, result, result_headers);
    }
    
    if(res == -1)
@@ -1375,20 +1402,64 @@ void FetchAndExecuteSignals()
       // Update dynamic risk rules from server in real-time
       UpdateRiskRulesFromJson(jsonResponse);
       
-      int sigArrayPos = StringFind(jsonResponse, "\\"signals\\":");
+      // Robust JSON parser: strictly parses objects within "signals": [ ... ] array boundaries
+      int sigArrayPos = StringFind(jsonResponse, "\\\"signals\\\":");
       if(sigArrayPos == -1) return;
       
-      int currentPos = sigArrayPos;
+      int arrayStart = StringFind(jsonResponse, "[", sigArrayPos);
+      if(arrayStart == -1) return;
       
-      while(true)
+      int bracketCount = 0;
+      int arrayEnd = -1;
+      int jsonLen = StringLen(jsonResponse);
+      for(int i = arrayStart; i < jsonLen; i++)
       {
-         int objStart = StringFind(jsonResponse, "{", currentPos);
-         if(objStart == -1) break;
-         int objEnd = StringFind(jsonResponse, "}", objStart);
+         ushort c = StringGetCharacter(jsonResponse, i);
+         if(c == '[') bracketCount++;
+         else if(c == ']')
+         {
+            bracketCount--;
+            if(bracketCount == 0)
+            {
+               arrayEnd = i;
+               break;
+            }
+         }
+      }
+      if(arrayEnd == -1 || arrayEnd <= arrayStart + 1)
+      {
+         // Signals array is empty: "signals": []
+         return;
+      }
+      
+      // Parse individual signal objects strictly inside arrayStart..arrayEnd with nested brace depth tracking
+      int searchPos = arrayStart + 1;
+      while(searchPos < arrayEnd)
+      {
+         int objStart = StringFind(jsonResponse, "{", searchPos);
+         if(objStart == -1 || objStart >= arrayEnd) break;
+         
+         int braceCount = 0;
+         int objEnd = -1;
+         for(int j = objStart; j < arrayEnd; j++)
+         {
+            ushort c = StringGetCharacter(jsonResponse, j);
+            if(c == '{') braceCount++;
+            else if(c == '}')
+            {
+               braceCount--;
+               if(braceCount == 0)
+               {
+                  objEnd = j;
+                  break;
+               }
+            }
+         }
+         
          if(objEnd == -1) break;
          
          string sigJson = StringSubstr(jsonResponse, objStart, objEnd - objStart + 1);
-         currentPos = objEnd + 1;
+         searchPos = objEnd + 1;
          
          string sigId = ExtractJsonValue(sigJson, "signal_id");
          if(sigId == "" || IsSignalProcessed(sigId)) continue;
