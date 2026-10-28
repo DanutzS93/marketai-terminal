@@ -717,7 +717,7 @@ string GetCleanApiKey()
    string k = InpApiKey;
    StringTrimLeft(k);
    StringTrimRight(k);
-   StringReplace(k, "\"", "");
+   StringReplace(k, "\\\"", "");
    StringReplace(k, "'", "");
    StringReplace(k, " ", "");
    return k;
