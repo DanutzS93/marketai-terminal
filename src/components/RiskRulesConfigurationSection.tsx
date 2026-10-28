@@ -460,11 +460,19 @@ export const RiskRulesConfigurationSection: React.FC<RiskRulesConfigurationSecti
                   <input
                     type="number"
                     value={accountBalance}
+                    readOnly={Boolean(user?.mt5AccountNumber)}
                     onChange={(e) => setAccountBalance(Number(e.target.value))}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2.5 pl-9 pr-4 text-white font-mono font-bold text-base focus:outline-none focus:border-cyan-500 transition"
+                    className={`w-full bg-slate-950 border border-slate-800 rounded-xl py-2.5 pl-9 pr-4 text-white font-mono font-bold text-base focus:outline-none focus:border-cyan-500 transition ${user?.mt5AccountNumber ? 'cursor-not-allowed opacity-90' : ''}`}
                     placeholder="100000"
                   />
                 </div>
+                {user?.mt5AccountNumber && (
+                  <span className="text-[10px] text-emerald-400/80 mt-1 block">
+                    {lang === 'ro'
+                      ? `Sincronizat live din MT5 #${user.mt5AccountNumber} (${user.mt5AccountServer || 'Broker'})`
+                      : `Synced live from MT5 #${user.mt5AccountNumber} (${user.mt5AccountServer || 'Broker'})`}
+                  </span>
+                )}
               </div>
 
               <div>
@@ -481,11 +489,19 @@ export const RiskRulesConfigurationSection: React.FC<RiskRulesConfigurationSecti
                   <input
                     type="number"
                     value={equity}
+                    readOnly={Boolean(user?.mt5AccountNumber)}
                     onChange={(e) => setEquity(Number(e.target.value))}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2.5 pl-9 pr-4 text-emerald-400 font-mono font-bold text-base focus:outline-none focus:border-cyan-500 transition"
+                    className={`w-full bg-slate-950 border border-slate-800 rounded-xl py-2.5 pl-9 pr-4 text-emerald-400 font-mono font-bold text-base focus:outline-none focus:border-cyan-500 transition ${user?.mt5AccountNumber ? 'cursor-not-allowed opacity-90' : ''}`}
                     placeholder="100000"
                   />
                 </div>
+                {user?.mt5AccountNumber && (
+                  <span className="text-[10px] text-emerald-400/80 mt-1 block">
+                    {lang === 'ro'
+                      ? 'Sincronizat live din tranzacțiile deschise în MT5'
+                      : 'Synced live from open positions in MT5'}
+                  </span>
+                )}
               </div>
             </div>
 

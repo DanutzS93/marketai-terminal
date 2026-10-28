@@ -548,7 +548,13 @@ app.post('/api/user/sync-data', async (req, res) => {
   
   if (riskSettings && typeof riskSettings === 'object') user.riskSettings = riskSettings;
   if (typeof leverage === 'number' && leverage > 0) user.leverage = leverage;
-  if (typeof accountBalance === 'number' && accountBalance >= 0) user.accountBalance = accountBalance;
+  if (typeof accountBalance === 'number' && accountBalance >= 0) {
+    const isMt5Active = user.mt5LastConnectedAt && (Date.now() - new Date(user.mt5LastConnectedAt).getTime() < 5 * 60 * 1000);
+    const isNt8Active = user.ninjaTraderLastConnectedAt && (Date.now() - new Date(user.ninjaTraderLastConnectedAt).getTime() < 5 * 60 * 1000);
+    if (!isMt5Active && !isNt8Active) {
+      user.accountBalance = accountBalance;
+    }
+  }
 
   await saveUsersDb(users, user.id);
 
