@@ -1,3 +1,5 @@
+export const MT5_EA_VERSION = '4.71';
+
 export function getMql5EaCode(
   mt5Endpoint: string,
   mt5UpdateEndpoint: string,
@@ -11,7 +13,7 @@ export function getMql5EaCode(
 //+------------------------------------------------------------------+
 #property copyright "MarketAI Signals"
 #property link      "https://ai.studio"
-#property version   "4.71"
+#property version   "${MT5_EA_VERSION}"
 #property description "MarketAI MT5 Auto-Trading Bridge with Real-Time Risk Rules, Dynamic Trailing & Exact Broker PnL Sync"
 
 #include <Trade\\Trade.mqh>
@@ -598,7 +600,7 @@ void UpdateChartHUD()
    int symTrades = GetSymbolActiveCount(targetSymbol);
    
    string hud = "=======================================================\\n" +
-                "  MarketAI Signals MT5 Bridge v4.71 (Real PnL Sync Engine)  \\n" +
+                "  MarketAI Signals MT5 Bridge v" + "${MT5_EA_VERSION}" + " (Real PnL Sync Engine)  \\n" +
                 "=======================================================\\n" +
                 " Connected Account : #" + IntegerToString(login) + " (" + serverName + ")\\n" +
                 " Balance / Equity   : $" + DoubleToString(balance, 2) + " / $" + DoubleToString(equity, 2) + "\\n" +
@@ -641,7 +643,7 @@ int OnInit()
    long login = AccountInfoInteger(ACCOUNT_LOGIN);
    string serverName = AccountInfoString(ACCOUNT_SERVER);
    string company = AccountInfoString(ACCOUNT_COMPANY);
-   Print("MarketAI MT5 Bridge v4.71 initialized with Exact Broker PnL Engine. Target Symbol: ", targetSymbol, " Magic: ", InpMagicNumber, " Connected Account: #", login, " (", serverName, ") [", company, "]");
+   Print("MarketAI MT5 Bridge v", "${MT5_EA_VERSION}", " initialized with Exact Broker PnL Engine. Target Symbol: ", targetSymbol, " Magic: ", InpMagicNumber, " Connected Account: #", login, " (", serverName, ") [", company, "]");
    
    if(StringFind(InpEndpointURL, "onrender.com") >= 0 || StringFind(InpUpdateURL, "onrender.com") >= 0 || (StringFind(InpEndpointURL, "fly.dev") < 0 && StringFind(InpEndpointURL, "localhost") < 0))
    {
@@ -667,7 +669,7 @@ void OnDeinit(const int reason)
 {
    EventKillTimer();
    Comment("");
-   Print("MarketAI MT5 Bridge v4.71 stopped.");
+   Print("MarketAI MT5 Bridge v", "${MT5_EA_VERSION}", " stopped.");
 }
 
 //+------------------------------------------------------------------+

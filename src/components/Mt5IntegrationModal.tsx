@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, Terminal, Copy, Check, ShieldCheck, Cpu, RefreshCw, AlertTriangle, CheckCircle2, Download, Lock } from 'lucide-react';
-import { getMql5EaCode } from '../utils/mql5Template';
+import { getMql5EaCode, MT5_EA_VERSION } from '../utils/mql5Template';
 import { UserProfile } from '../types';
 
 interface Mt5IntegrationModalProps {
@@ -115,7 +115,7 @@ export const Mt5IntegrationModal: React.FC<Mt5IntegrationModalProps> = ({
                   {lang === 'ro' ? 'Conexiune Automată MetaTrader 5 (MT5 Bridge)' : 'MetaTrader 5 Auto-Trading Bridge'}
                 </h2>
                 <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 font-mono text-[10px] font-bold">
-                  EA v4.70 Pro Risk (Real PnL Sync)
+                  EA v{MT5_EA_VERSION} Pro Risk (Real PnL Sync)
                 </span>
               </div>
               <p className="text-xs text-slate-300 mt-0.5">
@@ -196,8 +196,8 @@ export const Mt5IntegrationModal: React.FC<Mt5IntegrationModalProps> = ({
                 </h3>
                 <p className="text-xs text-amber-200/80 mt-1 leading-relaxed">
                   {lang === 'ro'
-                    ? 'Pentru a conecta contul tău MT5 și a afișa numărul de cont și balanța live, copiază codul MQL5 v4.70 de mai jos în MetaEditor (F4), compilează-l (F7) și atașează-l pe grafic.'
-                    : 'To connect your MT5 account and display your account number and live balance, copy the MQL5 v4.70 code below into MetaEditor (F4), compile it (F7), and attach it to your chart.'}
+                    ? `Pentru a conecta contul tău MT5 și a afișa numărul de cont și balanța live, copiază codul MQL5 v${MT5_EA_VERSION} de mai jos în MetaEditor (F4), compilează-l (F7) și atașează-l pe grafic.`
+                    : `To connect your MT5 account and display your account number and live balance, copy the MQL5 v${MT5_EA_VERSION} code below into MetaEditor (F4), compile it (F7), and attach it to your chart.`}
                 </p>
               </div>
             </div>
@@ -208,7 +208,7 @@ export const Mt5IntegrationModal: React.FC<Mt5IntegrationModalProps> = ({
             <ShieldCheck className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
             <div className="text-xs">
               <span className="font-bold text-cyan-300 font-mono">
-                {lang === 'ro' ? 'Noutăți EA v4.70 Real PnL Sync & Execution Engine:' : 'EA v4.70 Real PnL Sync & Execution Engine Highlights:'}
+                {lang === 'ro' ? `Noutăți EA v${MT5_EA_VERSION} Real PnL Sync & Execution Engine:` : `EA v${MT5_EA_VERSION} Real PnL Sync & Execution Engine Highlights:`}
               </span>{' '}
               {lang === 'ro'
                 ? 'Include scanare retroactivă a istoricului pe 30 de zile, sincronizare exactă a profitului realizat din broker (deal profit, swap, comisioane, taxe), auto break-even la TP1 (închidere 70%), verificare permisiuni Algo Trading și heartbeat 60s.'
@@ -293,8 +293,8 @@ export const Mt5IntegrationModal: React.FC<Mt5IntegrationModalProps> = ({
               </li>
               <li>
                 {lang === 'ro'
-                  ? 'Ștergeți tot codul vechi și lipiți codul MQL5 v4.70 actualizat de mai jos. Apoi apăsați **Compile** (F7).'
-                  : 'Clear all old code and paste the updated MQL5 v4.70 script below. Then click **Compile** (F7).'}
+                  ? `Ștergeți tot codul vechi și lipiți codul MQL5 v${MT5_EA_VERSION} actualizat de mai jos. Apoi apăsați **Compile** (F7).`
+                  : `Clear all old code and paste the updated MQL5 v${MT5_EA_VERSION} script below. Then click **Compile** (F7).`}
               </li>
               <li>
                 {lang === 'ro'
@@ -320,7 +320,7 @@ export const Mt5IntegrationModal: React.FC<Mt5IntegrationModalProps> = ({
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5 font-mono">
                 <Cpu className="w-4 h-4 text-cyan-400" />
-                {lang === 'ro' ? 'Cod Sursă MQL5 Actualizat v4.70 (Pro Risk Engine + Real PnL Sync)' : 'Updated MQL5 Source Code v4.70 (Pro Risk Engine + Real PnL Sync)'}
+                {lang === 'ro' ? `Cod Sursă MQL5 Actualizat v${MT5_EA_VERSION} (Pro Risk Engine + Real PnL Sync)` : `Updated MQL5 Source Code v${MT5_EA_VERSION} (Pro Risk Engine + Real PnL Sync)`}
               </span>
               <div className="flex items-center gap-2">
                 <button
@@ -360,7 +360,7 @@ export const Mt5IntegrationModal: React.FC<Mt5IntegrationModalProps> = ({
         {/* Footer */}
         <div className="bg-[#060B18]/90 px-6 py-4 border-t border-white/10 flex items-center justify-between relative z-10">
           <span className="text-xs text-slate-400 font-medium font-mono">
-            {lang === 'ro' ? 'MT5 Bridge v4.70 • Execuție Automată, Sincronizare Profit Real & Control Risc' : 'MT5 Bridge v4.70 • Automated Execution, Real PnL Sync & Risk Guard'}
+            {lang === 'ro' ? `MT5 Bridge v${MT5_EA_VERSION} • Execuție Automată, Sincronizare Profit Real & Control Risc` : `MT5 Bridge v${MT5_EA_VERSION} • Automated Execution, Real PnL Sync & Risk Guard`}
           </span>
           <button
             onClick={onClose}

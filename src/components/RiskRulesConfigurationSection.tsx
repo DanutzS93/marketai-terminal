@@ -33,6 +33,7 @@ import {
   InstrumentSpec,
   TrailingStopParityConversion,
 } from '../utils/lotCalculator';
+import { MT5_EA_VERSION } from '../utils/mql5Template';
 
 interface RiskRulesConfigurationSectionProps {
   quotes: Record<InstrumentId, MarketQuote>;
@@ -395,7 +396,7 @@ export const RiskRulesConfigurationSection: React.FC<RiskRulesConfigurationSecti
               </h3>
             </div>
             <span className="text-xs text-slate-400 font-mono">
-              EA v4.70 Real-Time Sync
+              EA v{MT5_EA_VERSION} Real-Time Sync
             </span>
           </div>
 
@@ -427,7 +428,7 @@ export const RiskRulesConfigurationSection: React.FC<RiskRulesConfigurationSecti
                     {lang === 'ro' ? 'Sincronizare Activă' : 'Live Sync Active'}
                   </span>
                   <span className="text-[10px] text-emerald-500 font-mono font-bold">
-                    EA v4.70 Guard
+                    EA v{MT5_EA_VERSION} Guard
                   </span>
                 </div>
               </div>
@@ -439,7 +440,7 @@ export const RiskRulesConfigurationSection: React.FC<RiskRulesConfigurationSecti
                     {lang === 'ro' ? 'Cont MT5 în așteptare conectare EA...' : 'MT5 Account awaiting EA bridge connection...'}
                   </span>
                 </div>
-                <span className="text-[10px] font-mono text-slate-500">v4.70</span>
+                <span className="text-[10px] font-mono text-slate-500">v{MT5_EA_VERSION}</span>
               </div>
             )}
 
