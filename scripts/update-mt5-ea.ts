@@ -8,31 +8,57 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 function findMt5ExpertsDirs(): string[] {
-  const appData = process.env.APPDATA || '';
-  const terminalBase = path.join(appData, 'MetaQuotes', 'Terminal');
   const dirs: string[] = [];
+  const appData = process.env.APPDATA || '';
+  const home = process.env.HOME || '/home/danutz';
 
-  if (fs.existsSync(terminalBase)) {
-    const entries = fs.readdirSync(terminalBase, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        const expertsDir = path.join(terminalBase, entry.name, 'MQL5', 'Experts');
-        if (fs.existsSync(expertsDir)) {
-          dirs.push(expertsDir);
+  const potentialBases = [
+    path.join(appData, 'MetaQuotes', 'Terminal'),
+    path.join(home, '.mt5', 'drive_c', 'users', 'danutz', 'AppData', 'Roaming', 'MetaQuotes', 'Terminal'),
+    path.join(home, '.wine', 'drive_c', 'users', 'danutz', 'AppData', 'Roaming', 'MetaQuotes', 'Terminal'),
+    path.join(home, '.mt5', 'drive_c', 'Program Files', 'MetaTrader 5'),
+    path.join(home, '.wine', 'drive_c', 'Program Files', 'MetaTrader 5'),
+  ];
+
+  for (const base of potentialBases) {
+    if (!fs.existsSync(base)) continue;
+
+    // Check direct MQL5/Experts
+    const directExperts = path.join(base, 'MQL5', 'Experts');
+    if (fs.existsSync(directExperts)) {
+      if (!dirs.includes(directExperts)) dirs.push(directExperts);
+      const adv = path.join(directExperts, 'Advisors');
+      if (fs.existsSync(adv) && !dirs.includes(adv)) dirs.push(adv);
+    }
+
+    // Check terminal hashes
+    try {
+      const entries = fs.readdirSync(base, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          const expertsDir = path.join(base, entry.name, 'MQL5', 'Experts');
+          if (fs.existsSync(expertsDir) && !dirs.includes(expertsDir)) {
+            dirs.push(expertsDir);
+            const adv = path.join(expertsDir, 'Advisors');
+            if (fs.existsSync(adv) && !dirs.includes(adv)) dirs.push(adv);
+          }
         }
       }
-    }
+    } catch (e) {}
   }
 
   return dirs;
 }
 
 function findMetaEditor(): string | null {
+  const home = process.env.HOME || '/home/danutz';
   const candidates = [
     path.join(process.env.APPDATA || '', 'MetaTrader 5', 'metaeditor64.exe'),
     path.join(process.env.LOCALAPPDATA || '', 'MetaTrader 5', 'metaeditor64.exe'),
     'C:\\Program Files\\MetaTrader 5\\metaeditor64.exe',
-    'C:\\Program Files (x86)\\MetaTrader 5\\metaeditor64.exe'
+    'C:\\Program Files (x86)\\MetaTrader 5\\metaeditor64.exe',
+    path.join(home, '.mt5', 'drive_c', 'Program Files', 'MetaTrader 5', 'MetaEditor64.exe'),
+    path.join(home, '.wine', 'drive_c', 'Program Files', 'MetaTrader 5', 'MetaEditor64.exe'),
   ];
 
   for (const c of candidates) {
@@ -83,9 +109,11 @@ export function updateMt5Ea(): void {
       'https://marketai-terminal.fly.dev'
     );
 
-    // Salvam atat ca MarketAI-Bridge.mq5 cat si ca MarketAi.mq5
+    // Salvam toate variantele de denumire folosite in MT5
     const targets = [
+      path.join(expertsDir, 'MarketAI_Bridge.mq5'),
       path.join(expertsDir, 'MarketAI-Bridge.mq5'),
+      path.join(expertsDir, 'MT5.mq5'),
       path.join(expertsDir, 'MarketAi.mq5')
     ];
 

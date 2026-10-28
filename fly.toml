@@ -17,6 +17,11 @@ primary_region = 'fra'
   min_machines_running = 1
   processes = ['app']
 
+  [http_service.concurrency]
+    type = 'requests'
+    soft_limit = 200
+    hard_limit = 250
+
 [[vm]]
   memory = '1024mb'
   cpu_kind = 'shared'

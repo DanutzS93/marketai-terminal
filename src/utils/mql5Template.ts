@@ -1204,7 +1204,7 @@ void FetchAndExecuteSignals()
    {
       string getHeaders = "Authorization: Bearer " + cleanKey + "\\r\\n" +
                           "Connection: close\\r\\n" +
-                          "User-Agent: Mozilla/5.0 MarketAI-Bridge/4.76\\r\\n";
+                          "User-Agent: Mozilla/5.0 MarketAI-Bridge/${MT5_EA_VERSION}\\r\\n";
       char getData[];
       ArrayResize(getData, 0);
       ArrayFree(result);

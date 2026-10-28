@@ -108,9 +108,6 @@ function checkAndAutoCancelUnactivatedSignals(user: StoredUser): boolean {
   return hasUpdates;
 }
 
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
-
 // Enforce TCP Connection: close on all MT5 and NinjaTrader bridge endpoints
 // This eliminates MetaTrader 5 / WinINet HTTP 1003 timeouts (ERROR_INTERNET_TIMEOUT)
 app.use((req, res, next) => {
@@ -118,6 +115,21 @@ app.use((req, res, next) => {
     res.setHeader('Connection', 'close');
   }
   next();
+});
+
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+// Handle premature client disconnection / body abort gracefully (common when MT5 charts reload)
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err && (err.type === 'request.aborted' || (err.status === 400 && err.message && err.message.includes('request aborted')))) {
+    if (!res.headersSent) {
+      res.setHeader('Connection', 'close');
+      res.status(400).end();
+    }
+    return;
+  }
+  next(err);
 });
 
 // Initialize Cloud Firestore database on boot (non-blocking)
