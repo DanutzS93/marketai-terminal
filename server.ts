@@ -5884,6 +5884,18 @@ app.all(['/api/mt5/signals', '/api/mt5/signals/poll'], (req, res) => {
     return res.status(403).json({ error: 'Contul MT5 este blocat de administrator.' });
   }
 
+  // Update MT5 last connected timestamp (throttled to at most once every 30s)
+  const nowMs = Date.now();
+  const lastConnMs = matchedUser.mt5LastConnectedAt ? new Date(matchedUser.mt5LastConnectedAt).getTime() : 0;
+  if (nowMs - lastConnMs > 30000) {
+    matchedUser.mt5LastConnectedAt = new Date().toISOString();
+    const users = loadUsersDb();
+    if (users[matchedUser.id]) {
+      users[matchedUser.id].mt5LastConnectedAt = matchedUser.mt5LastConnectedAt;
+      saveUsersDb(users, matchedUser.id).catch(() => {});
+    }
+  }
+
   // STRICT ISOLATION: Only send signals belonging to THIS user's account!
   // Auto-cancel unactivated signals by 23:00 Romania time cutoff (1 hour before market close)
   if (checkAndAutoCancelUnactivatedSignals(matchedUser)) {

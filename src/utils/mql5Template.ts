@@ -1,4 +1,4 @@
-export const MT5_EA_VERSION = '4.74';
+export const MT5_EA_VERSION = '4.75';
 
 export function getMql5EaCode(
   mt5Endpoint: string,
@@ -745,13 +745,13 @@ string ForceHttps(string rawUrl)
 //+------------------------------------------------------------------+
 void SendAccountSync()
 {
-   uchar data[];
-   uchar result[];
+   char data[];
+   char result[];
    string result_headers;
    string cleanKey = GetCleanApiKey();
    string headers = "Authorization: Bearer " + cleanKey + "\\r\\n" +
                     "Content-Type: application/json\\r\\n" +
-                    "Connection: close\\r\\n\\r\\n";
+                    "Connection: close\\r\\n";
    
    long login = AccountInfoInteger(ACCOUNT_LOGIN);
    string serverName = AccountInfoString(ACCOUNT_SERVER);
@@ -773,8 +773,10 @@ void SendAccountSync()
    lastSyncedEquity = equity;
    
    string payload = "{\\"accountNumber\\":\\"" + IntegerToString(login) + "\\",\\"accountServer\\":\\"" + serverName + "\\",\\"accountCurrency\\":\\"" + currency + "\\",\\"accountCompany\\":\\"" + company + "\\",\\"accountBalance\\":" + DoubleToString(balance, 2) + ",\\"equity\\":" + DoubleToString(equity, 2) + "}";
-   ArrayResize(data, StringLen(payload));
-   StringToCharArray(payload, data, 0, StringLen(payload), CP_UTF8);
+   int copied = StringToCharArray(payload, data, 0, WHOLE_ARRAY, CP_UTF8);
+   if(copied > 0 && data[copied - 1] == 0) ArrayResize(data, copied - 1);
+   ArrayFree(result);
+   ResetLastError();
    
    string origin = ForceHttps("${currentOrigin}");
    string accountURL = origin + "/api/mt5/account?apiKey=" + cleanKey;
@@ -871,13 +873,13 @@ void SendTradeUpdate(string signalId, string status, string outcome, string mile
 {
    if(signalId == "") return;
    
-   uchar data[];
-   uchar result[];
+   char data[];
+   char result[];
    string result_headers;
    string cleanKey = GetCleanApiKey();
    string headers = "Authorization: Bearer " + cleanKey + "\\r\\n" +
                     "Content-Type: application/json\\r\\n" +
-                    "Connection: close\\r\\n\\r\\n";
+                    "Connection: close\\r\\n";
    
    long login = AccountInfoInteger(ACCOUNT_LOGIN);
    string serverName = AccountInfoString(ACCOUNT_SERVER);
@@ -905,8 +907,10 @@ void SendTradeUpdate(string signalId, string status, string outcome, string mile
                     "\\"accountBalance\\":" + DoubleToString(balance, 2) + "," +
                     "\\"equity\\":" + DoubleToString(equity, 2) + "}";
                     
-   ArrayResize(data, StringLen(payload));
-   StringToCharArray(payload, data, 0, StringLen(payload), CP_UTF8);
+   int copied = StringToCharArray(payload, data, 0, WHOLE_ARRAY, CP_UTF8);
+   if(copied > 0 && data[copied - 1] == 0) ArrayResize(data, copied - 1);
+   ArrayFree(result);
+   ResetLastError();
    
    string updateURL = InpUpdateURL;
    if(StringFind(updateURL, "onrender.com") >= 0 || updateURL == "" || (StringFind(updateURL, "fly.dev") < 0 && StringFind(updateURL, "localhost") < 0))
@@ -1145,8 +1149,8 @@ void FetchAndExecuteSignals()
       }
    }
 
-   uchar data[];
-   uchar result[];
+   char data[];
+   char result[];
    string result_headers;
    string cleanKey = GetCleanApiKey();
    string safeSymbol = UrlEncodeParam(targetSymbol);
@@ -1157,21 +1161,26 @@ void FetchAndExecuteSignals()
    // Direct JSON POST request with Connection: close to ensure instant TCP socket close on WinINet
    string postHeaders = "Authorization: Bearer " + cleanKey + "\\r\\n" +
                         "Content-Type: application/json\\r\\n" +
-                        "Connection: close\\r\\n\\r\\n";
+                        "Connection: close\\r\\n";
    string postPayload = "{\\\"apiKey\\\":\\\"" + cleanKey + "\\\",\\\"symbol\\\":\\\"" + targetSymbol + "\\\"}";
-   ArrayResize(data, StringLen(postPayload));
-   StringToCharArray(postPayload, data, 0, StringLen(postPayload), CP_UTF8);
+   int copied = StringToCharArray(postPayload, data, 0, WHOLE_ARRAY, CP_UTF8);
+   if(copied > 0 && data[copied - 1] == 0) ArrayResize(data, copied - 1);
+   ArrayFree(result);
+   ResetLastError();
    
    int res = WebRequest("POST", signalsUrl, postHeaders, 6000, data, result, result_headers);
    
-   // Fallback to GET if POST was rejected with non-auth code
+   // Resilient fallback to GET if POST was rejected or timed out
    if(res != 200 && res != 401 && res != 403)
    {
-      ArrayResize(data, 0);
       string getHeaders = "Authorization: Bearer " + cleanKey + "\\r\\n" +
                           "Connection: close\\r\\n" +
-                          "User-Agent: Mozilla/5.0 MarketAI-Bridge/4.74\\r\\n\\r\\n";
-      res = WebRequest("GET", signalsUrl, getHeaders, 6000, data, result, result_headers);
+                          "User-Agent: Mozilla/5.0 MarketAI-Bridge/4.75\\r\\n";
+      char getData[];
+      ArrayResize(getData, 0);
+      ArrayFree(result);
+      ResetLastError();
+      res = WebRequest("GET", signalsUrl, getHeaders, 6000, getData, result, result_headers);
    }
    
    if(res == -1)
