@@ -36,6 +36,7 @@ import http from 'http';
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
+import compression from 'compression';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
@@ -108,6 +109,29 @@ function checkAndAutoCancelUnactivatedSignals(user: StoredUser): boolean {
   return hasUpdates;
 }
 
+// In-memory cache for MT5 signal polls (TTL 2.5s) to eliminate duplicate compute across multiple charts
+interface CachedMt5Response {
+  payload: any;
+  timestamp: number;
+}
+const mt5SignalsCache = new Map<string, CachedMt5Response>();
+
+function invalidateMt5SignalsCache(userId?: string) {
+  if (userId) {
+    for (const key of mt5SignalsCache.keys()) {
+      if (key.startsWith(`${userId}:`)) {
+        mt5SignalsCache.delete(key);
+      }
+    }
+  } else {
+    mt5SignalsCache.clear();
+  }
+}
+
+// Log throttling maps to keep stdout and container runtime lightweight
+const pollLogMap = new Map<string, number>();
+const accLogMap = new Map<string, number>();
+
 // Enforce TCP Connection: close on all MT5 and NinjaTrader bridge endpoints
 // This eliminates MetaTrader 5 / WinINet HTTP 1003 timeouts (ERROR_INTERNET_TIMEOUT)
 app.use((req, res, next) => {
@@ -116,6 +140,16 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+// Gzip / Deflate compression for browsers (bypassed for MT5/NinjaTrader to guarantee raw MQL5 compat)
+app.use(compression({
+  filter: (req, res) => {
+    if (req.path.startsWith('/api/mt5') || req.path.startsWith('/api/ninjatrader') || req.path.startsWith('/api/nt8') || req.path.startsWith('/api/market-ws')) {
+      return false;
+    }
+    return compression.filter(req, res);
+  }
+}));
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
@@ -5896,8 +5930,16 @@ app.all(['/api/mt5/signals', '/api/mt5/signals/poll'], (req, res) => {
     return res.status(403).json({ error: 'Contul MT5 este blocat de administrator.' });
   }
 
-  // Update MT5 last connected timestamp (throttled to at most once every 30s)
+  // Check short-lived cache (TTL 3s) to eliminate redundant processing when multiple MT5 charts poll concurrently
+  const symbolParam = ((req.query.symbol as string) || (req.body && req.body.symbol)) as string;
   const nowMs = Date.now();
+  const cacheKey = `${matchedUser.id}:${symbolParam || 'ALL'}`;
+  const cached = mt5SignalsCache.get(cacheKey);
+  if (cached && nowMs - cached.timestamp < 3000) {
+    return res.json(cached.payload);
+  }
+
+  // Update MT5 last connected timestamp (throttled to at most once every 30s)
   const lastConnMs = matchedUser.mt5LastConnectedAt ? new Date(matchedUser.mt5LastConnectedAt).getTime() : 0;
   if (nowMs - lastConnMs > 30000) {
     matchedUser.mt5LastConnectedAt = new Date().toISOString();
@@ -5908,23 +5950,26 @@ app.all(['/api/mt5/signals', '/api/mt5/signals/poll'], (req, res) => {
     }
   }
 
-  // STRICT ISOLATION: Only send signals belonging to THIS user's account!
-  // Auto-cancel unactivated signals by 23:00 Romania time cutoff (1 hour before market close)
-  if (checkAndAutoCancelUnactivatedSignals(matchedUser)) {
-    const users = loadUsersDb();
-    if (users[matchedUser.id]) {
-      users[matchedUser.id].signals = matchedUser.signals;
-      users[matchedUser.id].deletedSignalIds = matchedUser.deletedSignalIds;
-      saveUsersDb(users, matchedUser.id).catch((err) => console.warn('Failed to save MT5 auto-cancelled signals:', err));
+  // Auto-cancel unactivated signals by 23:00 Romania time cutoff (throttled to once every 60s per user)
+  const userMeta = matchedUser as any;
+  if (nowMs - (userMeta._lastAutoCancelCheck || 0) > 60000) {
+    userMeta._lastAutoCancelCheck = nowMs;
+    if (checkAndAutoCancelUnactivatedSignals(matchedUser)) {
+      const users = loadUsersDb();
+      if (users[matchedUser.id]) {
+        users[matchedUser.id].signals = matchedUser.signals;
+        users[matchedUser.id].deletedSignalIds = matchedUser.deletedSignalIds;
+        saveUsersDb(users, matchedUser.id).catch((err) => console.warn('Failed to save MT5 auto-cancelled signals:', err));
+        invalidateMt5SignalsCache(matchedUser.id);
+      }
     }
   }
 
   const userSigs = Array.isArray(matchedUser.signals) ? matchedUser.signals : [];
-  const deletedSet = new Set((matchedUser.deletedSignalIds || []).map(String));
+  const deletedSet = new Set((matchedUser.deletedSignalIds || []).slice(-150).map(String));
   let targetSignals = userSigs.filter((s) => s && !deletedSet.has(String(s.id)));
 
-  const symbolParam = ((req.query.symbol as string) || (req.body && req.body.symbol)) as string;
-  const processedSet = new Set((matchedUser?.mt5ProcessedSignalIds || []).map((id) => String(id)));
+  const processedSet = new Set((matchedUser?.mt5ProcessedSignalIds || []).slice(-100).map((id) => String(id)));
 
   // Filter signals: only send signals that are NOT cancelled, NOT hit SL/TP3, and NOT already placed in MT5
   let filtered = targetSignals.filter((s) => {
@@ -6001,7 +6046,7 @@ app.all(['/api/mt5/signals', '/api/mt5/signals/poll'], (req, res) => {
     };
   });
 
-  const userDeletedIds = (matchedUser.deletedSignalIds || []).map((id) => String(id));
+  const userDeletedIds = (matchedUser.deletedSignalIds || []).slice(-100).map((id) => String(id));
   const userSignals = Array.isArray(matchedUser.signals) ? matchedUser.signals : [];
   const cancelledSignals = userSignals.filter((s: any) => s && (s.status === 'CANCELLED' || s.status === 'CANCELED' || s.outcomeStatus === 'CANCELLED'));
   const allCancelled = Array.from(new Set([
@@ -6009,7 +6054,7 @@ app.all(['/api/mt5/signals', '/api/mt5/signals/poll'], (req, res) => {
     ...userDeletedIds,
   ])).filter((id) => id && id !== 'CLOSE_ALL' && id !== 'ALL' && id.length >= 8);
   const cancelledIds = allCancelled.slice(-100);
-  const placedIds = Array.from(processedSet);
+  const placedIds = Array.from(processedSet).slice(-100);
 
   const userRisk = matchedUser.riskSettings || {};
   const effectiveRiskRules = {
@@ -6028,9 +6073,15 @@ app.all(['/api/mt5/signals', '/api/mt5/signals/poll'], (req, res) => {
     leverage: typeof userRisk.leverage === 'number' ? userRisk.leverage : (matchedUser.leverage || 100),
   };
 
-  console.log(`[MT5 EA Signals Poll] User: ${matchedUser.email || matchedUser.id}, Symbol: ${symbolParam || 'ALL'}, Sigs: ${formattedSignals.length}, Placed: ${placedIds.length}, Cancelled: ${cancelledIds.length}`);
+  // Throttle stdout logging to at most once per 30s unless new active signals exist
+  const lastLogKey = `poll:${matchedUser.id}:${symbolParam || 'ALL'}`;
+  const lastLog = pollLogMap.get(lastLogKey) || 0;
+  if (formattedSignals.length > 0 || nowMs - lastLog > 30000) {
+    pollLogMap.set(lastLogKey, nowMs);
+    console.log(`[MT5 EA Signals Poll] User: ${matchedUser.email || matchedUser.id}, Symbol: ${symbolParam || 'ALL'}, Sigs: ${formattedSignals.length}, Placed: ${placedIds.length}, Cancelled: ${cancelledIds.length}`);
+  }
 
-  return res.json({
+  const responsePayload = {
     status: 'online',
     serverTime: new Date().toISOString(),
     message: 'MarketAI MT5 Bridge active',
@@ -6041,7 +6092,12 @@ app.all(['/api/mt5/signals', '/api/mt5/signals/poll'], (req, res) => {
     placed_ids: placedIds,
     cancelled_ids: cancelledIds,
     riskRules: effectiveRiskRules,
-  });
+  };
+
+  // Cache for 3 seconds to instantly answer subsequent polls from other charts
+  mt5SignalsCache.set(cacheKey, { payload: responsePayload, timestamp: nowMs });
+
+  return res.json(responsePayload);
 });
 
 app.post('/api/mt5/signals/sync', async (req, res) => {
@@ -6086,6 +6142,7 @@ app.post('/api/mt5/signals/sync', async (req, res) => {
 
     targetUser.signals = filter30DaySignals(merged, targetUser.deletedSignalIds);
     await saveUsersDb(users, targetUser.id);
+    invalidateMt5SignalsCache(targetUser.id);
     return res.json({ success: true, count: targetUser.signals.length, userId: targetUser.id });
   }
 
@@ -6108,16 +6165,27 @@ app.post('/api/mt5/account', async (req, res) => {
   }
   if (!body || typeof body !== 'object') body = {};
 
+  const nowMs = Date.now();
   const { accountBalance, equity, accountNumber, accountServer, accountCurrency, accountCompany } = body;
-  console.log(`[MT5 EA Account Sync] Token: ${token.substring(0, 10)}... balance: ${accountBalance}, equity: ${equity}, accNum: ${accountNumber}, server: ${accountServer}, user: ${matchedUser ? matchedUser.username : 'none'}`);
+
+  // Throttle stdout log to once every 30s per account
+  const lastAccLog = accLogMap.get(token) || 0;
+  if (nowMs - lastAccLog > 30000) {
+    accLogMap.set(token, nowMs);
+    console.log(`[MT5 EA Account Sync] Token: ${token.substring(0, 10)}... balance: ${accountBalance}, equity: ${equity}, accNum: ${accountNumber}, server: ${accountServer}, user: ${matchedUser ? matchedUser.username : 'none'}`);
+  }
 
   if (matchedUser) {
     let didChange = false;
+    let didBalanceChange = false;
+    let didMetaChange = false;
+
     if (accountBalance !== undefined && accountBalance !== null && !isNaN(Number(accountBalance))) {
       const bNum = Number(accountBalance);
       if (matchedUser.accountBalance !== bNum) {
         matchedUser.accountBalance = bNum;
         didChange = true;
+        didBalanceChange = true;
       }
     }
     if (equity !== undefined && equity !== null && !isNaN(Number(equity))) {
@@ -6132,25 +6200,41 @@ app.post('/api/mt5/account', async (req, res) => {
       if (matchedUser.mt5AccountNumber !== aStr) {
         matchedUser.mt5AccountNumber = aStr;
         didChange = true;
+        didMetaChange = true;
       }
     }
     if (accountServer && matchedUser.mt5AccountServer !== String(accountServer).trim()) {
       matchedUser.mt5AccountServer = String(accountServer).trim();
       didChange = true;
+      didMetaChange = true;
     }
     if (accountCurrency && matchedUser.mt5AccountCurrency !== String(accountCurrency).trim()) {
       matchedUser.mt5AccountCurrency = String(accountCurrency).trim();
       didChange = true;
+      didMetaChange = true;
     }
     if (accountCompany && matchedUser.mt5AccountCompany !== String(accountCompany).trim()) {
       matchedUser.mt5AccountCompany = String(accountCompany).trim();
       didChange = true;
+      didMetaChange = true;
     }
     matchedUser.mt5LastConnectedAt = new Date().toISOString();
 
-    if (didChange) {
-      await saveUsersDb(users, matchedUser.id);
+    // Memory is updated instantly.
+    // Disk & Cloud persistence is throttled: only persist if balance/metadata changed,
+    // if equity moved significantly (>= $5), or after 60s has passed.
+    const uMeta = matchedUser as any;
+    const lastPersistEquity = uMeta._lastPersistedEquity ?? matchedUser.equity ?? 0;
+    const lastPersistTime = uMeta._lastPersistedTime ?? 0;
+    const equityDelta = Math.abs((matchedUser.equity || 0) - lastPersistEquity);
+    const shouldPersist = didBalanceChange || didMetaChange || equityDelta >= 5.0 || (nowMs - lastPersistTime > 60000);
+
+    if (didChange && shouldPersist) {
+      uMeta._lastPersistedEquity = matchedUser.equity;
+      uMeta._lastPersistedTime = nowMs;
+      saveUsersDb(users, matchedUser.id).catch((err) => console.warn('MT5 account sync save error:', err));
     }
+
     return res.json({
       success: true,
       accountBalance: matchedUser.accountBalance,
@@ -6342,6 +6426,7 @@ app.post('/api/mt5/update', async (req, res) => {
 
     if (didChange) {
       await saveUsersDb(users, matchedUser.id);
+      invalidateMt5SignalsCache(matchedUser.id);
     }
     return res.json({ success: true, received: { signal_id, status, outcomeStatus }, saved: didChange });
   } else {
@@ -6481,6 +6566,7 @@ app.post(['/api/ninjatrader/signals/sync', '/api/nt8/signals/sync'], async (req,
 
     targetUser.signals = filter30DaySignals(merged, targetUser.deletedSignalIds);
     await saveUsersDb(users, targetUser.id);
+    invalidateMt5SignalsCache(targetUser.id);
     return res.json({ success: true, count: targetUser.signals.length, userId: targetUser.id });
   }
 
@@ -6632,20 +6718,53 @@ app.post(['/api/ninjatrader/account', '/api/nt8/account'], async (req, res) => {
 
   const { accountNumber, accountName, accountServer, accountCompany, accountCurrency, accountBalance, equity, realizedPnL, unrealizedPnL } = body;
 
+  const nowMs = Date.now();
+  let didChange = false;
+  let didBalanceChange = false;
+
   if (accountBalance !== undefined && accountBalance !== null && !isNaN(Number(accountBalance))) {
-    matchedUser.accountBalance = Number(accountBalance);
+    const num = Number(accountBalance);
+    if (matchedUser.accountBalance !== num) {
+      matchedUser.accountBalance = num;
+      didChange = true;
+      didBalanceChange = true;
+    }
   }
   if (equity !== undefined && equity !== null && !isNaN(Number(equity))) {
-    matchedUser.equity = Number(equity);
+    const num = Number(equity);
+    if (matchedUser.equity !== num) {
+      matchedUser.equity = num;
+      didChange = true;
+    }
   }
   if (accountNumber !== undefined && accountNumber !== null && String(accountNumber).trim() !== '') {
-    matchedUser.ninjaTraderAccountNumber = String(accountNumber).trim();
+    const aStr = String(accountNumber).trim();
+    if (matchedUser.ninjaTraderAccountNumber !== aStr) {
+      matchedUser.ninjaTraderAccountNumber = aStr;
+      didChange = true;
+    }
   }
-  if (accountName) matchedUser.ninjaTraderAccountName = String(accountName).trim();
-  if (accountCurrency) matchedUser.ninjaTraderAccountCurrency = String(accountCurrency).trim();
+  if (accountName && matchedUser.ninjaTraderAccountName !== String(accountName).trim()) {
+    matchedUser.ninjaTraderAccountName = String(accountName).trim();
+    didChange = true;
+  }
+  if (accountCurrency && matchedUser.ninjaTraderAccountCurrency !== String(accountCurrency).trim()) {
+    matchedUser.ninjaTraderAccountCurrency = String(accountCurrency).trim();
+    didChange = true;
+  }
   matchedUser.ninjaTraderLastConnectedAt = new Date().toISOString();
 
-  await saveUsersDb(users, matchedUser.id);
+  const uMeta = matchedUser as any;
+  const lastPersistEquity = uMeta._lastPersistedNtEquity ?? matchedUser.equity ?? 0;
+  const lastPersistTime = uMeta._lastPersistedNtTime ?? 0;
+  const equityDelta = Math.abs((matchedUser.equity || 0) - lastPersistEquity);
+  const shouldPersist = didBalanceChange || equityDelta >= 5.0 || (nowMs - lastPersistTime > 60000);
+
+  if (didChange && shouldPersist) {
+    uMeta._lastPersistedNtEquity = matchedUser.equity;
+    uMeta._lastPersistedNtTime = nowMs;
+    saveUsersDb(users, matchedUser.id).catch((err) => console.warn('NinjaTrader account sync save error:', err));
+  }
 
   return res.json({
     success: true,
@@ -6842,8 +6961,12 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
+    app.use(express.static(distPath, {
+      maxAge: '7d',
+      index: false,
+    }));
     app.get(/^(?!\/api).*/, (req, res) => {
+      res.setHeader('Cache-Control', 'no-cache');
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }

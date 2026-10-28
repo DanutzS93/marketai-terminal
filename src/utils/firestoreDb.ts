@@ -135,6 +135,12 @@ function sanitizeUserObj(user: StoredUser): StoredUser {
       });
   }
 
+  // Cap deletedSignalIds to most recent 150 to keep DB compact & prevent memory bloat
+  let deletedIds = user.deletedSignalIds || [];
+  if (Array.isArray(deletedIds) && deletedIds.length > 150) {
+    deletedIds = deletedIds.slice(-150);
+  }
+
   // Filter out any demo, dummy, or sample trades from the trade journal
   const cleanTradeJournal = (user.tradeJournal || []).filter(
     (t: any) =>
@@ -146,7 +152,7 @@ function sanitizeUserObj(user: StoredUser): StoredUser {
       !String(t.id).includes('sample')
   );
 
-  return { ...user, signals: cleanSignals || [], tradeJournal: cleanTradeJournal };
+  return { ...user, signals: cleanSignals || [], deletedSignalIds: deletedIds, tradeJournal: cleanTradeJournal };
 }
 
 function readLocalUsersFile(): Record<string, StoredUser> {
@@ -168,11 +174,7 @@ function readLocalUsersFile(): Record<string, StoredUser> {
 
 function writeLocalUsersFile(users: Record<string, StoredUser>): void {
   try {
-    const sanitized: Record<string, StoredUser> = {};
-    for (const [k, v] of Object.entries(users)) {
-      sanitized[k] = sanitizeUserObj(v as StoredUser);
-    }
-    fs.writeFile(DB_FILE, JSON.stringify(sanitized), 'utf-8', (err) => {
+    fs.writeFile(DB_FILE, JSON.stringify(users), 'utf-8', (err) => {
       if (err) console.warn('⚠️ Could not write users_cloud_db.json:', err);
     });
   } catch (e) {
@@ -412,9 +414,10 @@ async function flushPendingUsers() {
 }
 
 export async function saveUserToFirestore(user: StoredUser, immediate = false): Promise<void> {
+  const sanitized = sanitizeUserObj(user);
   // Update in-memory cache instantaneously (0ms latency for all callers)
-  usersCache[user.id] = user;
-  pendingPersistUsers.set(user.id, user);
+  usersCache[sanitized.id] = sanitized;
+  pendingPersistUsers.set(sanitized.id, sanitized);
 
   if (immediate) {
     if (persistTimer) {
@@ -427,7 +430,7 @@ export async function saveUserToFirestore(user: StoredUser, immediate = false): 
       persistTimer = setTimeout(() => {
         persistTimer = null;
         flushPendingUsers().catch((e) => console.warn('Background flush error:', e));
-      }, 300);
+      }, 1500);
     }
   }
 }

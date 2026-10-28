@@ -83,6 +83,33 @@ export function getMarketScheduleStatus(customDate?: Date): MarketStatusInfo {
   };
 }
 
+// Module-level cached DateTimeFormat instance to prevent high CPU / GC churn
+const bucharestDtf = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'Europe/Bucharest',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false,
+});
+
+function getBucharestParts(d: Date) {
+  const parts = bucharestDtf.formatToParts(d);
+  let year = 2026, month = 1, day = 1, hour = 0, minute = 0, second = 0;
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i];
+    if (p.type === 'year') year = parseInt(p.value, 10);
+    else if (p.type === 'month') month = parseInt(p.value, 10);
+    else if (p.type === 'day') day = parseInt(p.value, 10);
+    else if (p.type === 'hour') hour = parseInt(p.value === '24' ? '0' : p.value, 10);
+    else if (p.type === 'minute') minute = parseInt(p.value, 10);
+    else if (p.type === 'second') second = parseInt(p.value, 10);
+  }
+  return { year, month, day, hour, minute, second };
+}
+
 /**
  * Checks if an unactivated signal is expired by the daily market close cutoff (23:00 Romania time / 1 hour before market close).
  * In global financial markets, trading closes at 17:00 New York Time (24:00 / midnight Romania time).
@@ -100,35 +127,20 @@ export function isSignalExpiredByMarketClose(createdAtIso: string, customNow?: D
 
   const now = customNow || new Date();
 
-  // Evaluate in Europe/Bucharest timezone (Romania EET/EEST)
-  const dtf = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Europe/Bucharest',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  });
+  // Fast path: if created within the last 30 minutes and current Bucharest hour is < 23, it cannot be expired
+  const ageMs = now.getTime() - createdDate.getTime();
+  if (ageMs < 0) return false; // future date
 
-  const getParts = (d: Date) => {
-    const parts = dtf.formatToParts(d);
-    const m: Record<string, string> = {};
-    for (const p of parts) m[p.type] = p.value;
-    const hour = parseInt(m.hour === '24' ? '0' : m.hour, 10);
-    return {
-      year: parseInt(m.year, 10),
-      month: parseInt(m.month, 10),
-      day: parseInt(m.day, 10),
-      hour,
-      minute: parseInt(m.minute, 10),
-      second: parseInt(m.second, 10),
-    };
-  };
+  const nowP = getBucharestParts(now);
+  if (nowP.hour < 23 && ageMs < 12 * 3600 * 1000) {
+    // If current time is before 23:00 and signal was created today within last 12h, it's definitely not expired
+    const createdP = getBucharestParts(createdDate);
+    if (createdP.day === nowP.day && createdP.month === nowP.month) {
+      return false;
+    }
+  }
 
-  const createdP = getParts(createdDate);
-  const nowP = getParts(now);
+  const createdP = getBucharestParts(createdDate);
 
   // Difference in calendar days in Bucharest timezone
   const createdDayUtc = Date.UTC(createdP.year, createdP.month - 1, createdP.day);
