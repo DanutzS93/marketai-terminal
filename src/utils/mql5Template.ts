@@ -778,7 +778,7 @@ void SendAccountSync()
    
    string origin = ForceHttps("${currentOrigin}");
    string accountURL = origin + "/api/mt5/account?apiKey=" + cleanKey;
-   int res = WebRequest("POST", accountURL, headers, 10000, data, result, result_headers);
+   int res = WebRequest("POST", accountURL, headers, 6000, data, result, result_headers);
    if(res == -1)
    {
       int err = GetLastError();
@@ -917,7 +917,7 @@ void SendTradeUpdate(string signalId, string status, string outcome, string mile
    if(StringFind(updateURL, "?") < 0) updateURL = updateURL + "?apiKey=" + cleanKey;
    else updateURL = updateURL + "&apiKey=" + cleanKey;
 
-   int res = WebRequest("POST", updateURL, headers, 10000, data, result, result_headers);
+   int res = WebRequest("POST", updateURL, headers, 6000, data, result, result_headers);
    if(res == 200)
    {
       Print("[MarketAI] Status & Realized PnL updated for signal ", signalId, " -> ", milestone, " | PnL: $", DoubleToString(pnl, 2), (exitPrice > 0 ? (" @ " + DoubleToString(exitPrice, 2)) : ""));

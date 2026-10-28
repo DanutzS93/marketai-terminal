@@ -101,7 +101,6 @@ function checkAndAutoCancelUnactivatedSignals(user: StoredUser): boolean {
       if (!user.deletedSignalIds.includes(sigIdStr)) {
         user.deletedSignalIds.push(sigIdStr);
       }
-      serverCancelledSignalIds.add(sigIdStr);
       hasUpdates = true;
     }
   });
@@ -111,6 +110,15 @@ function checkAndAutoCancelUnactivatedSignals(user: StoredUser): boolean {
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+// Enforce TCP Connection: close on all MT5 and NinjaTrader bridge endpoints
+// This eliminates MetaTrader 5 / WinINet HTTP 1003 timeouts (ERROR_INTERNET_TIMEOUT)
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/mt5') || req.path.startsWith('/api/ninjatrader') || req.path.startsWith('/api/nt8')) {
+    res.setHeader('Connection', 'close');
+  }
+  next();
+});
 
 // Initialize Cloud Firestore database on boot (non-blocking)
 initFirestoreCache().catch((err) => console.error('Failed to init Firestore cache on boot:', err));
@@ -271,8 +279,8 @@ function formatUserForClient(u: StoredUser) {
     subscriptionExpiresAt: u.subscriptionExpiresAt || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
     subscriptionDaysLeft: daysLeft,
     isExpired,
-    accountBalance: u.accountBalance ?? 100000,
-    equity: u.equity ?? 100000,
+    accountBalance: u.accountBalance !== undefined && u.accountBalance !== null ? u.accountBalance : (u.mt5AccountNumber ? undefined : 100000),
+    equity: u.equity !== undefined && u.equity !== null ? u.equity : (u.accountBalance !== undefined && u.accountBalance !== null ? u.accountBalance : (u.mt5AccountNumber ? undefined : 100000)),
     leverage: u.leverage ?? 100,
     mt5AccountNumber: u.mt5AccountNumber,
     mt5AccountServer: u.mt5AccountServer,
@@ -553,7 +561,8 @@ app.post('/api/user/sync-data', async (req, res) => {
   if (typeof accountBalance === 'number' && accountBalance >= 0) {
     const isMt5Active = user.mt5LastConnectedAt && (Date.now() - new Date(user.mt5LastConnectedAt).getTime() < 5 * 60 * 1000);
     const isNt8Active = user.ninjaTraderLastConnectedAt && (Date.now() - new Date(user.ninjaTraderLastConnectedAt).getTime() < 5 * 60 * 1000);
-    if (!isMt5Active && !isNt8Active) {
+    // STRICT ISOLATION: Never overwrite a connected MT5 or NinjaTrader account's balance with a generic web input
+    if (!isMt5Active && !isNt8Active && !user.mt5AccountNumber && !user.ninjaTraderAccountNumber) {
       user.accountBalance = accountBalance;
     }
   }
@@ -603,7 +612,6 @@ app.post('/api/user/close-trade', async (req, res) => {
   if (!user.deletedSignalIds.includes(signalId)) {
     user.deletedSignalIds.push(signalId);
   }
-  serverCancelledSignalIds.add(String(signalId));
 
   // Update signal outcome to CANCELLED / CLOSED with manual close reason
   if (Array.isArray(user.signals)) {
@@ -660,12 +668,11 @@ app.post('/api/user/close-all-trades', async (req, res) => {
         .filter((s: any) => s && s.outcomeStatus !== 'CANCELLED' && s.outcomeStatus !== 'SL_HIT' && s.outcomeStatus !== 'TP3_HIT')
         .map((s: any) => String(s.id));
 
-  // Add all target IDs to deletedSignalIds and global serverCancelledSignalIds
+  // Add all target IDs to user's deletedSignalIds (strictly user-isolated)
   for (const id of targetIds) {
     if (!user.deletedSignalIds.includes(id)) {
       user.deletedSignalIds.push(id);
     }
-    serverCancelledSignalIds.add(id);
   }
 
   const nowIso = new Date().toISOString();
@@ -5860,6 +5867,7 @@ function symbolsMatch(instrumentId: string, signalSymbol: string, brokerSymbol: 
 }
 
 app.all(['/api/mt5/signals', '/api/mt5/signals/poll'], (req, res) => {
+  res.setHeader('Connection', 'close');
   const token = extractMt5Token(req);
   if (!token) {
     return res.status(401).json({ error: 'Unauthorized MT5 API Token. Include your personal API key in InpApiKey parameter.' });
@@ -5975,7 +5983,6 @@ app.all(['/api/mt5/signals', '/api/mt5/signals/poll'], (req, res) => {
   const allCancelled = Array.from(new Set([
     ...cancelledSignals.map((s: any) => String(s.id)).filter(Boolean),
     ...userDeletedIds,
-    ...Array.from(serverCancelledSignalIds),
   ])).filter((id) => id && id !== 'CLOSE_ALL' && id !== 'ALL' && id.length >= 8);
   const cancelledIds = allCancelled.slice(-100);
   const placedIds = Array.from(processedSet);
@@ -6059,12 +6066,6 @@ app.post('/api/mt5/signals/sync', async (req, res) => {
   }
 
   return res.json({ success: true, count: targetUser.signals?.length || 0 });
-});
-
-// Ensure MT5 API responses always explicitly close TCP socket to prevent WinINet 1003 timeouts
-app.use('/api/mt5', (req, res, next) => {
-  res.setHeader('Connection', 'close');
-  next();
 });
 
 app.post('/api/mt5/account', async (req, res) => {
@@ -6584,7 +6585,6 @@ app.get(['/api/ninjatrader/signals', '/api/nt8/signals'], (req, res) => {
     cancelled_ids: Array.from(new Set([
       ...Array.from(deletedIds),
       ...rawSignals.filter((s: any) => s.status === 'CANCELLED' || s.outcomeStatus === 'CANCELLED').map((s: any) => String(s.id)),
-      ...Array.from(serverCancelledSignalIds),
     ])).filter((id) => id && id !== 'CLOSE_ALL' && id !== 'ALL' && id.length >= 8).slice(-100),
     riskRules: matchedUser.riskSettings || {},
   });

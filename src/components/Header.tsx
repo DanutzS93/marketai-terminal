@@ -79,8 +79,9 @@ export const Header: React.FC<HeaderProps> = ({
   const isAdmin = user?.role === 'admin' || user?.username.toLowerCase() === 'admin';
 
 
-  const balanceValue = user?.accountBalance ?? 100000;
-  const equityValue = user?.equity ?? user?.accountBalance ?? 100000;
+  const isMt5Linked = Boolean(user?.mt5AccountNumber);
+  const balanceValue = typeof user?.accountBalance === 'number' ? user.accountBalance : (isMt5Linked ? null : 100000);
+  const equityValue = typeof user?.equity === 'number' ? user.equity : (balanceValue !== null ? balanceValue : null);
 
   const navItems: {
     id: ActiveTab;
@@ -417,13 +418,13 @@ export const Header: React.FC<HeaderProps> = ({
               <div>
                 <span className="text-[10px] text-slate-400 block">{lang === 'ro' ? 'Balanță Cont:' : 'Balance:'}</span>
                 <span className="text-sm font-bold text-white">
-                  ${balanceValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {balanceValue !== null ? `$${balanceValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : (lang === 'ro' ? 'Sincronizare...' : 'Syncing...')}
                 </span>
               </div>
               <div>
                 <span className="text-[10px] text-slate-400 block">Equity:</span>
                 <span className="text-sm font-bold text-emerald-300">
-                  ${equityValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {equityValue !== null ? `$${equityValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : (lang === 'ro' ? 'Sincronizare...' : 'Syncing...')}
                 </span>
               </div>
             </div>
@@ -627,13 +628,13 @@ export const Header: React.FC<HeaderProps> = ({
             <div className="flex items-center gap-1">
               <span className="text-[10px] text-slate-400 font-sans font-medium">{lang === 'ro' ? 'Bal:' : 'Bal:'}</span>
               <span className="font-bold text-white">
-                ${balanceValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {balanceValue !== null ? `$${balanceValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : (lang === 'ro' ? 'Sync...' : 'Sync...')}
               </span>
             </div>
             <div className="flex items-center gap-1">
               <span className="text-[10px] text-slate-400 font-sans font-medium">Eq:</span>
               <span className="font-bold text-emerald-300">
-                ${equityValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {equityValue !== null ? `$${equityValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : (lang === 'ro' ? 'Sync...' : 'Sync...')}
               </span>
             </div>
           </div>
