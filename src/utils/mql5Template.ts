@@ -151,9 +151,9 @@ bool DoSymbolsMatch(string chartSym, string sigSym)
    if(sigIsGoldFutures) return chartIsGoldFutures;
    if(sigIsGoldSpot)    return chartIsGoldSpot;
 
-   // --- STRICT SEPARATION: NASDAQ SPOT (NAS100/US100/USTEC) vs NASDAQ FUTURES (NQ.F/NQ/NAS100ft) ---
-   bool sigIsNasFutures = (StringFind(s, "NQ") != -1 || StringFind(s, "MNQ") != -1 || ((StringFind(s, "NAS") != -1 || StringFind(s, "US100") != -1 || StringFind(s, "USTEC") != -1 || StringFind(s, "NDX") != -1) && (StringFind(s, "FT") != -1 || StringFind(s, "FUT") != -1 || StringFind(s, ".F") != -1 || StringFind(s, "_F") != -1)));
-   bool chartIsNasFutures = (StringFind(c, "NQ") != -1 || StringFind(c, "MNQ") != -1 || ((StringFind(c, "NAS") != -1 || StringFind(c, "US100") != -1 || StringFind(c, "USTEC") != -1 || StringFind(c, "NDX") != -1) && (StringFind(c, "FT") != -1 || StringFind(c, "FUT") != -1 || StringFind(c, ".F") != -1 || StringFind(c, "_F") != -1)));
+   // --- STRICT SEPARATION: NASDAQ SPOT (NAS100/US100/USTEC) vs NASDAQ FUTURES (NQ.F/NQ/MNQ/ENQ/NAS100ft) ---
+   bool sigIsNasFutures = (StringFind(s, "NQ") != -1 || StringFind(s, "MNQ") != -1 || StringFind(s, "ENQ") != -1 || ((StringFind(s, "NAS") != -1 || StringFind(s, "US100") != -1 || StringFind(s, "USTEC") != -1 || StringFind(s, "NDX") != -1) && (StringFind(s, "FT") != -1 || StringFind(s, "FUT") != -1 || StringFind(s, ".F") != -1 || StringFind(s, "_F") != -1)));
+   bool chartIsNasFutures = (StringFind(c, "NQ") != -1 || StringFind(c, "MNQ") != -1 || StringFind(c, "ENQ") != -1 || ((StringFind(c, "NAS") != -1 || StringFind(c, "US100") != -1 || StringFind(c, "USTEC") != -1 || StringFind(c, "NDX") != -1) && (StringFind(c, "FT") != -1 || StringFind(c, "FUT") != -1 || StringFind(c, ".F") != -1 || StringFind(c, "_F") != -1)));
 
    bool sigIsNasSpot = (!sigIsNasFutures && (StringFind(s, "NAS") != -1 || StringFind(s, "US100") != -1 || StringFind(s, "USTEC") != -1 || StringFind(s, "NDX") != -1));
    bool chartIsNasSpot = (!chartIsNasFutures && (StringFind(c, "NAS") != -1 || StringFind(c, "US100") != -1 || StringFind(c, "USTEC") != -1 || StringFind(c, "NDX") != -1));
@@ -161,9 +161,9 @@ bool DoSymbolsMatch(string chartSym, string sigSym)
    if(sigIsNasFutures) return chartIsNasFutures;
    if(sigIsNasSpot)    return chartIsNasSpot;
 
-   // --- STRICT SEPARATION: SPX500 SPOT (SPX500/US500/SP500) vs S&P 500 FUTURES (ES.F/ES/US500ft) ---
-   bool sigIsSpxFutures = (StringFind(s, "ES") != -1 || StringFind(s, "MES") != -1 || ((StringFind(s, "SPX") != -1 || StringFind(s, "US500") != -1 || StringFind(s, "SP500") != -1) && (StringFind(s, "FT") != -1 || StringFind(s, "FUT") != -1 || StringFind(s, ".F") != -1 || StringFind(s, "_F") != -1)));
-   bool chartIsSpxFutures = (StringFind(c, "ES") != -1 || StringFind(c, "MES") != -1 || ((StringFind(c, "SPX") != -1 || StringFind(c, "US500") != -1 || StringFind(c, "SP500") != -1) && (StringFind(c, "FT") != -1 || StringFind(c, "FUT") != -1 || StringFind(c, ".F") != -1 || StringFind(c, "_F") != -1)));
+   // --- STRICT SEPARATION: SPX500 SPOT (SPX500/US500/SP500) vs S&P 500 FUTURES (ES.F/ES/MES/EP/US500ft) ---
+   bool sigIsSpxFutures = (StringFind(s, "ES") != -1 || StringFind(s, "MES") != -1 || StringFind(s, "EP") != -1 || ((StringFind(s, "SPX") != -1 || StringFind(s, "US500") != -1 || StringFind(s, "SP500") != -1) && (StringFind(s, "FT") != -1 || StringFind(s, "FUT") != -1 || StringFind(s, ".F") != -1 || StringFind(s, "_F") != -1)));
+   bool chartIsSpxFutures = (StringFind(c, "ES") != -1 || StringFind(c, "MES") != -1 || StringFind(c, "EP") != -1 || ((StringFind(c, "SPX") != -1 || StringFind(c, "US500") != -1 || StringFind(c, "SP500") != -1) && (StringFind(c, "FT") != -1 || StringFind(c, "FUT") != -1 || StringFind(c, ".F") != -1 || StringFind(c, "_F") != -1)));
 
    bool sigIsSpxSpot = (!sigIsSpxFutures && (StringFind(s, "SPX") != -1 || StringFind(s, "US500") != -1 || StringFind(s, "SP500") != -1));
    bool chartIsSpxSpot = (!chartIsSpxFutures && (StringFind(c, "SPX") != -1 || StringFind(c, "US500") != -1 || StringFind(c, "SP500") != -1));
@@ -183,13 +183,10 @@ bool DoSymbolsMatch(string chartSym, string sigSym)
 
    if(c == s || StringFind(c, s) != -1 || StringFind(s, c) != -1) return true;
    
-   // Forex Pairs Matching
-   if(StringFind(s, "EURUSD") != -1 && StringFind(c, "EURUSD") != -1) return true;
-   if(StringFind(s, "GBPUSD") != -1 && StringFind(c, "GBPUSD") != -1) return true;
-   if(StringFind(s, "USDJPY") != -1 && StringFind(c, "USDJPY") != -1) return true;
-   if(StringFind(s, "EUR/USD") != -1 && StringFind(c, "EURUSD") != -1) return true;
-   if(StringFind(s, "GBP/USD") != -1 && StringFind(c, "GBPUSD") != -1) return true;
-   if(StringFind(s, "USD/JPY") != -1 && StringFind(c, "USDJPY") != -1) return true;
+   // Forex Pairs Matching (including CME futures EU6, 6E, BP6, 6B, JY6, 6J)
+   if((StringFind(s, "EURUSD") != -1 || StringFind(s, "EUR/USD") != -1) && (StringFind(c, "EURUSD") != -1 || StringFind(c, "EU6") != -1 || StringFind(c, "6E") != -1)) return true;
+   if((StringFind(s, "GBPUSD") != -1 || StringFind(s, "GBP/USD") != -1) && (StringFind(c, "GBPUSD") != -1 || StringFind(c, "BP6") != -1 || StringFind(c, "6B") != -1)) return true;
+   if((StringFind(s, "USDJPY") != -1 || StringFind(s, "USD/JPY") != -1) && (StringFind(c, "USDJPY") != -1 || StringFind(c, "JY6") != -1 || StringFind(c, "6J") != -1)) return true;
    
    // Dow Jones
    if((StringFind(s, "US30") != -1 || StringFind(s, "DOW") != -1) && (StringFind(c, "US30") != -1 || StringFind(c, "DJ30") != -1 || StringFind(c, "WS30") != -1 || StringFind(c, "DOW") != -1)) return true;

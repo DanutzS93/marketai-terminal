@@ -402,9 +402,11 @@ app.post('/api/auth/login', async (req, res) => {
   const passTrimmed = password.trim();
   const passHash = Buffer.from(passTrimmed).toString('base64');
 
-  const user = Object.values(users).find(
+  const matchingUsers = Object.values(users).filter(
     (u) => u.username.toLowerCase() === lowerUser
   );
+  matchingUsers.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+  const user = matchingUsers[0];
 
   if (!user) {
     return res.status(401).json({ error: 'Nume de utilizator sau parolă incorectă.' });
@@ -5737,7 +5739,7 @@ function isNasdaqFutures(sym: string): boolean {
   if (!sym) return false;
   const upper = sym.toUpperCase().trim();
   const clean = upper.replace(/[^A-Z0-9]/g, '');
-  if (clean.startsWith('NQ') || clean.startsWith('MNQ')) return true;
+  if (clean.startsWith('NQ') || clean.startsWith('MNQ') || clean.startsWith('ENQ')) return true;
   if ((clean.includes('NAS') || clean.includes('US100') || clean.includes('USTEC') || clean.includes('NDX')) && hasFuturesTag(upper, clean)) return true;
   return false;
 }
@@ -5761,7 +5763,7 @@ function isSpxFutures(sym: string): boolean {
   if (!sym) return false;
   const upper = sym.toUpperCase().trim();
   const clean = upper.replace(/[^A-Z0-9]/g, '');
-  if (clean.startsWith('ES') || clean.startsWith('MES')) return true;
+  if (clean.startsWith('ES') || clean.startsWith('MES') || clean.startsWith('EP')) return true;
   if ((clean.includes('SPX') || clean.includes('US500') || clean.includes('SP500')) && hasFuturesTag(upper, clean)) return true;
   return false;
 }
@@ -5811,7 +5813,7 @@ function symbolsMatch(instrumentId: string, signalSymbol: string, brokerSymbol: 
   if (sigIsGcFutures) return brokerIsGcFutures;
   if (sigIsGcSpot) return brokerIsGcSpot;
 
-  // 2. STRICT SEPARATION: Nasdaq Spot (NAS100) vs Nasdaq Futures (NQ.F / NAS100ft)
+  // 2. STRICT SEPARATION: Nasdaq Spot (NAS100) vs Nasdaq Futures (NQ.F / ENQ / NAS100ft)
   const sigIsNasFutures = isNasdaqFutures(instrumentId) || isNasdaqFutures(signalSymbol);
   const sigIsNasSpot = isNasdaqSpot(instrumentId) || isNasdaqSpot(signalSymbol);
   const brokerIsNasFutures = isNasdaqFutures(brokerSymbol);
@@ -5820,7 +5822,7 @@ function symbolsMatch(instrumentId: string, signalSymbol: string, brokerSymbol: 
   if (sigIsNasFutures) return brokerIsNasFutures;
   if (sigIsNasSpot) return brokerIsNasSpot;
 
-  // 3. STRICT SEPARATION: S&P 500 Spot (SPX500) vs S&P 500 Futures (ES.F / US500ft)
+  // 3. STRICT SEPARATION: S&P 500 Spot (SPX500) vs S&P 500 Futures (ES.F / EP / US500ft)
   const sigIsSpxFutures = isSpxFutures(instrumentId) || isSpxFutures(signalSymbol);
   const sigIsSpxSpot = isSpxSpot(instrumentId) || isSpxSpot(signalSymbol);
   const brokerIsSpxFutures = isSpxFutures(brokerSymbol);
@@ -5849,10 +5851,10 @@ function symbolsMatch(instrumentId: string, signalSymbol: string, brokerSymbol: 
     return true;
   }
   
-  // Forex Specific matching (e.g. EURUSD, EURUSD.pro, EURUSDm, EURUSD_i, EURUSD+)
-  if ((i.includes('EURUSD') || s.includes('EURUSD')) && b.includes('EURUSD')) return true;
-  if ((i.includes('GBPUSD') || s.includes('GBPUSD')) && b.includes('GBPUSD')) return true;
-  if ((i.includes('USDJPY') || s.includes('USDJPY')) && b.includes('USDJPY')) return true;
+  // Forex Specific matching (e.g. EURUSD, EURUSD.pro, EURUSDm, EURUSD_i, EURUSD+, CME EU6, 6E, BP6, 6B, JY6, 6J)
+  if ((i.includes('EURUSD') || s.includes('EURUSD')) && (b.includes('EURUSD') || b.startsWith('EU6') || b.startsWith('6E'))) return true;
+  if ((i.includes('GBPUSD') || s.includes('GBPUSD')) && (b.includes('GBPUSD') || b.startsWith('BP6') || b.startsWith('6B'))) return true;
+  if ((i.includes('USDJPY') || s.includes('USDJPY')) && (b.includes('USDJPY') || b.startsWith('JY6') || b.startsWith('6J'))) return true;
 
   return false;
 }
