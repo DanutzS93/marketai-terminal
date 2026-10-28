@@ -760,14 +760,14 @@ void SendAccountSync()
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
    
    // Smart throttle: if balance & equity haven't changed, sync at most once every 12 seconds per chart
-   static datetime lastSyncTime = 0;
+   static datetime lastAccSyncTime = 0;
    static double lastSyncedBalance = 0;
    static double lastSyncedEquity = 0;
-   if(TimeCurrent() - lastSyncTime < 12 && MathAbs(balance - lastSyncedBalance) < 0.01 && MathAbs(equity - lastSyncedEquity) < 0.01)
+   if(TimeCurrent() - lastAccSyncTime < 12 && MathAbs(balance - lastSyncedBalance) < 0.01 && MathAbs(equity - lastSyncedEquity) < 0.01)
    {
       return;
    }
-   lastSyncTime = TimeCurrent();
+   lastAccSyncTime = TimeCurrent();
    lastSyncedBalance = balance;
    lastSyncedEquity = equity;
    
