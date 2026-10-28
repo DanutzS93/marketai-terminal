@@ -1,4 +1,4 @@
-export const MT5_EA_VERSION = '4.72';
+export const MT5_EA_VERSION = '4.73';
 
 export function getMql5EaCode(
   mt5Endpoint: string,
@@ -14,7 +14,7 @@ export function getMql5EaCode(
 #property copyright "MarketAI Signals"
 #property link      "https://ai.studio"
 #property version   "${MT5_EA_VERSION}"
-#property description "MarketAI MT5 Auto-Trading Bridge v${MT5_EA_VERSION} with Hybrid GET/POST Engine & Exact Broker PnL Sync"
+#property description "MarketAI MT5 Auto-Trading Bridge v${MT5_EA_VERSION} with High-Reliability JSON POST Engine & Exact Broker PnL Sync"
 
 #include <Trade\\Trade.mqh>
 CTrade trade;
@@ -759,6 +759,18 @@ void SendAccountSync()
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
    
+   // Smart throttle: if balance & equity haven't changed, sync at most once every 12 seconds per chart
+   static datetime lastSyncTime = 0;
+   static double lastSyncedBalance = 0;
+   static double lastSyncedEquity = 0;
+   if(TimeCurrent() - lastSyncTime < 12 && MathAbs(balance - lastSyncedBalance) < 0.01 && MathAbs(equity - lastSyncedEquity) < 0.01)
+   {
+      return;
+   }
+   lastSyncTime = TimeCurrent();
+   lastSyncedBalance = balance;
+   lastSyncedEquity = equity;
+   
    string payload = "{\\"accountNumber\\":\\"" + IntegerToString(login) + "\\",\\"accountServer\\":\\"" + serverName + "\\",\\"accountCurrency\\":\\"" + currency + "\\",\\"accountCompany\\":\\"" + company + "\\",\\"accountBalance\\":" + DoubleToString(balance, 2) + ",\\"equity\\":" + DoubleToString(equity, 2) + "}";
    ArrayResize(data, StringLen(payload));
    StringToCharArray(payload, data, 0, StringLen(payload), CP_UTF8);
@@ -1041,7 +1053,7 @@ void SyncClosedHistoricalTrades()
    if(HistorySelect(fromTime, TimeCurrent() + 86400))
    {
       int dealsTotal = HistoryDealsTotal();
-      long syncedPosIds[];
+      static long g_syncedClosedPosIds[];
       
       for(int i = dealsTotal - 1; i >= 0; i--)
       {
@@ -1067,15 +1079,15 @@ void SyncClosedHistoricalTrades()
                if(sigId != "" && posId > 0)
                {
                   bool already = false;
-                  for(int k = 0; k < ArraySize(syncedPosIds); k++)
+                  for(int k = 0; k < ArraySize(g_syncedClosedPosIds); k++)
                   {
-                     if(syncedPosIds[k] == posId) { already = true; break; }
+                     if(g_syncedClosedPosIds[k] == posId) { already = true; break; }
                   }
                   if(already) continue;
                   
-                  int sz = ArraySize(syncedPosIds);
-                  ArrayResize(syncedPosIds, sz + 1);
-                  syncedPosIds[sz] = posId;
+                  int sz = ArraySize(g_syncedClosedPosIds);
+                  ArrayResize(g_syncedClosedPosIds, sz + 1);
+                  g_syncedClosedPosIds[sz] = posId;
                   
                   // Verify if currently open
                   bool isOpen = false;
@@ -1140,21 +1152,24 @@ void FetchAndExecuteSignals()
    string origin = ForceHttps("${currentOrigin}");
    string signalsUrl = origin + "/api/mt5/signals?apiKey=" + cleanKey + "&symbol=" + safeSymbol;
    
-   // Clean GET request (no Content-Type on body-less GET to prevent Windows WinINet socket/read timeouts 1003)
-   string getHeaders = "Authorization: Bearer " + cleanKey + "\\r\\n" +
-                       "User-Agent: Mozilla/5.0 MarketAI-Bridge/4.72\\r\\n\\r\\n";
+   // Direct JSON POST request (100% reliable across all firewalls, proxies and MT5 WinINet builds, matching SendAccountSync)
+   string postHeaders = "Authorization: Bearer " + cleanKey + "\\r\\n" +
+                        "Content-Type: application/json\\r\\n\\r\\n";
+   string postPayload = "{\\\"apiKey\\\":\\\"" + cleanKey + "\\\",\\\"symbol\\\":\\\"" + targetSymbol + "\\\"}";
+   ArrayResize(data, StringLen(postPayload));
+   StringToCharArray(postPayload, data, 0, StringLen(postPayload), CP_UTF8);
+   ArrayFree(result);
    
-   int res = WebRequest("GET", signalsUrl, getHeaders, 8000, data, result, result_headers);
+   int res = WebRequest("POST", signalsUrl, postHeaders, 10000, data, result, result_headers);
    
-   // Resilient Fallback: If GET failed or returned code 1003 (WinINet socket/read timeout), retry via POST with JSON body
-   if(res != 200)
+   // Fallback to GET if POST was rejected with non-auth code
+   if(res != 200 && res != 401 && res != 403)
    {
-      string postHeaders = "Authorization: Bearer " + cleanKey + "\\r\\n" +
-                           "Content-Type: application/json\\r\\n\\r\\n";
-      string postPayload = "{\\\"apiKey\\\":\\\"" + cleanKey + "\\\",\\\"symbol\\\":\\\"" + targetSymbol + "\\\"}";
-      ArrayResize(data, StringLen(postPayload));
-      StringToCharArray(postPayload, data, 0, StringLen(postPayload), CP_UTF8);
-      res = WebRequest("POST", signalsUrl, postHeaders, 8000, data, result, result_headers);
+      ArrayResize(data, 0);
+      ArrayFree(result);
+      string getHeaders = "Authorization: Bearer " + cleanKey + "\\r\\n" +
+                          "User-Agent: Mozilla/5.0 MarketAI-Bridge/4.73\\r\\n\\r\\n";
+      res = WebRequest("GET", signalsUrl, getHeaders, 8000, data, result, result_headers);
    }
    
    if(res == -1)
@@ -1181,7 +1196,7 @@ void FetchAndExecuteSignals()
          if(res == 401)
             Print("[MarketAI HTTP 401] Cheia API este invalida sau a expirat! Verificati InpApiKey: '", cleanKey, "'");
          else if(res == 1003)
-            Print("[MarketAI HTTP 1003] Timeout conexiune MT5 la conectarea cu '", origin, "'. Verificati Tools -> Options -> Expert Advisors -> 'Allow WebRequest for listed URL' (trebuie sa contina '", origin, "') si firewall-ul Windows.");
+            Print("[MarketAI HTTP 1003] Timeout de retea MT5 (WinINet). Verificati conexiunea la internet sau adaugati '", origin, "' in Tools -> Options -> Expert Advisors -> Allow WebRequest.");
          else
             Print("[MarketAI HTTP ", res, "] Serverul a raspuns: ", errBody);
          lastHttpErr = TimeCurrent();

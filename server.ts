@@ -5997,6 +5997,8 @@ app.all(['/api/mt5/signals', '/api/mt5/signals/poll'], (req, res) => {
     leverage: typeof userRisk.leverage === 'number' ? userRisk.leverage : (matchedUser.leverage || 100),
   };
 
+  console.log(`[MT5 EA Signals Poll] User: ${matchedUser.email || matchedUser.id}, Symbol: ${symbolParam || 'ALL'}, Sigs: ${formattedSignals.length}, Placed: ${placedIds.length}, Cancelled: ${cancelledIds.length}`);
+
   return res.json({
     status: 'online',
     serverTime: new Date().toISOString(),
@@ -6129,18 +6131,41 @@ app.post('/api/mt5/update', async (req, res) => {
   console.log(`[MT5 EA Update] Signal ${signal_id} status: ${status}, outcome: ${outcomeStatus}, milestone: ${milestone}, balance: ${accountBalance}, accNum: ${accountNumber}, pnl: ${pnl ?? profit}`);
 
   if (matchedUser) {
+    let didChange = false;
+
     if (accountBalance !== undefined && accountBalance !== null && !isNaN(Number(accountBalance))) {
-      matchedUser.accountBalance = Number(accountBalance);
+      const numBal = Number(accountBalance);
+      if (matchedUser.accountBalance !== numBal) {
+        matchedUser.accountBalance = numBal;
+        didChange = true;
+      }
     }
     if (equity !== undefined && equity !== null && !isNaN(Number(equity))) {
-      matchedUser.equity = Number(equity);
+      const numEq = Number(equity);
+      if (matchedUser.equity !== numEq) {
+        matchedUser.equity = numEq;
+        didChange = true;
+      }
     }
     if (accountNumber !== undefined && accountNumber !== null && String(accountNumber).trim() !== '') {
-      matchedUser.mt5AccountNumber = String(accountNumber).trim();
+      const sAcc = String(accountNumber).trim();
+      if (matchedUser.mt5AccountNumber !== sAcc) {
+        matchedUser.mt5AccountNumber = sAcc;
+        didChange = true;
+      }
     }
-    if (accountServer) matchedUser.mt5AccountServer = String(accountServer).trim();
-    if (accountCurrency) matchedUser.mt5AccountCurrency = String(accountCurrency).trim();
-    if (accountCompany) matchedUser.mt5AccountCompany = String(accountCompany).trim();
+    if (accountServer && matchedUser.mt5AccountServer !== String(accountServer).trim()) {
+      matchedUser.mt5AccountServer = String(accountServer).trim();
+      didChange = true;
+    }
+    if (accountCurrency && matchedUser.mt5AccountCurrency !== String(accountCurrency).trim()) {
+      matchedUser.mt5AccountCurrency = String(accountCurrency).trim();
+      didChange = true;
+    }
+    if (accountCompany && matchedUser.mt5AccountCompany !== String(accountCompany).trim()) {
+      matchedUser.mt5AccountCompany = String(accountCompany).trim();
+      didChange = true;
+    }
     matchedUser.mt5LastConnectedAt = new Date().toISOString();
 
     // Memoize processed signal ID to prevent duplicate sending/placing
@@ -6149,6 +6174,7 @@ app.post('/api/mt5/update', async (req, res) => {
       const sIdStr = String(signal_id);
       if (!matchedUser.mt5ProcessedSignalIds.includes(sIdStr)) {
         matchedUser.mt5ProcessedSignalIds.push(sIdStr);
+        didChange = true;
       }
 
       const incomingPnl = pnl !== undefined ? pnl : profit;
@@ -6160,26 +6186,42 @@ app.post('/api/mt5/update', async (req, res) => {
           (signal_id && s.id && (s.id.startsWith(signal_id) || signal_id.startsWith(s.id)))
         );
         if (target) {
-          target.mt5Placed = true;
+          if (!target.mt5Placed) { target.mt5Placed = true; didChange = true; }
           target.mt5PlacedAt = target.mt5PlacedAt || new Date().toISOString();
           target.accountSource = 'MT5';
           if (incomingPnl !== undefined && !isNaN(Number(incomingPnl))) {
-            target.pnl = Math.round(Number(incomingPnl) * 100) / 100;
-            target.realizedProfit = target.pnl;
+            const roundedPnl = Math.round(Number(incomingPnl) * 100) / 100;
+            if (target.pnl !== roundedPnl) {
+              target.pnl = roundedPnl;
+              target.realizedProfit = roundedPnl;
+              didChange = true;
+            }
           }
           if (exitPrice !== undefined && !isNaN(Number(exitPrice)) && Number(exitPrice) > 0) {
-            target.exitPrice = Number(exitPrice);
+            if (target.exitPrice !== Number(exitPrice)) {
+              target.exitPrice = Number(exitPrice);
+              didChange = true;
+            }
           }
           if (status === 'CLOSED') {
-            target.status = 'CLOSED';
-            target.closedAt = target.closedAt || new Date().toISOString();
-          } else if (status) {
+            if (target.status !== 'CLOSED') {
+              target.status = 'CLOSED';
+              target.closedAt = target.closedAt || new Date().toISOString();
+              didChange = true;
+            }
+          } else if (status && target.status !== status) {
             target.status = status;
+            didChange = true;
           }
-          target.outcomeStatus = outcomeStatus || target.outcomeStatus || (target.pnl !== undefined && target.pnl > 0 ? 'TP1_HIT' : target.pnl !== undefined && target.pnl < 0 ? 'SL_HIT' : 'RUNNING');
-          if (milestone === 'ENTRY') {
+          const effOutcome = outcomeStatus || target.outcomeStatus || (target.pnl !== undefined && target.pnl > 0 ? 'TP1_HIT' : target.pnl !== undefined && target.pnl < 0 ? 'SL_HIT' : 'RUNNING');
+          if (target.outcomeStatus !== effOutcome) {
+            target.outcomeStatus = effOutcome;
+            didChange = true;
+          }
+          if (milestone === 'ENTRY' && !target.isEntryTriggered) {
             target.isEntryTriggered = true;
             target.firstHitMilestone = 'ENTRY';
+            didChange = true;
           }
 
           // Auto-sync into user's trade journal
@@ -6188,13 +6230,20 @@ app.post('/api/mt5/update', async (req, res) => {
             (j: any) => j.linkedSignalId === target.id || j.id === `sig_journal_${target.id}`
           );
           if (jEntry) {
-            if (target.pnl !== undefined) {
+            if (target.pnl !== undefined && jEntry.pnl !== target.pnl) {
               jEntry.pnl = target.pnl;
               jEntry.status = target.pnl > 0 ? 'WIN' : (target.pnl < 0 ? 'LOSS' : 'BREAKEVEN');
               jEntry.outcomeLabel = target.pnl > 0 ? `MT5 Profit (+$${target.pnl.toFixed(2)})` : target.pnl < 0 ? `MT5 Pierdere (-$${Math.abs(target.pnl).toFixed(2)})` : 'MT5 BE ($0.00)';
+              didChange = true;
             }
-            if (target.exitPrice !== undefined) jEntry.exitPrice = target.exitPrice;
-            if (target.status === 'CLOSED') jEntry.closedAt = target.closedAt || new Date().toISOString();
+            if (target.exitPrice !== undefined && jEntry.exitPrice !== target.exitPrice) {
+              jEntry.exitPrice = target.exitPrice;
+              didChange = true;
+            }
+            if (target.status === 'CLOSED' && jEntry.status !== 'CLOSED') {
+              jEntry.closedAt = target.closedAt || new Date().toISOString();
+              didChange = true;
+            }
           }
         }
       }
@@ -6229,8 +6278,10 @@ app.post('/api/mt5/update', async (req, res) => {
       }
     }
 
-    await saveUsersDb(users, matchedUser.id);
-    return res.json({ success: true, received: { signal_id, status, outcomeStatus } });
+    if (didChange) {
+      await saveUsersDb(users, matchedUser.id);
+    }
+    return res.json({ success: true, received: { signal_id, status, outcomeStatus }, saved: didChange });
   } else {
     return res.status(401).json({ error: 'Unauthorized MT5 API Token' });
   }
