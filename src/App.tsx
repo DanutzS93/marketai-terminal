@@ -337,6 +337,8 @@ export default function App() {
       const syncRes = await fetch('/api/user/sync-data', {
         headers: { Authorization: `Bearer ${newAuthToken}` },
       });
+      if (syncRes.ok) {
+        const syncData = await syncRes.json();
         const cloudDeleted = Array.isArray(syncData.deletedSignalIds) ? syncData.deletedSignalIds : [];
         setDeletedSignalIds(cloudDeleted);
         try {
