@@ -11,7 +11,7 @@ export function getMql5EaCode(
 //+------------------------------------------------------------------+
 #property copyright "MarketAI Signals"
 #property link      "https://ai.studio"
-#property version   "4.70"
+#property version   "4.71"
 #property description "MarketAI MT5 Auto-Trading Bridge with Real-Time Risk Rules, Dynamic Trailing & Exact Broker PnL Sync"
 
 #include <Trade\\Trade.mqh>
@@ -598,7 +598,7 @@ void UpdateChartHUD()
    int symTrades = GetSymbolActiveCount(targetSymbol);
    
    string hud = "=======================================================\\n" +
-                "  MarketAI Signals MT5 Bridge v4.70 (Real PnL Sync Engine)  \\n" +
+                "  MarketAI Signals MT5 Bridge v4.71 (Real PnL Sync Engine)  \\n" +
                 "=======================================================\\n" +
                 " Connected Account : #" + IntegerToString(login) + " (" + serverName + ")\\n" +
                 " Balance / Equity   : $" + DoubleToString(balance, 2) + " / $" + DoubleToString(equity, 2) + "\\n" +
@@ -641,7 +641,7 @@ int OnInit()
    long login = AccountInfoInteger(ACCOUNT_LOGIN);
    string serverName = AccountInfoString(ACCOUNT_SERVER);
    string company = AccountInfoString(ACCOUNT_COMPANY);
-   Print("MarketAI MT5 Bridge v4.70 initialized with Exact Broker PnL Engine. Target Symbol: ", targetSymbol, " Magic: ", InpMagicNumber, " Connected Account: #", login, " (", serverName, ") [", company, "]");
+   Print("MarketAI MT5 Bridge v4.71 initialized with Exact Broker PnL Engine. Target Symbol: ", targetSymbol, " Magic: ", InpMagicNumber, " Connected Account: #", login, " (", serverName, ") [", company, "]");
    
    if(StringFind(InpEndpointURL, "onrender.com") >= 0 || StringFind(InpUpdateURL, "onrender.com") >= 0 || (StringFind(InpEndpointURL, "fly.dev") < 0 && StringFind(InpEndpointURL, "localhost") < 0))
    {
@@ -667,7 +667,7 @@ void OnDeinit(const int reason)
 {
    EventKillTimer();
    Comment("");
-   Print("MarketAI MT5 Bridge v4.70 stopped.");
+   Print("MarketAI MT5 Bridge v4.71 stopped.");
 }
 
 //+------------------------------------------------------------------+
@@ -708,6 +708,40 @@ void OnTimer()
 }
 
 //+------------------------------------------------------------------+
+//| Helpers for cleaning credentials, URL encoding and HTTPS         |
+//+------------------------------------------------------------------+
+string GetCleanApiKey()
+{
+   string k = InpApiKey;
+   StringTrimLeft(k);
+   StringTrimRight(k);
+   StringReplace(k, "\"", "");
+   StringReplace(k, "'", "");
+   StringReplace(k, " ", "");
+   return k;
+}
+
+string UrlEncodeParam(string text)
+{
+   string s = text;
+   StringReplace(s, "#", "%23");
+   StringReplace(s, "+", "%2B");
+   StringReplace(s, " ", "%20");
+   StringReplace(s, "&", "%26");
+   return s;
+}
+
+string ForceHttps(string rawUrl)
+{
+   string u = rawUrl;
+   if(StringFind(u, "http://") == 0)
+   {
+      u = "https://" + StringSubstr(u, 7);
+   }
+   return u;
+}
+
+//+------------------------------------------------------------------+
 //| Send account balance, equity & login info to MarketAI            |
 //+------------------------------------------------------------------+
 void SendAccountSync()
@@ -715,8 +749,9 @@ void SendAccountSync()
    uchar data[];
    uchar result[];
    string result_headers;
-   string headers = "Authorization: Bearer " + InpApiKey + "\\r\\n" +
-                    "Content-Type: application/json\\r\\n";
+   string cleanKey = GetCleanApiKey();
+   string headers = "Authorization: Bearer " + cleanKey + "\\r\\n" +
+                    "Content-Type: application/json\\r\\n\\r\\n";
    
    long login = AccountInfoInteger(ACCOUNT_LOGIN);
    string serverName = AccountInfoString(ACCOUNT_SERVER);
@@ -729,8 +764,9 @@ void SendAccountSync()
    ArrayResize(data, StringLen(payload));
    StringToCharArray(payload, data, 0, StringLen(payload), CP_UTF8);
    
-   string accountURL = "${currentOrigin}/api/mt5/account?apiKey=" + InpApiKey;
-   int res = WebRequest("POST", accountURL, headers, 4000, data, result, result_headers);
+   string origin = ForceHttps("${currentOrigin}");
+   string accountURL = origin + "/api/mt5/account?apiKey=" + cleanKey;
+   int res = WebRequest("POST", accountURL, headers, 10000, data, result, result_headers);
    if(res == -1)
    {
       int err = GetLastError();
@@ -738,7 +774,7 @@ void SendAccountSync()
       if(TimeCurrent() - lastAccErr > 60)
       {
          if(err == 4014 || err == 4060)
-            Print("[MarketAI EROARE ", err, "] URL-ul '", "${currentOrigin}", "' NU este autorizat in MT5! Adaugati '", "${currentOrigin}", "' in Tools -> Options -> Expert Advisors -> Allow WebRequest for listed URL.");
+            Print("[MarketAI EROARE ", err, "] URL-ul '", origin, "' NU este autorizat in MT5! Adaugati '", origin, "' in Tools -> Options -> Expert Advisors -> Allow WebRequest for listed URL.");
          lastAccErr = TimeCurrent();
       }
    }
@@ -826,8 +862,9 @@ void SendTradeUpdate(string signalId, string status, string outcome, string mile
    uchar data[];
    uchar result[];
    string result_headers;
-   string headers = "Authorization: Bearer " + InpApiKey + "\\r\\n" +
-                    "Content-Type: application/json\\r\\n";
+   string cleanKey = GetCleanApiKey();
+   string headers = "Authorization: Bearer " + cleanKey + "\\r\\n" +
+                    "Content-Type: application/json\\r\\n\\r\\n";
    
    long login = AccountInfoInteger(ACCOUNT_LOGIN);
    string serverName = AccountInfoString(ACCOUNT_SERVER);
@@ -863,10 +900,11 @@ void SendTradeUpdate(string signalId, string status, string outcome, string mile
    {
       updateURL = "${mt5UpdateEndpoint}";
    }
-   if(StringFind(updateURL, "?") < 0) updateURL = updateURL + "?apiKey=" + InpApiKey;
-   else updateURL = updateURL + "&apiKey=" + InpApiKey;
+   updateURL = ForceHttps(updateURL);
+   if(StringFind(updateURL, "?") < 0) updateURL = updateURL + "?apiKey=" + cleanKey;
+   else updateURL = updateURL + "&apiKey=" + cleanKey;
 
-   int res = WebRequest("POST", updateURL, headers, 4000, data, result, result_headers);
+   int res = WebRequest("POST", updateURL, headers, 10000, data, result, result_headers);
    if(res == 200)
    {
       Print("[MarketAI] Status & Realized PnL updated for signal ", signalId, " -> ", milestone, " | PnL: $", DoubleToString(pnl, 2), (exitPrice > 0 ? (" @ " + DoubleToString(exitPrice, 2)) : ""));
@@ -1097,17 +1135,20 @@ void FetchAndExecuteSignals()
    uchar data[];
    uchar result[];
    string result_headers;
-   string headers = "Authorization: Bearer " + InpApiKey + "\\r\\n" +
-                    "Content-Type: application/json\\r\\n";
+   string cleanKey = GetCleanApiKey();
+   string safeSymbol = UrlEncodeParam(targetSymbol);
+   string headers = "Authorization: Bearer " + cleanKey + "\\r\\n" +
+                    "Content-Type: application/json\\r\\n\\r\\n";
    string url = InpEndpointURL;
    if(StringFind(url, "onrender.com") >= 0 || url == "" || (StringFind(url, "fly.dev") < 0 && StringFind(url, "localhost") < 0))
    {
       url = "${mt5Endpoint}";
    }
-   if(StringFind(url, "?") < 0) url = url + "?symbol=" + targetSymbol + "&apiKey=" + InpApiKey;
-   else url = url + "&symbol=" + targetSymbol + "&apiKey=" + InpApiKey;
+   url = ForceHttps(url);
+   if(StringFind(url, "?") < 0) url = url + "?apiKey=" + cleanKey + "&symbol=" + safeSymbol;
+   else url = url + "&apiKey=" + cleanKey + "&symbol=" + safeSymbol;
    
-   int res = WebRequest("GET", url, headers, 5000, data, result, result_headers);
+   int res = WebRequest("GET", url, headers, 10000, data, result, result_headers);
    
    if(res == -1)
    {
@@ -1130,7 +1171,7 @@ void FetchAndExecuteSignals()
       if(TimeCurrent() - lastHttpErr > 30)
       {
          string errBody = CharArrayToString(result);
-         Print("[MarketAI HTTP ", res, "] Serverul a raspuns cu eroare: ", errBody, " | Verificati cheia InpApiKey: '", InpApiKey, "'");
+         Print("[MarketAI HTTP ", res, "] Serverul a raspuns cu eroare: ", errBody, " | Verificati cheia InpApiKey: '", cleanKey, "'");
          lastHttpErr = TimeCurrent();
       }
       return;
