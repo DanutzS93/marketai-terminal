@@ -82,3 +82,72 @@ export function getMarketScheduleStatus(customDate?: Date): MarketStatusInfo {
     reasonEn,
   };
 }
+
+/**
+ * Checks if an unactivated signal is expired by the daily market close cutoff (23:00 Romania time / 1 hour before market close).
+ * In global financial markets, trading closes at 17:00 New York Time (24:00 / midnight Romania time).
+ * 1 hour before close is 23:00 Romania time (16:00 New York / universal market close cutoff).
+ * 
+ * Rules:
+ * - If signal was created before 23:00 Romania time on day D, its cutoff is 23:00 Romania time on day D.
+ * - If signal was created at or after 23:00 Romania time on day D, its cutoff is 23:00 Romania time on day D+1.
+ * - If current time in Romania time has reached or passed that cutoff, the unactivated signal is considered expired/cancelled.
+ */
+export function isSignalExpiredByMarketClose(createdAtIso: string, customNow?: Date): boolean {
+  if (!createdAtIso) return false;
+  const createdDate = new Date(createdAtIso);
+  if (isNaN(createdDate.getTime())) return false;
+
+  const now = customNow || new Date();
+
+  // Evaluate in Europe/Bucharest timezone (Romania EET/EEST)
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Europe/Bucharest',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+
+  const getParts = (d: Date) => {
+    const parts = dtf.formatToParts(d);
+    const m: Record<string, string> = {};
+    for (const p of parts) m[p.type] = p.value;
+    const hour = parseInt(m.hour === '24' ? '0' : m.hour, 10);
+    return {
+      year: parseInt(m.year, 10),
+      month: parseInt(m.month, 10),
+      day: parseInt(m.day, 10),
+      hour,
+      minute: parseInt(m.minute, 10),
+      second: parseInt(m.second, 10),
+    };
+  };
+
+  const createdP = getParts(createdDate);
+  const nowP = getParts(now);
+
+  // Difference in calendar days in Bucharest timezone
+  const createdDayUtc = Date.UTC(createdP.year, createdP.month - 1, createdP.day);
+  const nowDayUtc = Date.UTC(nowP.year, nowP.month - 1, nowP.day);
+  const diffDays = Math.round((nowDayUtc - createdDayUtc) / (24 * 3600 * 1000));
+
+  if (diffDays < 0) return false; // Future creation date
+  if (diffDays > 1) return true; // 2 or more days ago
+
+  if (diffDays === 1) {
+    // Created yesterday in Bucharest.
+    // If created before 23:00 yesterday, cutoff was yesterday 23:00 -> expired!
+    if (createdP.hour < 23) return true;
+    // If created at or after 23:00 yesterday, cutoff is today at 23:00 -> expired if today is >= 23:00
+    return nowP.hour >= 23;
+  }
+
+  // Same calendar day in Bucharest:
+  // Expired if created before 23:00 and current time is at or past 23:00!
+  return createdP.hour < 23 && nowP.hour >= 23;
+}
+

@@ -595,11 +595,11 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
               : signal.entryPrice || 100;
           const fallbackCandles = generateClientFallbackCandles(base, selectedTf, decimals);
           try {
-            candlestickSeriesRef.current.setData(fallbackCandles);
+            candlestickSeriesRef.current.setData(fallbackCandles as any);
             const emaData = calculateEMA(fallbackCandles, 20);
             const smaData = calculateSMA(fallbackCandles, 50);
-            if (emaSeriesRef.current) emaSeriesRef.current.setData(showMovingAverages ? emaData : []);
-            if (smaSeriesRef.current) smaSeriesRef.current.setData(showMovingAverages ? smaData : []);
+            if (emaSeriesRef.current) emaSeriesRef.current.setData(showMovingAverages ? (emaData as any) : []);
+            if (smaSeriesRef.current) smaSeriesRef.current.setData(showMovingAverages ? (smaData as any) : []);
             renderPriceLines();
             if (chartInstanceRef.current) chartInstanceRef.current.timeScale().fitContent();
           } catch (e) {}

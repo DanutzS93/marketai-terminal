@@ -1,4 +1,5 @@
 import { TradingSignal, UserProfile, MarketQuote } from '../types';
+import { isSignalExpiredByMarketClose } from './marketSchedule';
 
 export function formatFullDateTime(dateObjOrStr?: Date | string, lang: 'ro' | 'en' = 'ro'): string {
   if (!dateObjOrStr) {
@@ -647,20 +648,16 @@ export function evaluateSignalOutcome(
     };
   }
 
-  // Check if unactivated by end of day (created on a past calendar day and not yet entry triggered)
+  // Check if unactivated by market close cutoff (23:00 Romania time / 1 hour before market close)
   if (sig.createdAt && (currentStatus === 'PENDING' || !sig.isEntryTriggered) && currentStatus !== 'CANCELLED') {
     try {
-      const createdDate = new Date(sig.createdAt);
-      const now = new Date();
-      const createdDateStr = createdDate.toISOString().split('T')[0];
-      const nowDateStr = now.toISOString().split('T')[0];
-      if (createdDateStr < nowDateStr) {
+      if (isSignalExpiredByMarketClose(sig.createdAt)) {
         return {
           outcomeStatus: 'CANCELLED',
           firstHitMilestone: 'CANCELLED',
           isEntryTriggered: false,
-          cancelReasonRo: 'Ordin neactivat până la sfârșitul zilei - Anulat automat',
-          cancelReasonEn: 'Unactivated order by end of day - Automatically cancelled',
+          cancelReasonRo: 'Ordin neactivat până la ora 23:00 (înainte de închiderea pieței) - Anulat automat',
+          cancelReasonEn: 'Unactivated order by 23:00 (1h before market close) - Automatically cancelled',
         };
       }
     } catch (e) {

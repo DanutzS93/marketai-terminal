@@ -1166,11 +1166,15 @@ void FetchAndExecuteSignals()
                {
                   string comment = PositionGetString(POSITION_COMMENT);
                   string sigToCheck = "";
-                  int posLower = StringFind(comment, "sig_");
-                  int posUpper = StringFind(comment, "SIG-");
+                  int posCustom = StringFind(comment, "custom_sig_");
+                  int posScalp  = StringFind(comment, "scalp_");
+                  int posLower  = StringFind(comment, "sig_");
+                  int posUpper  = StringFind(comment, "SIG-");
                   int posUpper2 = StringFind(comment, "SIG_");
                   int bestPos = -1;
-                  if(posLower != -1) bestPos = posLower;
+                  if(posCustom != -1) bestPos = posCustom;
+                  else if(posScalp != -1) bestPos = posScalp;
+                  else if(posLower != -1) bestPos = posLower;
                   else if(posUpper != -1) bestPos = posUpper;
                   else if(posUpper2 != -1) bestPos = posUpper2;
 
@@ -1186,19 +1190,23 @@ void FetchAndExecuteSignals()
                   {
                      sigToCheck = StringSubstr(comment, 9);
                   }
-                  else if(StringLen(comment) >= 8 && (StringFind(comment, "sig") != -1 || StringFind(comment, "SIG") != -1))
+                  else if(StringLen(comment) >= 6)
                   {
                      sigToCheck = comment;
                   }
 
                   bool shouldClose = false;
-                  if(StringLen(sigToCheck) >= 8)
+                  if(StringLen(comment) >= 6 && StringFind(cancelArrStr, comment) != -1)
                   {
-                     string searchKey = "\\\"" + sigToCheck + "\\\"";
-                     if(StringFind(cancelArrStr, searchKey) != -1)
-                     {
-                        shouldClose = true;
-                     }
+                     shouldClose = true;
+                  }
+                  if(!shouldClose && StringLen(sigToCheck) >= 6 && StringFind(cancelArrStr, sigToCheck) != -1)
+                  {
+                     shouldClose = true;
+                  }
+                  if(!shouldClose && StringLen(activeSignalId) >= 6 && StringFind(cancelArrStr, activeSignalId) != -1)
+                  {
+                     shouldClose = true;
                   }
 
                   if(shouldClose)
@@ -1207,9 +1215,9 @@ void FetchAndExecuteSignals()
                      Sleep(100);
                      double exitPr = 0.0;
                      double realizedPnl = GetRealizedProfitForPosition(posTicket, exitPr);
-                     Print("MarketAI: Position #", posTicket, " (Signal: ", sigToCheck, ") closed via Web Terminal command! Realized PnL: $", DoubleToString(realizedPnl, 2));
-                     SendTradeUpdate(sigToCheck, "CLOSED", (realizedPnl > 0 ? "TP1_HIT" : "SL_HIT"), "CLOSED_VIA_TERMINAL", realizedPnl, exitPr);
-                     if(activeSignalId == sigToCheck) activeSignalId = "";
+                     Print("MarketAI: Position #", posTicket, " (Signal: ", (sigToCheck != "" ? sigToCheck : comment), ") closed via Web Terminal command! Realized PnL: $", DoubleToString(realizedPnl, 2));
+                     SendTradeUpdate((sigToCheck != "" ? sigToCheck : comment), "CLOSED", (realizedPnl > 0 ? "TP1_HIT" : "SL_HIT"), "CLOSED_VIA_TERMINAL", realizedPnl, exitPr);
+                     if(activeSignalId == sigToCheck || activeSignalId == comment) activeSignalId = "";
                   }
                }
             }
@@ -1222,11 +1230,15 @@ void FetchAndExecuteSignals()
                {
                   string comment = OrderGetString(ORDER_COMMENT);
                   string sigToCheck = "";
-                  int posLower = StringFind(comment, "sig_");
-                  int posUpper = StringFind(comment, "SIG-");
+                  int posCustom = StringFind(comment, "custom_sig_");
+                  int posScalp  = StringFind(comment, "scalp_");
+                  int posLower  = StringFind(comment, "sig_");
+                  int posUpper  = StringFind(comment, "SIG-");
                   int posUpper2 = StringFind(comment, "SIG_");
                   int bestPos = -1;
-                  if(posLower != -1) bestPos = posLower;
+                  if(posCustom != -1) bestPos = posCustom;
+                  else if(posScalp != -1) bestPos = posScalp;
+                  else if(posLower != -1) bestPos = posLower;
                   else if(posUpper != -1) bestPos = posUpper;
                   else if(posUpper2 != -1) bestPos = posUpper2;
 
@@ -1242,29 +1254,42 @@ void FetchAndExecuteSignals()
                   {
                      sigToCheck = StringSubstr(comment, 9);
                   }
-                  else if(StringLen(comment) >= 8 && (StringFind(comment, "sig") != -1 || StringFind(comment, "SIG") != -1))
+                  else if(StringLen(comment) >= 6)
                   {
                      sigToCheck = comment;
                   }
 
                   bool shouldDelete = false;
-                  if(StringLen(sigToCheck) >= 8)
+                  if(StringLen(comment) >= 6 && StringFind(cancelArrStr, comment) != -1)
                   {
-                     string searchKey = "\\\"" + sigToCheck + "\\\"";
-                     if(StringFind(cancelArrStr, searchKey) != -1)
-                     {
-                        shouldDelete = true;
-                     }
+                     shouldDelete = true;
+                  }
+                  if(!shouldDelete && StringLen(sigToCheck) >= 6 && StringFind(cancelArrStr, sigToCheck) != -1)
+                  {
+                     shouldDelete = true;
+                  }
+                  if(!shouldDelete && StringLen(activeSignalId) >= 6 && StringFind(cancelArrStr, activeSignalId) != -1)
+                  {
+                     shouldDelete = true;
                   }
 
                   if(shouldDelete)
                   {
-                     trade.OrderDelete(ticket);
-                     Print("MarketAI: Pending order #", ticket, " (Signal: ", sigToCheck, ") deleted via Web Terminal command.");
-                     if(activeSignalId == sigToCheck) activeSignalId = "";
+                     bool delSuccess = trade.OrderDelete(ticket);
+                     if(delSuccess)
+                     {
+                        Print("MarketAI: Pending order #", ticket, " (Signal: ", (sigToCheck != "" ? sigToCheck : comment), ") deleted successfully via cancel/23:00 market cutoff.");
+                        SendTradeUpdate((sigToCheck != "" ? sigToCheck : comment), "CANCELLED", "CANCELLED", "ORDER_DELETED", 0.0, 0.0);
+                     }
+                     else
+                     {
+                        Print("MarketAI: Warning: OrderDelete #", ticket, " returned: ", trade.ResultRetcode(), " (", trade.ResultRetcodeDescription(), ")");
+                     }
+                     if(activeSignalId == sigToCheck || activeSignalId == comment) activeSignalId = "";
                   }
                }
             }
+
          }
       }
       

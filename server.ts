@@ -58,6 +58,7 @@ import {
   checkSupabaseTablesExist,
 } from './src/utils/supabaseDb';
 import { filter30DaySignals, calculateDynamicInstrumentTimeframeSL } from './src/utils/signalUtils';
+import { isSignalExpiredByMarketClose } from './src/utils/marketSchedule';
 
 dotenv.config();
 
@@ -67,6 +68,46 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8000;
 // Global signals and cancellation tracking for bridge endpoints
 let serverActiveSignals: any[] = [];
 const serverCancelledSignalIds = new Set<string>();
+
+/**
+ * Checks and auto-cancels unactivated signals for a user when market close cutoff arrives
+ * (23:00 Romania time / 1 hour before market daily session close).
+ * Marks them CANCELLED and adds them to deletedSignalIds so MT5 and NinjaTrader delete them immediately.
+ */
+function checkAndAutoCancelUnactivatedSignals(user: StoredUser): boolean {
+  if (!user || !Array.isArray(user.signals)) return false;
+  let hasUpdates = false;
+  const now = new Date();
+
+  if (!user.deletedSignalIds) user.deletedSignalIds = [];
+
+  user.signals.forEach((s) => {
+    if (!s || !s.createdAt) return;
+    const isUnactivated = !s.isEntryTriggered || s.outcomeStatus === 'PENDING';
+    const isNotFinal =
+      s.status !== 'CANCELLED' &&
+      s.outcomeStatus !== 'CANCELLED' &&
+      s.outcomeStatus !== 'SL_HIT' &&
+      s.outcomeStatus !== 'TP3_HIT';
+
+    if (isUnactivated && isNotFinal && isSignalExpiredByMarketClose(s.createdAt, now)) {
+      s.status = 'CANCELLED';
+      s.outcomeStatus = 'CANCELLED';
+      s.cancelReasonRo = 'Ordin neactivat până la ora 23:00 (înainte de închiderea pieței) - Anulat automat';
+      s.cancelReasonEn = 'Unactivated order by 23:00 (1h before market close) - Automatically cancelled';
+      s.closedAt = s.closedAt || now.toISOString();
+
+      const sigIdStr = String(s.id);
+      if (!user.deletedSignalIds.includes(sigIdStr)) {
+        user.deletedSignalIds.push(sigIdStr);
+      }
+      serverCancelledSignalIds.add(sigIdStr);
+      hasUpdates = true;
+    }
+  });
+
+  return hasUpdates;
+}
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
@@ -5828,35 +5869,19 @@ app.get('/api/mt5/signals', (req, res) => {
   }
 
   // STRICT ISOLATION: Only send signals belonging to THIS user's account!
+  // Auto-cancel unactivated signals by 23:00 Romania time cutoff (1 hour before market close)
+  if (checkAndAutoCancelUnactivatedSignals(matchedUser)) {
+    const users = loadUsersDb();
+    if (users[matchedUser.id]) {
+      users[matchedUser.id].signals = matchedUser.signals;
+      users[matchedUser.id].deletedSignalIds = matchedUser.deletedSignalIds;
+      saveUsersDb(users, matchedUser.id).catch((err) => console.warn('Failed to save MT5 auto-cancelled signals:', err));
+    }
+  }
+
   const userSigs = Array.isArray(matchedUser.signals) ? matchedUser.signals : [];
   const deletedSet = new Set((matchedUser.deletedSignalIds || []).map(String));
   let targetSignals = userSigs.filter((s) => s && !deletedSet.has(String(s.id)));
-
-  // Auto-cancel unactivated signals by the end of day
-  const todayStr = new Date().toISOString().split('T')[0];
-  let signalsUpdated = false;
-  targetSignals.forEach((s) => {
-    if (s && s.createdAt && (s.outcomeStatus === 'PENDING' || !s.isEntryTriggered) && s.status !== 'CANCELLED' && s.outcomeStatus !== 'CANCELLED' && s.outcomeStatus !== 'SL_HIT' && s.outcomeStatus !== 'TP3_HIT') {
-      try {
-        const createdDateStr = new Date(s.createdAt).toISOString().split('T')[0];
-        if (createdDateStr < todayStr) {
-          s.status = 'CANCELLED';
-          s.outcomeStatus = 'CANCELLED';
-          s.cancelReasonRo = 'Ordin neactivat până la sfârșitul zilei - Anulat automat';
-          s.cancelReasonEn = 'Unactivated order by end of day - Automatically cancelled';
-          signalsUpdated = true;
-        }
-      } catch (e) {}
-    }
-  });
-
-  if (signalsUpdated && matchedUser) {
-    const users = loadUsersDb();
-    if (users[matchedUser.id]) {
-      users[matchedUser.id].signals = targetSignals;
-      saveUsersDb(users, matchedUser.id).catch((err) => console.warn('Failed to save auto-cancelled signals:', err));
-    }
-  }
 
   const symbolParam = req.query.symbol as string;
   const processedSet = new Set((matchedUser?.mt5ProcessedSignalIds || []).map((id) => String(id)));
@@ -5937,10 +5962,12 @@ app.get('/api/mt5/signals', (req, res) => {
   });
 
   const userDeletedIds = (matchedUser.deletedSignalIds || []).map((id) => String(id));
-  const cancelledSignals = targetSignals.filter((s) => s.status === 'CANCELLED' || s.status === 'CANCELED' || s.outcomeStatus === 'CANCELLED');
+  const userSignals = Array.isArray(matchedUser.signals) ? matchedUser.signals : [];
+  const cancelledSignals = userSignals.filter((s: any) => s && (s.status === 'CANCELLED' || s.status === 'CANCELED' || s.outcomeStatus === 'CANCELLED'));
   const allCancelled = Array.from(new Set([
-    ...cancelledSignals.map((s) => String(s.id)).filter(Boolean),
+    ...cancelledSignals.map((s: any) => String(s.id)).filter(Boolean),
     ...userDeletedIds,
+    ...Array.from(serverCancelledSignalIds),
   ])).filter((id) => id && id !== 'CLOSE_ALL' && id !== 'ALL' && id.length >= 8);
   const cancelledIds = allCancelled.slice(-100);
   const placedIds = Array.from(processedSet);
@@ -6362,6 +6389,16 @@ app.get(['/api/ninjatrader/signals', '/api/nt8/signals'], (req, res) => {
   const instrumentParam = String(req.query.instrument || req.query.symbol || 'ALL').trim().toUpperCase();
   const isMicroParam = String(req.query.micro || '').toLowerCase() === 'true';
 
+  // Auto-cancel unactivated signals by 23:00 Romania time cutoff (1 hour before market close)
+  if (checkAndAutoCancelUnactivatedSignals(matchedUser)) {
+    const users = loadUsersDb();
+    if (users[matchedUser.id]) {
+      users[matchedUser.id].signals = matchedUser.signals;
+      users[matchedUser.id].deletedSignalIds = matchedUser.deletedSignalIds;
+      saveUsersDb(users, matchedUser.id).catch((err) => console.warn('Failed to save NT8 auto-cancelled signals:', err));
+    }
+  }
+
   let rawSignals = Array.isArray(matchedUser.signals) ? matchedUser.signals : [];
 
   const deletedIds = new Set(matchedUser.deletedSignalIds || []);
@@ -6733,6 +6770,18 @@ async function startServer() {
   setInterval(() => {
     broadcastQuotesToClients();
   }, 1000);
+
+  // Periodic check to auto-cancel unactivated trades at 23:00 Romania time (1 hour before market close)
+  setInterval(() => {
+    try {
+      const users = loadUsersDb();
+      for (const u of Object.values(users)) {
+        if (checkAndAutoCancelUnactivatedSignals(u)) {
+          saveUsersDb(users, u.id).catch((err) => console.warn('Background auto-cancel save failed:', err));
+        }
+      }
+    } catch (e) {}
+  }, 30000);
 
   httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`Server MarketAI activ cu cotare REALĂ LSE și WebSocket la http://localhost:${PORT}`);

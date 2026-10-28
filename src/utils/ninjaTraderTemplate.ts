@@ -297,8 +297,20 @@ namespace NinjaTrader.NinjaScript.Strategies
                 string cancelIdsStr = cancelMatches[0].Groups[1].Value;
                 bool shouldCancelOrClose = false;
 
-                if (!string.IsNullOrEmpty(activeSignalId) && activeSignalId.Length >= 8 && cancelIdsStr.Contains("\"" + activeSignalId + "\""))
+                if (!string.IsNullOrEmpty(activeSignalId) && activeSignalId.Length >= 6 && cancelIdsStr.Contains("\"" + activeSignalId + "\""))
                     shouldCancelOrClose = true;
+
+                if (!shouldCancelOrClose)
+                {
+                    foreach (string procId in processedSignalIds)
+                    {
+                        if (!string.IsNullOrEmpty(procId) && procId.Length >= 6 && cancelIdsStr.Contains("\"" + procId + "\""))
+                        {
+                            shouldCancelOrClose = true;
+                            break;
+                        }
+                    }
+                }
 
                 if (shouldCancelOrClose)
                 {
@@ -307,7 +319,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                         // 1. Close open market position if any
                         if (Position.MarketPosition != MarketPosition.Flat)
                         {
-                            Print(string.Format("[MarketAI Bridge] Closing Position on {0} for Signal {1} via Web Terminal command!", 
+                            Print(string.Format("[MarketAI Bridge] Closing Position on {0} for Signal {1} via Web Terminal cancel command!", 
                                 Instrument.FullName, activeSignalId));
                             if (Position.MarketPosition == MarketPosition.Long)
                                 ExitLong("MarketAI_Long");
@@ -322,12 +334,16 @@ namespace NinjaTrader.NinjaScript.Strategies
                             {
                                 if (ord != null && ord.Instrument == Instrument && (ord.OrderState == OrderState.Working || ord.OrderState == OrderState.Accepted))
                                 {
-                                    Print(string.Format("[MarketAI Bridge] Cancelling pending order {0} on {1} via Web Terminal cancel command!", ord.OrderId, Instrument.FullName));
+                                    Print(string.Format("[MarketAI Bridge] Cancelling unactivated pending order {0} on {1} (Cancelled by 23:00 / Invalidation)!", ord.OrderId, Instrument.FullName));
                                     Account.Cancel(new[] { ord });
                                 }
                             }
                         }
 
+                        if (!string.IsNullOrEmpty(activeSignalId))
+                        {
+                            NotifyServerOrderClosed(activeSignalId, "CANCELLED", 0.0, 0.0);
+                        }
                         activeSignalId = "";
                     });
                 }

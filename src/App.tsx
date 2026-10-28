@@ -19,7 +19,7 @@ import { TradeJournalSection } from './components/TradeJournalSection';
 import { SessionProfitabilityBentoModule } from './components/SessionProfitabilityBentoModule';
 import { MarketQuote, TradingSignal, InstrumentId, TimeFrame, UserApiKeys, CustomSignalRule, UserProfile, TradeJournalEntry } from './types';
 import { evaluateSignalOutcome, filter30DaySignals, mergeSignals } from './utils/signalUtils';
-import { getMarketScheduleStatus } from './utils/marketSchedule';
+import { getMarketScheduleStatus, isSignalExpiredByMarketClose } from './utils/marketSchedule';
 import { INITIAL_SAMPLE_TRADES, isDemoOrSampleTrade } from './utils/tradeJournalUtils';
 import { ShieldCheck, Info, Sparkles, BarChart2, Sliders, Newspaper, LayoutGrid, AlertTriangle } from 'lucide-react';
 
@@ -1018,11 +1018,18 @@ export default function App() {
 
     setSignals((prevSignals) => {
       let hasChanges = false;
+      const newlyCancelledIds: string[] = [];
+
       const updated = prevSignals.map((sig) => {
         const liveQuote = quotes[sig.instrumentId];
-        if (!liveQuote || !liveQuote.price) return sig;
+        const evalPrice = liveQuote && liveQuote.price > 0 ? liveQuote.price : (sig.currentMarketPrice || sig.entryPrice || 0);
 
-        const evalResult = evaluateSignalOutcome(sig, liveQuote.price);
+        const evalResult = evaluateSignalOutcome(sig, evalPrice);
+
+        const isNewlyCancelled = evalResult.outcomeStatus === 'CANCELLED' && sig.outcomeStatus !== 'CANCELLED';
+        if (isNewlyCancelled) {
+          newlyCancelledIds.push(sig.id);
+        }
 
         if (
           evalResult.outcomeStatus !== sig.outcomeStatus ||
@@ -1030,12 +1037,14 @@ export default function App() {
           evalResult.isEntryTriggered !== sig.isEntryTriggered ||
           evalResult.isBeHitAfterTp1 !== sig.isBeHitAfterTp1 ||
           evalResult.isBeHitAfterTp2 !== sig.isBeHitAfterTp2 ||
-          sig.currentMarketPrice !== liveQuote.price
+          (liveQuote && liveQuote.price && sig.currentMarketPrice !== liveQuote.price) ||
+          (isNewlyCancelled && sig.status !== 'CANCELLED')
         ) {
           hasChanges = true;
           return {
             ...sig,
-            currentMarketPrice: liveQuote.price,
+            status: isNewlyCancelled ? 'CANCELLED' : sig.status,
+            currentMarketPrice: (liveQuote && liveQuote.price) || sig.currentMarketPrice,
             outcomeStatus: evalResult.outcomeStatus,
             firstHitMilestone: evalResult.firstHitMilestone,
             isEntryTriggered: evalResult.isEntryTriggered ?? sig.isEntryTriggered,
@@ -1048,9 +1057,91 @@ export default function App() {
         return sig;
       });
 
+      if (newlyCancelledIds.length > 0) {
+        setDeletedSignalIds((prevDel) => {
+          const nextDel = Array.from(new Set([...prevDel, ...newlyCancelledIds]));
+          try {
+            localStorage.setItem(LOCAL_STORAGE_DELETED_SIGNALS_KEY, JSON.stringify(nextDel));
+          } catch (e) {}
+          return nextDel;
+        });
+
+        // Notify cloud server of auto-cancelled trades so MT5 and NinjaTrader receive them in cancelled_ids immediately
+        const token = authToken || localStorage.getItem('market_ai_auth_token');
+        if (token) {
+          for (const cId of newlyCancelledIds) {
+            fetch('/api/user/close-trade', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({ signalId: cId }),
+            }).catch(() => {});
+          }
+        }
+      }
+
       return hasChanges ? updated : prevSignals;
     });
   }, [quotes]);
+
+  // Periodic check for 23:00 Romania time market close cutoff for unactivated orders
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setSignals((prevSignals) => {
+        let hasChanges = false;
+        const newlyCancelledIds: string[] = [];
+
+        const updated = prevSignals.map((sig) => {
+          const isUnactivated = !sig.isEntryTriggered || sig.outcomeStatus === 'PENDING';
+          const isNotCancelled = sig.status !== 'CANCELLED' && sig.outcomeStatus !== 'CANCELLED' && sig.outcomeStatus !== 'SL_HIT' && sig.outcomeStatus !== 'TP3_HIT';
+
+          if (isUnactivated && isNotCancelled && isSignalExpiredByMarketClose(sig.createdAt)) {
+            hasChanges = true;
+            newlyCancelledIds.push(sig.id);
+            return {
+              ...sig,
+              status: 'CANCELLED' as const,
+              outcomeStatus: 'CANCELLED' as const,
+              firstHitMilestone: 'CANCELLED' as const,
+              cancelReasonRo: 'Ordin neactivat până la ora 23:00 (înainte de închiderea pieței) - Anulat automat',
+              cancelReasonEn: 'Unactivated order by 23:00 (1h before market close) - Automatically cancelled',
+            };
+          }
+          return sig;
+        });
+
+        if (newlyCancelledIds.length > 0) {
+          setDeletedSignalIds((prevDel) => {
+            const nextDel = Array.from(new Set([...prevDel, ...newlyCancelledIds]));
+            try {
+              localStorage.setItem(LOCAL_STORAGE_DELETED_SIGNALS_KEY, JSON.stringify(nextDel));
+            } catch (e) {}
+            return nextDel;
+          });
+
+          const token = authToken || localStorage.getItem('market_ai_auth_token');
+          if (token) {
+            for (const cId of newlyCancelledIds) {
+              fetch('/api/user/close-trade', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify({ signalId: cId }),
+              }).catch(() => {});
+            }
+          }
+        }
+
+        return hasChanges ? updated : prevSignals;
+      });
+    }, 15000);
+
+    return () => clearInterval(interval);
+  }, [authToken]);
 
   // Fetch quotes from server
   const fetchMarketQuotes = useCallback(
