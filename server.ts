@@ -6061,6 +6061,12 @@ app.post('/api/mt5/signals/sync', async (req, res) => {
   return res.json({ success: true, count: targetUser.signals?.length || 0 });
 });
 
+// Ensure MT5 API responses always explicitly close TCP socket to prevent WinINet 1003 timeouts
+app.use('/api/mt5', (req, res, next) => {
+  res.setHeader('Connection', 'close');
+  next();
+});
+
 app.post('/api/mt5/account', async (req, res) => {
   const token = extractMt5Token(req);
   if (!token) {
@@ -6081,21 +6087,45 @@ app.post('/api/mt5/account', async (req, res) => {
   console.log(`[MT5 EA Account Sync] Token: ${token.substring(0, 10)}... balance: ${accountBalance}, equity: ${equity}, accNum: ${accountNumber}, server: ${accountServer}, user: ${matchedUser ? matchedUser.username : 'none'}`);
 
   if (matchedUser) {
+    let didChange = false;
     if (accountBalance !== undefined && accountBalance !== null && !isNaN(Number(accountBalance))) {
-      matchedUser.accountBalance = Number(accountBalance);
+      const bNum = Number(accountBalance);
+      if (matchedUser.accountBalance !== bNum) {
+        matchedUser.accountBalance = bNum;
+        didChange = true;
+      }
     }
     if (equity !== undefined && equity !== null && !isNaN(Number(equity))) {
-      matchedUser.equity = Number(equity);
+      const eNum = Number(equity);
+      if (matchedUser.equity !== eNum) {
+        matchedUser.equity = eNum;
+        didChange = true;
+      }
     }
     if (accountNumber !== undefined && accountNumber !== null && String(accountNumber).trim() !== '') {
-      matchedUser.mt5AccountNumber = String(accountNumber).trim();
+      const aStr = String(accountNumber).trim();
+      if (matchedUser.mt5AccountNumber !== aStr) {
+        matchedUser.mt5AccountNumber = aStr;
+        didChange = true;
+      }
     }
-    if (accountServer) matchedUser.mt5AccountServer = String(accountServer).trim();
-    if (accountCurrency) matchedUser.mt5AccountCurrency = String(accountCurrency).trim();
-    if (accountCompany) matchedUser.mt5AccountCompany = String(accountCompany).trim();
+    if (accountServer && matchedUser.mt5AccountServer !== String(accountServer).trim()) {
+      matchedUser.mt5AccountServer = String(accountServer).trim();
+      didChange = true;
+    }
+    if (accountCurrency && matchedUser.mt5AccountCurrency !== String(accountCurrency).trim()) {
+      matchedUser.mt5AccountCurrency = String(accountCurrency).trim();
+      didChange = true;
+    }
+    if (accountCompany && matchedUser.mt5AccountCompany !== String(accountCompany).trim()) {
+      matchedUser.mt5AccountCompany = String(accountCompany).trim();
+      didChange = true;
+    }
     matchedUser.mt5LastConnectedAt = new Date().toISOString();
 
-    await saveUsersDb(users, matchedUser.id);
+    if (didChange) {
+      await saveUsersDb(users, matchedUser.id);
+    }
     return res.json({
       success: true,
       accountBalance: matchedUser.accountBalance,
@@ -6105,6 +6135,7 @@ app.post('/api/mt5/account', async (req, res) => {
       accountCurrency: matchedUser.mt5AccountCurrency,
       accountCompany: matchedUser.mt5AccountCompany,
       lastConnectedAt: matchedUser.mt5LastConnectedAt,
+      saved: didChange,
     });
   } else {
     return res.status(401).json({ error: 'Invalid MT5 API Key. Each user must use their personal MT5 API key from MarketAI account settings to isolate account balances.' });
@@ -6128,6 +6159,12 @@ app.post('/api/mt5/update', async (req, res) => {
   if (!body || typeof body !== 'object') body = {};
 
   const { signal_id, status, outcomeStatus, milestone, accountBalance, equity, accountNumber, accountServer, accountCurrency, accountCompany, pnl, profit, exitPrice } = body;
+
+  // Instant response for duplicate historical sync deals to avoid event loop overload
+  if (milestone === 'HISTORICAL_SYNC' && signal_id && matchedUser?.mt5ProcessedSignalIds?.includes(String(signal_id))) {
+    return res.json({ success: true, cached: true, signal_id });
+  }
+
   console.log(`[MT5 EA Update] Signal ${signal_id} status: ${status}, outcome: ${outcomeStatus}, milestone: ${milestone}, balance: ${accountBalance}, accNum: ${accountNumber}, pnl: ${pnl ?? profit}`);
 
   if (matchedUser) {

@@ -1,4 +1,4 @@
-export const MT5_EA_VERSION = '4.73';
+export const MT5_EA_VERSION = '4.74';
 
 export function getMql5EaCode(
   mt5Endpoint: string,
@@ -750,7 +750,8 @@ void SendAccountSync()
    string result_headers;
    string cleanKey = GetCleanApiKey();
    string headers = "Authorization: Bearer " + cleanKey + "\\r\\n" +
-                    "Content-Type: application/json\\r\\n\\r\\n";
+                    "Content-Type: application/json\\r\\n" +
+                    "Connection: close\\r\\n\\r\\n";
    
    long login = AccountInfoInteger(ACCOUNT_LOGIN);
    string serverName = AccountInfoString(ACCOUNT_SERVER);
@@ -875,7 +876,8 @@ void SendTradeUpdate(string signalId, string status, string outcome, string mile
    string result_headers;
    string cleanKey = GetCleanApiKey();
    string headers = "Authorization: Bearer " + cleanKey + "\\r\\n" +
-                    "Content-Type: application/json\\r\\n\\r\\n";
+                    "Content-Type: application/json\\r\\n" +
+                    "Connection: close\\r\\n\\r\\n";
    
    long login = AccountInfoInteger(ACCOUNT_LOGIN);
    string serverName = AccountInfoString(ACCOUNT_SERVER);
@@ -1152,24 +1154,24 @@ void FetchAndExecuteSignals()
    string origin = ForceHttps("${currentOrigin}");
    string signalsUrl = origin + "/api/mt5/signals?apiKey=" + cleanKey + "&symbol=" + safeSymbol;
    
-   // Direct JSON POST request (100% reliable across all firewalls, proxies and MT5 WinINet builds, matching SendAccountSync)
+   // Direct JSON POST request with Connection: close to ensure instant TCP socket close on WinINet
    string postHeaders = "Authorization: Bearer " + cleanKey + "\\r\\n" +
-                        "Content-Type: application/json\\r\\n\\r\\n";
+                        "Content-Type: application/json\\r\\n" +
+                        "Connection: close\\r\\n\\r\\n";
    string postPayload = "{\\\"apiKey\\\":\\\"" + cleanKey + "\\\",\\\"symbol\\\":\\\"" + targetSymbol + "\\\"}";
    ArrayResize(data, StringLen(postPayload));
    StringToCharArray(postPayload, data, 0, StringLen(postPayload), CP_UTF8);
-   ArrayFree(result);
    
-   int res = WebRequest("POST", signalsUrl, postHeaders, 10000, data, result, result_headers);
+   int res = WebRequest("POST", signalsUrl, postHeaders, 6000, data, result, result_headers);
    
    // Fallback to GET if POST was rejected with non-auth code
    if(res != 200 && res != 401 && res != 403)
    {
       ArrayResize(data, 0);
-      ArrayFree(result);
       string getHeaders = "Authorization: Bearer " + cleanKey + "\\r\\n" +
-                          "User-Agent: Mozilla/5.0 MarketAI-Bridge/4.73\\r\\n\\r\\n";
-      res = WebRequest("GET", signalsUrl, getHeaders, 8000, data, result, result_headers);
+                          "Connection: close\\r\\n" +
+                          "User-Agent: Mozilla/5.0 MarketAI-Bridge/4.74\\r\\n\\r\\n";
+      res = WebRequest("GET", signalsUrl, getHeaders, 6000, data, result, result_headers);
    }
    
    if(res == -1)
@@ -1190,13 +1192,13 @@ void FetchAndExecuteSignals()
    if(res != 200)
    {
       static datetime lastHttpErr = 0;
-      if(TimeCurrent() - lastHttpErr > 30)
+      if(TimeCurrent() - lastHttpErr > 20)
       {
          string errBody = CharArrayToString(result);
          if(res == 401)
             Print("[MarketAI HTTP 401] Cheia API este invalida sau a expirat! Verificati InpApiKey: '", cleanKey, "'");
          else if(res == 1003)
-            Print("[MarketAI HTTP 1003] Timeout de retea MT5 (WinINet). Verificati conexiunea la internet sau adaugati '", origin, "' in Tools -> Options -> Expert Advisors -> Allow WebRequest.");
+            Print("[MarketAI HTTP 1003] Timeout retea MT5 (WinINet). Server: '", origin, "' | LastError: ", GetLastError(), (StringLen(errBody) > 0 ? (" | Răspuns: " + errBody) : ""));
          else
             Print("[MarketAI HTTP ", res, "] Serverul a raspuns: ", errBody);
          lastHttpErr = TimeCurrent();
