@@ -23,6 +23,6 @@ primary_region = 'fra'
     hard_limit = 250
 
 [[vm]]
-  memory = '2048mb'
+  memory = '1024mb'
   cpu_kind = 'shared'
   cpus = 2
