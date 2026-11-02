@@ -6151,7 +6151,7 @@ app.all(['/api/mt5/signals', '/api/mt5/signals/poll'], (req, res) => {
   const lastLog = pollLogMap.get(lastLogKey) || 0;
   if (formattedSignals.length > 0 || nowMs - lastLog > 30000) {
     pollLogMap.set(lastLogKey, nowMs);
-    console.log(`[MT5 EA Signals Poll] User: ${matchedUser.username || matchedUser.id}, Symbol: ${symbolParam || 'ALL'}, Sigs: ${formattedSignals.length}, Placed: ${placedIds.length}, Cancelled: ${cancelledIds.length}`);
+    console.log(`[MT5 EA Signals Poll] User: ${matchedUser.username || matchedUser.id}, Symbol: ${symbolParam || 'ALL'}, Sigs: ${formattedSignals.length}, Placed: ${placedIds.length}, Cancelled: ${cancelledIds.length}, UA: ${req.headers['user-agent'] || 'none'}`);
   }
 
   const responsePayload = {

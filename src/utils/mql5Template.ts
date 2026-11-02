@@ -1,4 +1,4 @@
-export const MT5_EA_VERSION = '4.79';
+export const MT5_EA_VERSION = '4.80';
 
 export function getMql5EaCode(
   mt5Endpoint: string,
@@ -938,7 +938,7 @@ void SendAccountSync()
    
    string origin = ForceHttps("${currentOrigin}");
    string accountURL = origin + "/api/mt5/account?apiKey=" + cleanKey;
-   int res = WebRequest("POST", accountURL, headers, 8000, data, result, result_headers);
+   int res = WebRequest("POST", accountURL, headers, 12000, data, result, result_headers);
    if(res == -1)
    {
       int err = GetLastError();
@@ -1082,7 +1082,7 @@ void SendTradeUpdate(string signalId, string status, string outcome, string mile
    if(StringFind(updateURL, "?") < 0) updateURL = updateURL + "?apiKey=" + cleanKey;
    else updateURL = updateURL + "&apiKey=" + cleanKey;
 
-   int res = WebRequest("POST", updateURL, headers, 8000, data, result, result_headers);
+   int res = WebRequest("POST", updateURL, headers, 12000, data, result, result_headers);
    if(res == 200)
    {
       Print("[MarketAI] Status & Realized PnL updated for signal ", signalId, " -> ", milestone, " | PnL: $", DoubleToString(pnl, 2), (exitPrice > 0 ? (" @ " + DoubleToString(exitPrice, 2)) : ""));
@@ -1332,7 +1332,7 @@ void FetchAndExecuteSignals()
    ArrayResize(result, 0);
    ResetLastError();
    
-   int res = WebRequest("POST", signalsUrl, postHeaders, 8000, data, result, result_headers);
+   int res = WebRequest("POST", signalsUrl, postHeaders, 12000, data, result, result_headers);
    
    if(res == -1)
    {
@@ -1351,14 +1351,15 @@ void FetchAndExecuteSignals()
    
    if(res != 200)
    {
+      int lastErr = GetLastError();
       static datetime lastHttpErr = 0;
       if(TimeCurrent() - lastHttpErr > 20)
       {
-         string errBody = CharArrayToString(result);
+         string errBody = (ArraySize(result) > 0) ? CharArrayToString(result) : "";
          if(res == 401)
             Print("[MarketAI HTTP 401] Cheia API este invalida sau a expirat! Verificati InpApiKey: '", cleanKey, "'");
          else if(res == 1003)
-            Print("[MarketAI HTTP 1003] Timeout conexiune MT5 (WinINet). Server: '", origin, "' | LastError: ", GetLastError(), (StringLen(errBody) > 0 ? (" | Răspuns: " + errBody) : ""));
+            Print("[MarketAI HTTP 1003] Timeout conexiune MT5 (WinINet). Server: '", origin, "' | WinINet/MT5 Code: ", lastErr, (StringLen(errBody) > 0 ? (" | Răspuns: " + errBody) : ""));
          else
             Print("[MarketAI HTTP ", res, "] Serverul a raspuns: ", errBody);
          lastHttpErr = TimeCurrent();
