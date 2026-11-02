@@ -1,4 +1,4 @@
-export const MT5_EA_VERSION = '4.80';
+export const MT5_EA_VERSION = '4.81';
 
 export function getMql5EaCode(
   mt5Endpoint: string,
@@ -789,11 +789,6 @@ int OnInit()
    string company = AccountInfoString(ACCOUNT_COMPANY);
    Print("MarketAI MT5 Bridge v", "${MT5_EA_VERSION}", " initialized with Exact Broker PnL Engine. Target Symbol: ", targetSymbol, " Magic: ", InpMagicNumber, " Connected Account: #", login, " (", serverName, ") [", company, "]");
    
-   if(StringFind(InpEndpointURL, "onrender.com") >= 0 || StringFind(InpUpdateURL, "onrender.com") >= 0 || (StringFind(InpEndpointURL, "fly.dev") < 0 && StringFind(InpEndpointURL, "localhost") < 0))
-   {
-      Print("[MarketAI OK] Conexiunea a fost redirectionata automat catre serverul activ Fly.dev: ${currentOrigin} !");
-   }
-   
    // Register any existing open positions and sync historical closed trades from MT5
    RegisterOpenPositions();
    SyncClosedHistoricalTrades();
@@ -1073,11 +1068,7 @@ void SendTradeUpdate(string signalId, string status, string outcome, string mile
    ArrayResize(result, 0);
    ResetLastError();
    
-   string updateURL = InpUpdateURL;
-   if(StringFind(updateURL, "onrender.com") >= 0 || updateURL == "" || (StringFind(updateURL, "fly.dev") < 0 && StringFind(updateURL, "localhost") < 0))
-   {
-      updateURL = "${mt5UpdateEndpoint}";
-   }
+   string updateURL = (InpUpdateURL != "") ? InpUpdateURL : "${mt5UpdateEndpoint}";
    updateURL = ForceHttps(updateURL);
    if(StringFind(updateURL, "?") < 0) updateURL = updateURL + "?apiKey=" + cleanKey;
    else updateURL = updateURL + "&apiKey=" + cleanKey;

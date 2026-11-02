@@ -97,9 +97,9 @@ export function updateMt5Ea(): void {
       const keyMatch = existing.match(/InpApiKey\s*=\s*"([^"]+)"/);
       if (keyMatch && keyMatch[1]) apiKey = keyMatch[1];
       const epMatch = existing.match(/InpEndpointURL\s*=\s*"([^"]+)"/);
-      if (epMatch && epMatch[1] && !epMatch[1].includes('onrender.com')) endpoint = epMatch[1];
+      if (epMatch && epMatch[1]) endpoint = epMatch[1];
       const upMatch = existing.match(/InpUpdateURL\s*=\s*"([^"]+)"/);
-      if (upMatch && upMatch[1] && !upMatch[1].includes('onrender.com')) updateUrl = upMatch[1];
+      if (upMatch && upMatch[1]) updateUrl = upMatch[1];
     }
 
     const mqlCode = getMql5EaCode(
