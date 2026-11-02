@@ -1,4 +1,4 @@
-export const MT5_EA_VERSION = '4.82';
+export const MT5_EA_VERSION = '4.83';
 
 export function getMql5EaCode(
   mt5Endpoint: string,
@@ -136,24 +136,50 @@ void SetupTradeFillingMode(string sym)
 bool HasFuturesTagMql(string sym)
 {
    if(StringFind(sym, "CASH") != -1 || StringFind(sym, "SPOT") != -1) return false;
-   if(StringFind(sym, ".F") != -1 || StringFind(sym, "_F") != -1 || StringFind(sym, "-F") != -1 || StringFind(sym, "/F") != -1) return true;
-   if(StringFind(sym, ".FT") != -1 || StringFind(sym, "_FT") != -1 || StringFind(sym, "FT.") != -1 || StringFind(sym, "FUT") != -1) return true;
-   if(StringFind(sym, "-") != -1) return true; // XM Global futures: US100-, US500-, US30-, GOLD-
-   if(StringFind(sym, "@") != -1) return true; // CME prefix: @NQ, @ES, @YM, @GC
    
-   int len = StringLen(sym);
+   // Exclude common broker account type suffixes before checking for futures tags
+   string baseSym = sym;
+   int dashPos = StringFind(baseSym, "-");
+   if(dashPos != -1)
+   {
+      string suffix = StringSubstr(baseSym, dashPos + 1);
+      StringToUpper(suffix);
+      if(suffix == "VIP" || suffix == "PRO" || suffix == "RAW" || suffix == "ECN" ||
+         suffix == "ZERO" || suffix == "MICRO" || suffix == "MINI" || suffix == "STD" || suffix == "STP")
+      {
+         baseSym = StringSubstr(baseSym, 0, dashPos);
+      }
+   }
+   int underPos = StringFind(baseSym, "_");
+   if(underPos != -1)
+   {
+      string suffix = StringSubstr(baseSym, underPos + 1);
+      StringToUpper(suffix);
+      if(suffix == "VIP" || suffix == "PRO" || suffix == "RAW" || suffix == "ECN" ||
+         suffix == "ZERO" || suffix == "MICRO" || suffix == "MINI" || suffix == "STD" || suffix == "STP")
+      {
+         baseSym = StringSubstr(baseSym, 0, underPos);
+      }
+   }
+
+   if(StringFind(baseSym, ".F") != -1 || StringFind(baseSym, "_F") != -1 || StringFind(baseSym, "-F") != -1 || StringFind(baseSym, "/F") != -1) return true;
+   if(StringFind(baseSym, ".FT") != -1 || StringFind(baseSym, "_FT") != -1 || StringFind(baseSym, "FT.") != -1 || StringFind(baseSym, "FUT") != -1) return true;
+   if(StringSubstr(baseSym, StringLen(baseSym) - 1) == "-") return true; // XM Global futures: US100-, US500-, US30-, GOLD-
+   if(StringFind(baseSym, "@") != -1) return true; // CME prefix: @NQ, @ES, @YM, @GC
+   
+   int len = StringLen(baseSym);
    if(len > 1)
    {
       // Ends with 'F' or "FT"
-      if(StringSubstr(sym, len - 2) == "FT") return true;
-      if(StringSubstr(sym, len - 1) == "F") return true;
+      if(StringSubstr(baseSym, len - 2) == "FT") return true;
+      if(StringSubstr(baseSym, len - 1) == "F") return true;
    }
    
    // Check CME/Dated futures expiry patterns like JAN..DEC
-   if(StringFind(sym, "JAN") != -1 || StringFind(sym, "FEB") != -1 || StringFind(sym, "MAR") != -1 ||
-      StringFind(sym, "APR") != -1 || StringFind(sym, "MAY") != -1 || StringFind(sym, "JUN") != -1 ||
-      StringFind(sym, "JUL") != -1 || StringFind(sym, "AUG") != -1 || StringFind(sym, "SEP") != -1 ||
-      StringFind(sym, "OCT") != -1 || StringFind(sym, "NOV") != -1 || StringFind(sym, "DEC") != -1)
+   if(StringFind(baseSym, "JAN") != -1 || StringFind(baseSym, "FEB") != -1 || StringFind(baseSym, "MAR") != -1 ||
+      StringFind(baseSym, "APR") != -1 || StringFind(baseSym, "MAY") != -1 || StringFind(baseSym, "JUN") != -1 ||
+      StringFind(baseSym, "JUL") != -1 || StringFind(baseSym, "AUG") != -1 || StringFind(baseSym, "SEP") != -1 ||
+      StringFind(baseSym, "OCT") != -1 || StringFind(baseSym, "NOV") != -1 || StringFind(baseSym, "DEC") != -1)
    {
       return true;
    }
@@ -161,18 +187,18 @@ bool HasFuturesTagMql(string sym)
    // CME Single-letter month code + 1 or 2 digits at end (e.g. Z26, H27, M6)
    if(len >= 3)
    {
-      ushort lastChar = StringGetCharacter(sym, len - 1);
+      ushort lastChar = StringGetCharacter(baseSym, len - 1);
       if(lastChar >= '0' && lastChar <= '9')
       {
          int monthPos = len - 2;
-         ushort prevChar = StringGetCharacter(sym, monthPos);
+         ushort prevChar = StringGetCharacter(baseSym, monthPos);
          if(prevChar >= '0' && prevChar <= '9')
          {
             monthPos = len - 3;
          }
          if(monthPos >= 0)
          {
-            ushort mCode = StringGetCharacter(sym, monthPos);
+            ushort mCode = StringGetCharacter(baseSym, monthPos);
             if(mCode == 'F' || mCode == 'G' || mCode == 'H' || mCode == 'J' || mCode == 'K' ||
                mCode == 'M' || mCode == 'N' || mCode == 'Q' || mCode == 'U' || mCode == 'V' ||
                mCode == 'X' || mCode == 'Z')

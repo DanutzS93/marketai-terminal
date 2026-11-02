@@ -2190,17 +2190,137 @@ const LSE_PARITY_CONFIGS: LseParityConfig[] = [
   },
 ];
 
+interface CachedYahooQuote {
+  quote: any;
+  timestamp: number;
+}
+const yahooQuoteCache: Record<string, CachedYahooQuote> = {};
+
+async function getLiveYahooQuote(id: string): Promise<any> {
+  const now = Date.now();
+  if (yahooQuoteCache[id] && now - yahooQuoteCache[id].timestamp < 3500) {
+    return yahooQuoteCache[id].quote;
+  }
+
+  const mapping: Record<string, string[]> = {
+    NASDAQ: ['^NDX', 'NQ=F'],
+    SPX500: ['^GSPC', 'ES=F'],
+    DOW_JONES: ['^DJI', 'YM=F'],
+    GOLD: ['GC=F'],
+    NQ_F: ['NQ=F'],
+    ES_F: ['ES=F'],
+    YM_F: ['YM=F'],
+    GC_F: ['GC=F'],
+    EURUSD: ['EURUSD=X'],
+    GBPUSD: ['GBPUSD=X'],
+    USDJPY: ['USDJPY=X'],
+  };
+
+  const syms = mapping[id] || [];
+  for (const s of syms) {
+    try {
+      const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(s)}?interval=1m&range=1d`;
+      const res = await fetch(url, {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        },
+      });
+      if (!res.ok) continue;
+      const json = await res.json();
+      const res0 = json.chart?.result?.[0];
+      if (!res0) continue;
+      const meta = res0.meta;
+      if (!meta || typeof meta.regularMarketPrice !== 'number' || meta.regularMarketPrice <= 0) continue;
+
+      const timeMs = (meta.regularMarketTime || 0) * 1000;
+      // If symbol is cash index (^NDX) and its timestamp is older than 4 hours, and we have a secondary 24/5 futures symbol (NQ=F), prefer the active secondary symbol
+      if (s.startsWith('^') && now - timeMs > 4 * 3600 * 1000 && syms.length > 1) {
+        continue;
+      }
+
+      const quote = json.chart?.result?.[0]?.indicators?.quote?.[0] || {};
+      const rawCloses = quote.close || [];
+      const validCloses = rawCloses.filter((c: any) => typeof c === 'number' && !isNaN(c));
+      const price = meta.regularMarketPrice;
+      const prevClose = meta.chartPreviousClose || meta.previousClose || price;
+      const change = Number((price - prevClose).toFixed(2));
+      const changePercent = Number((((price - prevClose) / prevClose) * 100).toFixed(2));
+
+      const parsedQuote = {
+        id,
+        symbolUsed: s,
+        price,
+        change,
+        changePercent,
+        high: meta.regularMarketDayHigh || meta.dayHigh || price,
+        low: meta.regularMarketDayLow || meta.dayLow || price,
+        open: meta.regularMarketOpen || meta.open || price,
+        previousClose: prevClose,
+        volume: String(meta.regularMarketVolume || 'Live Stream'),
+        timestamp: new Date(timeMs || now).toISOString(),
+        closes: validCloses.slice(-30),
+      };
+
+      yahooQuoteCache[id] = { quote: parsedQuote, timestamp: now };
+      return parsedQuote;
+    } catch (e) {
+      // Continue to secondary symbol
+    }
+  }
+
+  return yahooQuoteCache[id]?.quote || null;
+}
+
 async function buildLseParityQuote(cfg: LseParityConfig) {
   // STRICT: each parity fetches ONLY its own individual LSE candle table
   const candles = await getLseCandlesCached(cfg.lseSymbol, 30);
   const liveTick = getLseTick(cfg.tickKeys);
 
-  // If this specific instrument has no data and no live tick, return clean null (UI shows '-')
-  if ((!candles || candles.length === 0) && !liveTick) {
-    return null;
+  const c0 = candles && candles.length > 0 ? candles[0] : null;
+  const candleAgeMs = c0 && c0.timestamp ? Date.now() - new Date(c0.timestamp).getTime() : Infinity;
+  // If LSE candles are older than 6 hours and no live tick has arrived, LSE is stale / blocked for this instrument
+  const isLseStale = candleAgeMs > 6 * 3600 * 1000;
+
+  if ((!candles || candles.length === 0 || isLseStale) && !liveTick) {
+    const yQuote = await getLiveYahooQuote(cfg.id);
+    if (yQuote && yQuote.price > 0) {
+      const price = Number(yQuote.price.toFixed(cfg.decimals));
+      const high = Number(yQuote.high.toFixed(cfg.decimals));
+      const low = Number(yQuote.low.toFixed(cfg.decimals));
+      const open = Number(yQuote.open.toFixed(cfg.decimals));
+      const previousClose = Number(yQuote.previousClose.toFixed(cfg.decimals));
+      const change = Number(yQuote.change.toFixed(cfg.decimals));
+      const changePercent = Number(yQuote.changePercent.toFixed(2));
+      const closes = yQuote.closes && yQuote.closes.length > 0 ? yQuote.closes : [price];
+      const ind = computeRealIndicators(price, closes);
+      const trend = calculateTechnicalTrend(price, changePercent, ind.ema20, ind.sma50, ind.sma200, ind.macd, ind.rsi);
+
+      return {
+        id: cfg.id,
+        name: cfg.name,
+        symbol: cfg.symbol,
+        tradingViewSymbol: cfg.tvSymbol,
+        price,
+        change,
+        changePercent,
+        high,
+        low,
+        open,
+        previousClose,
+        volume: yQuote.volume || 'Yahoo Live',
+        source: 'Yahoo Finance',
+        timestamp: yQuote.timestamp,
+        ...ind,
+        trend,
+      };
+    }
+
+    if (!candles || candles.length === 0) {
+      return null;
+    }
   }
 
-  const c0 = candles && candles.length > 0 ? candles[0] : null;
   const c1 = candles && candles.length > 1 ? candles[1] : null;
 
   let price = liveTick ? liveTick.price : (c0 ? c0.close : 0);
@@ -5759,22 +5879,29 @@ function mapToMt5Symbol(instrumentId: string): string {
 
 function hasFuturesTag(upper: string, clean: string): boolean {
   if (upper.includes('CASH') || upper.includes('SPOT')) return false;
+  // Exclude broker account type suffixes (-VIP, -PRO, -RAW, -ECN, -ZERO, -MICRO, -MINI, -STD, -STP)
+  const cleanWithoutSuffix = upper
+    .replace(/-(VIP|PRO|RAW|ECN|ZERO|MICRO|MINI|STD|STP)$/i, '')
+    .replace(/_(VIP|PRO|RAW|ECN|ZERO|MICRO|MINI|STD|STP)$/i, '');
+  const baseClean = cleanWithoutSuffix.replace(/[^A-Z0-9]/g, '');
+
   return (
-    upper.includes('.F') ||
-    upper.includes('_F') ||
-    upper.includes('/F') ||
-    upper.includes('-F') ||
-    upper.includes('.FT') ||
-    upper.includes('_FT') ||
-    upper.includes('FT.') ||
-    upper.includes('FUT') ||
-    upper.includes('-') ||
-    upper.startsWith('@') ||
-    clean.endsWith('FT') ||
-    clean.endsWith('F') ||
-    clean.includes('FUT') ||
-    /[FGHJKMNQUVXZ]\d{1,2}$/.test(clean) ||
-    /(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\d{2}/.test(upper)
+    cleanWithoutSuffix.includes('.F') ||
+    cleanWithoutSuffix.includes('_F') ||
+    cleanWithoutSuffix.includes('/F') ||
+    cleanWithoutSuffix.includes('-F') ||
+    cleanWithoutSuffix.includes('.FT') ||
+    cleanWithoutSuffix.includes('_FT') ||
+    cleanWithoutSuffix.includes('FT.') ||
+    cleanWithoutSuffix.includes('FUT') ||
+    cleanWithoutSuffix.startsWith('@') ||
+    baseClean.endsWith('FT') ||
+    baseClean.endsWith('F') ||
+    baseClean.includes('FUT') ||
+    /[FGHJKMNQUVXZ]\d{1,2}$/.test(baseClean) ||
+    /-(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\d{2}/.test(cleanWithoutSuffix) ||
+    /-\d{2}$/.test(cleanWithoutSuffix) ||
+    cleanWithoutSuffix.endsWith('-')
   );
 }
 
