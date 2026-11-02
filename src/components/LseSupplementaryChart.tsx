@@ -10,7 +10,7 @@ interface LseSupplementaryChartProps {
   lang: 'ro' | 'en';
 }
 
-type LsePairKey = 'NQ.F' | 'ES.F' | 'DOW.F' | 'GC.F';
+type LsePairKey = 'NQ.F' | 'ES.F' | 'DOW.F' | 'GC.F' | 'XAU/USD';
 
 export const LseSupplementaryChart: React.FC<LseSupplementaryChartProps> = ({
   selectedInstrument,
@@ -33,7 +33,9 @@ export const LseSupplementaryChart: React.FC<LseSupplementaryChartProps> = ({
       setActivePair('ES.F');
     } else if (selectedInstrument === 'YM_F' || selectedInstrument === 'DOW_JONES') {
       setActivePair('DOW.F');
-    } else if (selectedInstrument === 'GC_F' || selectedInstrument === 'GOLD') {
+    } else if (selectedInstrument === 'GOLD') {
+      setActivePair('XAU/USD');
+    } else if (selectedInstrument === 'GC_F') {
       setActivePair('GC.F');
     }
   }, [selectedInstrument]);
@@ -63,10 +65,16 @@ export const LseSupplementaryChart: React.FC<LseSupplementaryChartProps> = ({
       basePrice: (quotes?.YM_F?.price && quotes.YM_F.price > 0) ? quotes.YM_F.price : (quotes?.DOW_JONES?.price && quotes.DOW_JONES.price > 0 ? quotes.DOW_JONES.price : 0),
     },
     {
+      id: 'XAU/USD',
+      appInstrument: 'GOLD',
+      label: 'XAU/USD (Gold Spot LSE)',
+      basePrice: (quotes?.GOLD?.price && quotes.GOLD.price > 0) ? quotes.GOLD.price : 0,
+    },
+    {
       id: 'GC.F',
       appInstrument: 'GC_F',
       label: 'GC.F (Gold Futures)',
-      basePrice: (quotes?.GC_F?.price && quotes.GC_F.price > 0) ? quotes.GC_F.price : (quotes?.GOLD?.price && quotes.GOLD.price > 0 ? quotes.GOLD.price : 0),
+      basePrice: (quotes?.GC_F?.price && quotes.GC_F.price > 0) ? quotes.GC_F.price : 0,
     },
   ];
 
@@ -294,8 +302,8 @@ export const LseSupplementaryChart: React.FC<LseSupplementaryChartProps> = ({
                 className="px-2 py-0.5 rounded text-[10px] font-sans font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1 shadow-sm ml-1"
                 title={
                   lang === 'ro'
-                    ? 'Date estimate (Yahoo Finance temporar indisponibil sau sesiune închisă)'
-                    : 'Estimated synthetic data (Yahoo Finance temporarily offline or closed session)'
+                    ? 'Date estimate (Sursa de date temporar indisponibilă sau sesiune închisă)'
+                    : 'Estimated data (Data source temporarily offline or market closed)'
                 }
               >
                 <span>⚠️</span>
