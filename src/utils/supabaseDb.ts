@@ -3,7 +3,7 @@ import { StoredUser, StoredInviteCode } from './firestoreDb';
 
 let supabaseClient: SupabaseClient | null = null;
 let lastSupabaseFailureTime = 0;
-const SUPABASE_COOLDOWN_MS = 60 * 1000; // 1 minute cooldown on network/fetch failures
+const SUPABASE_COOLDOWN_MS = 15 * 1000; // 15 seconds cooldown on network/fetch failures
 
 export function getSupabaseClient(): SupabaseClient | null {
   if (supabaseClient) {

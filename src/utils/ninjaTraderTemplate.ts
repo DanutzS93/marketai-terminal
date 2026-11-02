@@ -238,9 +238,9 @@ namespace NinjaTrader.NinjaScript.Strategies
         #region Background Polling & Execution
         private void OnPollTimerCallback(object state)
         {
-            if (isPolling) return;
             lock (lockObj)
             {
+                if (isPolling) return;
                 isPolling = true;
             }
 
@@ -469,19 +469,20 @@ namespace NinjaTrader.NinjaScript.Strategies
             Print(string.Format("[MarketAI Bridge] Executing Signal {0} | {1} {2} @ {3} (SL: {4}, TP1: {5})", 
                 sigId, action, Instrument.FullName, entry, sl, tp1));
 
-            // Set targets and stops
-            if (sl > 0)
-            {
-                SetStopLoss(CalculationMode.Price, sl);
-            }
-            if (tp1 > 0)
-            {
-                SetProfitTarget(CalculationMode.Price, tp1);
-            }
-
             bool isBuy = action.Contains("BUY");
             bool isLimit = action.Contains("LIMIT") || OrderMode == MarketAiOrderMode.ForceLimitOrder;
             bool isStop = action.Contains("STOP");
+            string entrySignal = isBuy ? "MarketAI_Long" : "MarketAI_Short";
+
+            // Set targets and stops tied to specific entry signal name for PerEntryExecution
+            if (sl > 0)
+            {
+                SetStopLoss(entrySignal, CalculationMode.Price, sl, false);
+            }
+            if (tp1 > 0)
+            {
+                SetProfitTarget(entrySignal, CalculationMode.Price, tp1);
+            }
 
             if (OrderMode == MarketAiOrderMode.ForceMarketImmediate)
             {
@@ -492,20 +493,20 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (isBuy)
             {
                 if (isLimit && entry > 0)
-                    EnterLongLimit(0, true, qty, entry, "MarketAI_Long");
+                    EnterLongLimit(0, true, qty, entry, entrySignal);
                 else if (isStop && entry > 0)
-                    EnterLongStopMarket(0, true, qty, entry, "MarketAI_Long");
+                    EnterLongStopMarket(0, true, qty, entry, entrySignal);
                 else
-                    EnterLong(0, qty, "MarketAI_Long");
+                    EnterLong(0, qty, entrySignal);
             }
             else
             {
                 if (isLimit && entry > 0)
-                    EnterShortLimit(0, true, qty, entry, "MarketAI_Short");
+                    EnterShortLimit(0, true, qty, entry, entrySignal);
                 else if (isStop && entry > 0)
-                    EnterShortStopMarket(0, true, qty, entry, "MarketAI_Short");
+                    EnterShortStopMarket(0, true, qty, entry, entrySignal);
                 else
-                    EnterShort(0, qty, "MarketAI_Short");
+                    EnterShort(0, qty, entrySignal);
             }
 
             // Report execution to MarketAI Cloud

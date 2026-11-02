@@ -1158,16 +1158,45 @@ export function filter30DaySignals(signals: TradingSignal[], deletedIds?: string
 
   // Deduplicate by ID (preserving most recent or updated outcome status) and sanitize signal texts
   const map = new Map<string, TradingSignal>();
+  const statusRank: Record<string, number> = {
+    PENDING: 1,
+    ACTIVE: 2,
+    RUNNING: 3,
+    TP1_HIT: 4,
+    TP2_HIT: 5,
+    TP3_HIT: 6,
+    SL_HIT: 6,
+    CANCELLED: 6,
+  };
+
   for (const s of validSignals) {
     const cleanS = sanitizeSignal(s);
     const existing = map.get(cleanS.id);
     if (!existing) {
       map.set(cleanS.id, cleanS);
     } else {
-      const isAdvanced = cleanS.outcomeStatus && cleanS.outcomeStatus !== 'PENDING' && existing.outcomeStatus === 'PENDING';
-      if (isAdvanced) {
-        map.set(cleanS.id, cleanS);
-      }
+      const existingRank = statusRank[existing.outcomeStatus || 'PENDING'] || 1;
+      const cleanRank = statusRank[cleanS.outcomeStatus || 'PENDING'] || 1;
+      
+      const merged: TradingSignal = {
+        ...existing,
+        ...cleanS,
+        mt5Placed: cleanS.mt5Placed ?? existing.mt5Placed,
+        mt5PlacedAt: cleanS.mt5PlacedAt ?? existing.mt5PlacedAt,
+        ninjaTraderPlaced: cleanS.ninjaTraderPlaced ?? existing.ninjaTraderPlaced,
+        ninjaTraderPlacedAt: cleanS.ninjaTraderPlacedAt ?? existing.ninjaTraderPlacedAt,
+        isEntryTriggered: cleanS.isEntryTriggered ?? existing.isEntryTriggered,
+        isBeHitAfterTp1: cleanS.isBeHitAfterTp1 ?? existing.isBeHitAfterTp1,
+        isBeHitAfterTp2: cleanS.isBeHitAfterTp2 ?? existing.isBeHitAfterTp2,
+        pnl: cleanS.pnl !== undefined ? cleanS.pnl : existing.pnl,
+        realizedProfit: cleanS.realizedProfit !== undefined ? cleanS.realizedProfit : existing.realizedProfit,
+        exitPrice: cleanS.exitPrice !== undefined ? cleanS.exitPrice : existing.exitPrice,
+        closedAt: cleanS.closedAt || existing.closedAt,
+        status: cleanRank >= existingRank ? (cleanS.status || existing.status) : existing.status,
+        outcomeStatus: cleanRank >= existingRank ? (cleanS.outcomeStatus || existing.outcomeStatus) : existing.outcomeStatus,
+        firstHitMilestone: cleanRank >= existingRank ? (cleanS.firstHitMilestone || existing.firstHitMilestone) : existing.firstHitMilestone,
+      };
+      map.set(cleanS.id, merged);
     }
   }
 

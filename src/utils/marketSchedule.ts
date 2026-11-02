@@ -9,14 +9,36 @@ export interface MarketStatusInfo {
   reasonEn: string;
 }
 
+function getNewYorkMarketParts(d: Date) {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    weekday: 'short',
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(d);
+  let weekday = 'Mon', hour = 0, minute = 0;
+  for (const p of parts) {
+    if (p.type === 'weekday') weekday = p.value;
+    else if (p.type === 'hour') hour = parseInt(p.value === '24' ? '0' : p.value, 10);
+    else if (p.type === 'minute') minute = parseInt(p.value, 10);
+  }
+  return { weekday, hour, minute };
+}
+
+export function isMarketClosedUniversal(customDate?: Date): boolean {
+  const { weekday, hour } = getNewYorkMarketParts(customDate || new Date());
+  // Financial markets close Friday 17:00 NY and open Sunday 17:00 NY (CME/Forex standard)
+  if (weekday === 'Sat') return true;
+  if (weekday === 'Fri' && hour >= 17) return true;
+  if (weekday === 'Sun' && hour < 17) return true;
+  return false;
+}
+
 export function getMarketScheduleStatus(customDate?: Date): MarketStatusInfo {
   const now = customDate || new Date();
-  const day = now.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-  const hours = now.getHours();
-
-  // Trading window: Monday 01:00 AM to Friday midnight (Saturday 00:00)
-  // Closed: Saturday (6), Sunday (0), or Monday (1) before 01:00 AM (hours < 1)
-  const isClosed = day === 6 || day === 0 || (day === 1 && hours < 1);
+  const isClosed = isMarketClosedUniversal(now);
 
   // User local timezone detection
   let timezoneName = '';
@@ -36,6 +58,8 @@ export function getMarketScheduleStatus(customDate?: Date): MarketStatusInfo {
   const userTimezoneShort = timezoneName ? timezoneName.split('/').pop()?.replace(/_/g, ' ') || gmtOffsetStr : gmtOffsetStr;
 
   // Calculate next Monday 01:00 AM local time
+  const day = now.getDay();
+  const hours = now.getHours();
   const nextMonday = new Date(now);
   let daysUntilMonday = (1 + 7 - day) % 7;
   if (daysUntilMonday === 0 && hours >= 1) {

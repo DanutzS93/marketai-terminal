@@ -268,11 +268,11 @@ export default function App() {
     return () => clearInterval(interval);
   }, [authToken]);
 
-  // Save Cloud Data to Server whenever signals, apiKeys or deletedSignalIds update (ONLY after cloud initial sync)
+  // Save Cloud Data to Server whenever signals, apiKeys or deletedSignalIds update (Debounced 1500ms to eliminate burst requests)
   useEffect(() => {
     if (!user || !authToken || !isCloudSynced) return;
 
-    const syncToCloud = async () => {
+    const timer = setTimeout(async () => {
       try {
         const clean = filter30DaySignals(signals, deletedSignalIds);
         await fetch('/api/user/sync-data', {
@@ -291,15 +291,16 @@ export default function App() {
       } catch (e) {
         console.warn('Cloud synchronization failed:', e);
       }
-    };
+    }, 1500);
 
-    syncToCloud();
+    return () => clearTimeout(timer);
   }, [signals, manualTrades, apiKeys, deletedSignalIds, user, authToken, isCloudSynced]);
 
-  // Sync active signals to MT5 & NinjaTrader bridge server endpoints (Isolated per user account)
+  // Sync active signals to MT5 & NinjaTrader bridge server endpoints (Debounced 1500ms)
   useEffect(() => {
-    const syncToBridges = async () => {
-      if (!authToken) return;
+    if (!authToken || !isCloudSynced) return;
+
+    const timer = setTimeout(async () => {
       try {
         await Promise.all([
           fetch('/api/mt5/signals/sync', {
@@ -322,9 +323,10 @@ export default function App() {
       } catch (e) {
         // silent
       }
-    };
-    syncToBridges();
-  }, [signals, authToken]);
+    }, 1500);
+
+    return () => clearTimeout(timer);
+  }, [signals, authToken, isCloudSynced]);
 
   const handleAuthSuccess = async (newUser: UserProfile, newAuthToken: string) => {
     setUser(newUser);
@@ -1041,15 +1043,15 @@ export default function App() {
           newlyCancelledIds.push(sig.id);
         }
 
-        if (
+        const statusOrMilestoneChanged =
           evalResult.outcomeStatus !== sig.outcomeStatus ||
           evalResult.firstHitMilestone !== sig.firstHitMilestone ||
           evalResult.isEntryTriggered !== sig.isEntryTriggered ||
           evalResult.isBeHitAfterTp1 !== sig.isBeHitAfterTp1 ||
           evalResult.isBeHitAfterTp2 !== sig.isBeHitAfterTp2 ||
-          (liveQuote && liveQuote.price && sig.currentMarketPrice !== liveQuote.price) ||
-          (isNewlyCancelled && sig.status !== 'CANCELLED')
-        ) {
+          (isNewlyCancelled && sig.status !== 'CANCELLED');
+
+        if (statusOrMilestoneChanged) {
           hasChanges = true;
           return {
             ...sig,
@@ -1193,6 +1195,50 @@ export default function App() {
     let pingInterval: any = null;
     let isDisposed = false;
 
+    // Dedicated WebSocket connection with seamless SSE fallback (no duplicate simultaneous streams)
+    let eventSource: EventSource | null = null;
+    let wsConnected = false;
+
+    const stopSseFallback = () => {
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+      }
+    };
+
+    const startSseFallback = () => {
+      if (eventSource || isDisposed || wsConnected) return;
+      try {
+        const queryParams = new URLSearchParams({
+          lseKey: apiKeys.lseKey || 'lse_live_9d965aeeefa18fa9c7225990bf4e4f4c',
+        });
+        eventSource = new EventSource(`/api/market-stream?${queryParams.toString()}`);
+
+        eventSource.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.quotes) {
+              setQuotes((prev) => ({
+                ...prev,
+                ...data.quotes,
+              }));
+            }
+            if (data.apiErrors) {
+              setApiErrors(data.apiErrors);
+            }
+          } catch (e) {
+            // ignore
+          }
+        };
+
+        eventSource.onerror = () => {
+          // Reconnect handled automatically by browser EventSource
+        };
+      } catch (e) {
+        console.warn('EventSource initialization:', e);
+      }
+    };
+
     const connectWs = () => {
       if (isDisposed) return;
       try {
@@ -1202,6 +1248,8 @@ export default function App() {
 
         ws.onopen = () => {
           console.log('⚡ Connected to MarketAI Live WebSocket (LSE Real-Time Feed)');
+          wsConnected = true;
+          stopSseFallback();
           if (pingInterval) clearInterval(pingInterval);
           pingInterval = setInterval(() => {
             if (ws && ws.readyState === WebSocket.OPEN) {
@@ -1223,17 +1271,23 @@ export default function App() {
         };
 
         ws.onclose = () => {
+          wsConnected = false;
           if (pingInterval) clearInterval(pingInterval);
           if (!isDisposed) {
+            startSseFallback();
             reconnectTimer = setTimeout(connectWs, 3000);
           }
         };
 
         ws.onerror = () => {
+          wsConnected = false;
           if (ws) ws.close();
+          startSseFallback();
         };
       } catch (err) {
+        wsConnected = false;
         console.warn('WS connect error:', err);
+        startSseFallback();
         if (!isDisposed) {
           reconnectTimer = setTimeout(connectWs, 5000);
         }
@@ -1241,38 +1295,6 @@ export default function App() {
     };
 
     connectWs();
-
-    // Fallback SSE streaming
-    let eventSource: EventSource | null = null;
-    try {
-      const queryParams = new URLSearchParams({
-        lseKey: apiKeys.lseKey || 'lse_live_9d965aeeefa18fa9c7225990bf4e4f4c',
-      });
-      eventSource = new EventSource(`/api/market-stream?${queryParams.toString()}`);
-
-      eventSource.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.quotes) {
-            setQuotes((prev) => ({
-              ...prev,
-              ...data.quotes,
-            }));
-          }
-          if (data.apiErrors) {
-            setApiErrors(data.apiErrors);
-          }
-        } catch (e) {
-          // ignore
-        }
-      };
-
-      eventSource.onerror = () => {
-        // Fallback or reconnect handles automatically
-      };
-    } catch (e) {
-      console.warn('EventSource initialization:', e);
-    }
 
     const interval = setInterval(() => {
       fetchMarketQuotes();

@@ -252,6 +252,8 @@ export interface PositionCalculationResult {
   tp2Profit: number;
   tp3Profit: number;
   lossAtSL: number;
+  isMinLotRiskWarning?: boolean;
+  riskWarningMessage?: string;
 }
 
 export function calculatePositionMetrics({
@@ -298,11 +300,22 @@ export function calculatePositionMetrics({
 
   // Clamping and standard MT5 rounding (to lotStep, usually 2 decimals)
   let roundedLots = 0;
+  let isMinLotRiskWarning = false;
+  let riskWarningMessage: string | undefined = undefined;
+
   if (calculatedLots > 0) {
     const steps = Math.floor(calculatedLots / spec.lotStep);
     roundedLots = Number((steps * spec.lotStep).toFixed(2));
     if (roundedLots < spec.minLot && calculatedLots > 0) {
+      const minLotDollarRisk = spec.minLot * priceDistance * pointValue;
+      if (minLotDollarRisk > dollarRisk * 2.0 && dollarRisk > 0) {
+        isMinLotRiskWarning = true;
+        riskWarningMessage = `Atenție: Lotul minim pentru ${spec.symbol} (${spec.minLot}) implică un risc de $${minLotDollarRisk.toFixed(2)}, depășind bugetul configurat de $${dollarRisk.toFixed(2)}.`;
+      }
       roundedLots = spec.minLot;
+    }
+    if (roundedLots > spec.maxLot) {
+      roundedLots = spec.maxLot;
     }
   }
 
@@ -364,6 +377,8 @@ export function calculatePositionMetrics({
     tp2Profit,
     tp3Profit,
     lossAtSL,
+    isMinLotRiskWarning,
+    riskWarningMessage,
   };
 }
 

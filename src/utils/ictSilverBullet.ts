@@ -27,11 +27,26 @@ export interface IctSilverBulletStatus {
 export function getIctSilverBulletStatus(): IctSilverBulletStatus {
   const now = new Date();
 
-  // Get current time in New York (EST/EDT)
-  const nyDateStr = now.toLocaleString('en-US', { timeZone: 'America/New_York' });
-  const nyDate = new Date(nyDateStr);
+  // Get current time in New York (EST/EDT) safely via Intl parts
+  const nyFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    hour: 'numeric',
+    minute: 'numeric',
+    timeZoneName: 'shortOffset',
+    hour12: false,
+  });
+  const parts = nyFormatter.formatToParts(now);
+  let nyHours = 0;
+  let nyOffsetHours = -4; // Default EDT
 
-  const nyHours = nyDate.getHours();
+  for (const p of parts) {
+    if (p.type === 'hour') {
+      nyHours = parseInt(p.value === '24' ? '0' : p.value, 10);
+    } else if (p.type === 'timeZoneName') {
+      const match = p.value.match(/GMT([+-]\d+)/);
+      if (match) nyOffsetHours = parseInt(match[1], 10);
+    }
+  }
 
   // Define the 3 canonical 1-hour scalp windows (in NY Time)
   // 1. London Open: 3:00 AM - 4:00 AM NY
@@ -43,24 +58,10 @@ export function getIctSilverBulletStatus(): IctSilverBulletStatus {
     { id: 'ny_pm', name: 'NY PM Scalp Window', nameRo: 'New York PM (14:00 - 15:00 NY)', nyStartHour: 14, nyEndHour: 15 },
   ];
 
-  // Map each session to local user time
+  // Map each session to local user time using precise UTC offsets
   const allSessionsLocal: SilverBulletSessionInfo[] = sessionDefs.map((def) => {
-    // Create Date objects representing NY start/end for today
-    const startNyDate = new Date(nyDate);
-    startNyDate.setHours(def.nyStartHour, 0, 0, 0);
-
-    const endNyDate = new Date(nyDate);
-    endNyDate.setHours(def.nyEndHour, 0, 0, 0);
-
-    // Calculate time difference between UTC/local and NY
-    const diffMs = now.getTime() - nyDate.getTime();
-
-    // Reconstruct local equivalent timestamp
-    const localStartMs = startNyDate.getTime() + diffMs;
-    const localEndMs = endNyDate.getTime() + diffMs;
-
-    const localStartDate = new Date(localStartMs);
-    const localEndDate = new Date(localEndMs);
+    const localStartDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), def.nyStartHour - nyOffsetHours, 0, 0));
+    const localEndDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), def.nyEndHour - nyOffsetHours, 0, 0));
 
     const isActive = nyHours === def.nyStartHour;
 
@@ -97,12 +98,9 @@ export function getIctSilverBulletStatus(): IctSilverBulletStatus {
     daysOffset = 1;
   }
 
-  // Calculate countdown to next session start
-  const nextTargetNy = new Date(nyDate);
-  nextTargetNy.setDate(nextTargetNy.getDate() + daysOffset);
-  nextTargetNy.setHours(nextSessionDef.nyStartHour, 0, 0, 0);
-
-  const countdownMs = Math.max(0, nextTargetNy.getTime() - nyDate.getTime());
+  // Calculate countdown to next session start in UTC
+  const nextTargetUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + daysOffset, nextSessionDef.nyStartHour - nyOffsetHours, 0, 0));
+  const countdownMs = Math.max(0, nextTargetUtc.getTime() - now.getTime());
   const countdownSeconds = Math.floor(countdownMs / 1000);
 
   const nextSessionInfo = allSessionsLocal.find((s) => s.nyStartHour === nextSessionDef.nyStartHour) || allSessionsLocal[0];
@@ -118,7 +116,7 @@ export function getIctSilverBulletStatus(): IctSilverBulletStatus {
     allSessionsLocal,
     countdownSeconds,
     userTimezone,
-    currentNyTimeStr: nyDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
+    currentNyTimeStr: now.toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
   };
 }
 

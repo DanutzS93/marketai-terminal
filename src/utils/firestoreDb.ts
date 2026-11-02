@@ -62,7 +62,9 @@ export interface StoredInviteCode {
 }
 
 const DB_FILE = path.join(process.cwd(), 'users_cloud_db.json');
+const DB_BACKUP_FILE = path.join(process.cwd(), 'users_cloud_db.json.bak');
 const INVITE_CODES_FILE = path.join(process.cwd(), 'invite_codes_db.json');
+const INVITE_CODES_BACKUP_FILE = path.join(process.cwd(), 'invite_codes_db.json.bak');
 
 // In-memory cache synced with Supabase and local disk for fast 0ms access
 let usersCache: Record<string, StoredUser> = readLocalUsersFile();
@@ -126,51 +128,118 @@ function sanitizeUserObj(user: StoredUser): StoredUser {
   return { ...user, signals: cleanSignals || [], deletedSignalIds: deletedIds, tradeJournal: cleanTradeJournal };
 }
 
-function readLocalUsersFile(): Record<string, StoredUser> {
+function parseUsersJsonSafe(raw: string): Record<string, StoredUser> | null {
   try {
-    if (fs.existsSync(DB_FILE)) {
-      const data = fs.readFileSync(DB_FILE, 'utf-8');
-      const parsed = JSON.parse(data);
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
       const sanitized: Record<string, StoredUser> = {};
       for (const [k, v] of Object.entries(parsed)) {
-        sanitized[k] = sanitizeUserObj(v as StoredUser);
+        if (v && typeof v === 'object') {
+          sanitized[k] = sanitizeUserObj(v as StoredUser);
+        }
       }
       return sanitized;
     }
   } catch (e) {
-    console.warn('⚠️ Could not read users_cloud_db.json:', e);
+    console.warn('⚠️ JSON parse error on users DB payload:', e);
   }
+  return null;
+}
+
+function readLocalUsersFile(): Record<string, StoredUser> {
+  // 1. Try reading primary DB file
+  if (fs.existsSync(DB_FILE)) {
+    try {
+      const data = fs.readFileSync(DB_FILE, 'utf-8');
+      if (data && data.trim().length > 0) {
+        const parsed = parseUsersJsonSafe(data);
+        if (parsed && Object.keys(parsed).length > 0) {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.warn('⚠️ Could not read primary users_cloud_db.json:', e);
+    }
+  }
+
+  // 2. Fallback to backup if primary failed or was corrupted
+  if (fs.existsSync(DB_BACKUP_FILE)) {
+    try {
+      const bakData = fs.readFileSync(DB_BACKUP_FILE, 'utf-8');
+      const bakParsed = parseUsersJsonSafe(bakData);
+      if (bakParsed && Object.keys(bakParsed).length > 0) {
+        console.warn('⚠️ Restored users from backup file users_cloud_db.json.bak!');
+        return bakParsed;
+      }
+    } catch (bakErr) {
+      console.warn('⚠️ Could not read users backup file:', bakErr);
+    }
+  }
+
   return {};
 }
 
-function writeLocalUsersFile(users: Record<string, StoredUser>): void {
+function writeAtomicJsonFile(filePath: string, backupPath: string, data: any): void {
   try {
-    fs.writeFile(DB_FILE, JSON.stringify(users, null, 2), 'utf-8', (err) => {
-      if (err) console.warn('⚠️ Could not write users_cloud_db.json:', err);
-    });
+    const jsonStr = JSON.stringify(data, null, 2);
+    const tmpPath = `${filePath}.${Date.now()}.${Math.random().toString(36).substring(2, 6)}.tmp`;
+
+    // Write to unique temporary file first
+    fs.writeFileSync(tmpPath, jsonStr, 'utf-8');
+
+    // Create / update backup copy of current valid file before replacement
+    if (fs.existsSync(filePath)) {
+      try {
+        fs.copyFileSync(filePath, backupPath);
+      } catch (cpErr) {
+        // Non-blocking backup warning
+      }
+    }
+
+    // Atomic rename replaces the target file in one POSIX operation
+    fs.renameSync(tmpPath, filePath);
   } catch (e) {
-    console.warn('⚠️ Could not write users_cloud_db.json:', e);
+    console.error(`❌ Atomic write failed for ${filePath}:`, e);
   }
 }
 
-function readLocalInviteCodesFile(): Record<string, StoredInviteCode> {
-  try {
-    if (fs.existsSync(INVITE_CODES_FILE)) {
-      const data = fs.readFileSync(INVITE_CODES_FILE, 'utf-8');
-      return JSON.parse(data);
+function writeLocalUsersFile(users: Record<string, StoredUser>): void {
+  if (!users || typeof users !== 'object' || Object.keys(users).length === 0) {
+    // Safety guard: never overwrite DB with an empty object if cache was populated
+    if (usersCache && Object.keys(usersCache).length > 0) {
+      console.warn('⚠️ Aborting writeLocalUsersFile: Attempted to write empty users DB over populated cache!');
+      return;
     }
-  } catch (e) {
-    console.warn('⚠️ Could not read invite_codes_db.json:', e);
   }
+  writeAtomicJsonFile(DB_FILE, DB_BACKUP_FILE, users);
+}
+
+function readLocalInviteCodesFile(): Record<string, StoredInviteCode> {
+  if (fs.existsSync(INVITE_CODES_FILE)) {
+    try {
+      const data = fs.readFileSync(INVITE_CODES_FILE, 'utf-8');
+      if (data && data.trim().length > 0) {
+        const parsed = JSON.parse(data);
+        if (parsed && typeof parsed === 'object') return parsed;
+      }
+    } catch (e) {
+      console.warn('⚠️ Could not read invite_codes_db.json:', e);
+    }
+  }
+
+  if (fs.existsSync(INVITE_CODES_BACKUP_FILE)) {
+    try {
+      const bakData = fs.readFileSync(INVITE_CODES_BACKUP_FILE, 'utf-8');
+      const parsed = JSON.parse(bakData);
+      if (parsed && typeof parsed === 'object') return parsed;
+    } catch (e) {}
+  }
+
   return {};
 }
 
 function writeLocalInviteCodesFile(codes: Record<string, StoredInviteCode>): void {
-  try {
-    fs.writeFileSync(INVITE_CODES_FILE, JSON.stringify(codes, null, 2), 'utf-8');
-  } catch (e) {
-    console.warn('⚠️ Could not write invite_codes_db.json:', e);
-  }
+  writeAtomicJsonFile(INVITE_CODES_FILE, INVITE_CODES_BACKUP_FILE, codes);
 }
 
 /**
@@ -315,6 +384,19 @@ async function flushPendingUsers() {
       saveUserToSupabase(user).catch((e) => console.warn('Supabase save background error:', e));
     }
   }
+}
+
+// Flush pending disk writes synchronously on process termination to prevent data loss
+if (typeof process !== 'undefined') {
+  const syncFlushOnExit = () => {
+    if (pendingPersistUsers.size > 0) {
+      pendingPersistUsers.clear();
+      writeLocalUsersFile(usersCache);
+    }
+  };
+  process.on('SIGINT', () => { syncFlushOnExit(); process.exit(0); });
+  process.on('SIGTERM', () => { syncFlushOnExit(); process.exit(0); });
+  process.on('beforeExit', () => { syncFlushOnExit(); });
 }
 
 export async function saveUserToFirestore(user: StoredUser, immediate = false): Promise<void> {

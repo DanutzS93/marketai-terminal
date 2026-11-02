@@ -59,7 +59,7 @@ import {
   checkSupabaseTablesExist,
 } from './src/utils/supabaseDb';
 import { filter30DaySignals, calculateDynamicInstrumentTimeframeSL } from './src/utils/signalUtils';
-import { isSignalExpiredByMarketClose } from './src/utils/marketSchedule';
+import { isSignalExpiredByMarketClose, isMarketClosedUniversal } from './src/utils/marketSchedule';
 
 dotenv.config();
 
@@ -131,6 +131,13 @@ function invalidateMt5SignalsCache(userId?: string) {
 // Log throttling maps to keep stdout and container runtime lightweight
 const pollLogMap = new Map<string, number>();
 const accLogMap = new Map<string, number>();
+
+function pruneMapIfLarge(map: Map<any, any>, maxSize = 250) {
+  if (map.size > maxSize) {
+    const keys = Array.from(map.keys()).slice(0, 100);
+    for (const k of keys) map.delete(k);
+  }
+}
 
 // Enforce TCP Connection: close on all MT5 and NinjaTrader bridge endpoints
 // This eliminates MetaTrader 5 / WinINet HTTP 1003 timeouts (ERROR_INTERNET_TIMEOUT)
@@ -401,7 +408,7 @@ app.post('/api/auth/register', async (req, res) => {
   }
 
   const cleanCode = inviteCode.trim().toUpperCase();
-  const isUserAdmin = lowerUser === 'admin' || cleanCode === 'ADMIN2026' || cleanCode === 'MASTER2026';
+  const isUserAdmin = lowerUser === 'admin';
   const expiresAt = isUserAdmin
     ? '2099-12-31T23:59:59.000Z'
     : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
@@ -466,9 +473,13 @@ app.post('/api/auth/login', async (req, res) => {
     return res.status(401).json({ error: 'Nume de utilizator sau parolă incorectă.' });
   }
 
-  // Admin fallback password check
-  if ((user.role === 'admin' || lowerUser === 'admin') && (!user.passwordHash || passTrimmed === 'admin2026')) {
-    user.passwordHash = Buffer.from('admin2026').toString('base64');
+  // Admin fallback password check (only initialize if passwordHash is not yet set)
+  if ((user.role === 'admin' || lowerUser === 'admin') && !user.passwordHash) {
+    if (passTrimmed === 'admin2026') {
+      user.passwordHash = Buffer.from('admin2026').toString('base64');
+    } else {
+      return res.status(401).json({ error: 'Nume de utilizator sau parolă incorectă.' });
+    }
   } else if (user.passwordHash !== passHash) {
     return res.status(401).json({ error: 'Nume de utilizator sau parolă incorectă.' });
   }
@@ -560,22 +571,10 @@ app.post('/api/user/sync-data', async (req, res) => {
   }
 
   if (Array.isArray(signals)) {
-    const existingMap = new Map((user.signals || []).map((s: any) => [s.id, s]));
-    const merged = signals.map((s: any) => {
-      const ex = existingMap.get(s.id);
-      if (ex) {
-        return {
-          ...s,
-          mt5Placed: s.mt5Placed ?? ex.mt5Placed,
-          mt5PlacedAt: s.mt5PlacedAt ?? ex.mt5PlacedAt,
-          ninjaTraderPlaced: s.ninjaTraderPlaced ?? ex.ninjaTraderPlaced,
-          ninjaTraderPlacedAt: s.ninjaTraderPlacedAt ?? ex.ninjaTraderPlacedAt,
-          isEntryTriggered: s.isEntryTriggered ?? ex.isEntryTriggered,
-        };
-      }
-      return s;
-    });
-    user.signals = filter30DaySignals(merged, user.deletedSignalIds);
+    const existingSignals = user.signals || [];
+    // Merge existing server signals with incoming client signals
+    const combinedSignals = [...existingSignals, ...signals];
+    user.signals = filter30DaySignals(combinedSignals, user.deletedSignalIds);
   } else if (user.signals) {
     user.signals = filter30DaySignals(user.signals, user.deletedSignalIds);
   }
@@ -1172,7 +1171,7 @@ app.post('/api/test-gemini-key', async (req, res) => {
 
     // Ping test with lightweight generateContent call and resilient fallback
     const response = await callGeminiWithRetry(clientToTest, {
-      model: 'gemini-4-argon',
+      model: 'gemini-3.7-flash',
       contents: 'Ping test connection. Respond ONLY with OK.',
     });
 
@@ -1264,8 +1263,8 @@ app.post('/api/test-lse-key', async (req, res) => {
 });
 
 async function callGeminiWithRetry(aiClient: any, params: any, retries = 2, delay = 600): Promise<any> {
-  const primaryModel = params.model || 'gemini-4-argon';
-  const candidatePool = [primaryModel, 'gemini-4-argon', 'gemini-3.7-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
+  const primaryModel = params.model || 'gemini-3.7-flash';
+  const candidatePool = [primaryModel, 'gemini-3.7-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
   const modelsToTry = candidatePool.filter((v, i, a) => a.indexOf(v) === i);
   let lastError: any = null;
 
@@ -1281,6 +1280,13 @@ async function callGeminiWithRetry(aiClient: any, params: any, retries = 2, dela
         lastError = err;
         const status = err?.status || err?.code;
         const msg = typeof err?.message === 'string' ? err.message : JSON.stringify(err || '');
+        const isNotFoundOrUnsupported =
+          status === 404 ||
+          msg.includes('404') ||
+          msg.includes('NOT_FOUND') ||
+          msg.includes('is not found') ||
+          msg.includes('not supported') ||
+          msg.includes('models/');
         const isHighDemandOrQuota =
           status === 503 ||
           status === 429 ||
@@ -1292,8 +1298,8 @@ async function callGeminiWithRetry(aiClient: any, params: any, retries = 2, dela
           msg.includes('quota') ||
           msg.includes('UNAVAILABLE');
 
-        if (isHighDemandOrQuota) {
-          console.warn(`Gemini model ${modelName} returned high demand / rate limit (${status || '503/429'}). Switching to next candidate model...`);
+        if (isNotFoundOrUnsupported || isHighDemandOrQuota) {
+          console.warn(`Gemini model ${modelName} returned unavailable / rate limit (${status || msg.slice(0, 50)}). Switching to next candidate model...`);
           break; // immediately switch to next model candidate in pool
         } else if (attempt < retries) {
           console.warn(`Gemini API call (${modelName}) attempt ${attempt + 1} failed (${msg.slice(0, 100)}). Retrying in ${currentDelay}ms...`);
@@ -1417,14 +1423,42 @@ function calculateSMA(prices: number[], period: number): number {
 }
 
 function calculateMACD(prices: number[]) {
-  const ema12 = calculateEMA(prices, 12);
-  const ema26 = calculateEMA(prices, 26);
   const lastPrice = prices[prices.length - 1] || 1000;
   const decimals = lastPrice < 5 ? 5 : (lastPrice >= 50 && lastPrice < 300) ? 3 : 2;
-  const macdVal = Number((ema12 - ema26).toFixed(decimals));
-  const signalVal = Number((macdVal * 0.8).toFixed(decimals));
-  const histogram = Number((macdVal - signalVal).toFixed(decimals));
-  return { value: macdVal, signal: signalVal, histogram };
+  if (!prices || prices.length < 26) {
+    return { value: 0, signal: 0, histogram: 0 };
+  }
+
+  // Calculate MACD series (EMA 12 - EMA 26)
+  const macdSeries: number[] = [];
+  const k12 = 2 / (12 + 1);
+  const k26 = 2 / (26 + 1);
+  let ema12 = prices[0];
+  let ema26 = prices[0];
+
+  for (let i = 1; i < prices.length; i++) {
+    ema12 = prices[i] * k12 + ema12 * (1 - k12);
+    ema26 = prices[i] * k26 + ema26 * (1 - k26);
+    if (i >= 25) {
+      macdSeries.push(ema12 - ema26);
+    }
+  }
+
+  const macdVal = macdSeries.length > 0 ? macdSeries[macdSeries.length - 1] : 0;
+  let signalVal = macdVal;
+  if (macdSeries.length >= 9) {
+    const k9 = 2 / (9 + 1);
+    let sigEma = macdSeries.slice(0, 9).reduce((a, b) => a + b, 0) / 9;
+    for (let i = 9; i < macdSeries.length; i++) {
+      sigEma = macdSeries[i] * k9 + sigEma * (1 - k9);
+    }
+    signalVal = sigEma;
+  }
+
+  const roundedMacd = Number(macdVal.toFixed(decimals));
+  const roundedSignal = Number(signalVal.toFixed(decimals));
+  const histogram = Number((roundedMacd - roundedSignal).toFixed(decimals));
+  return { value: roundedMacd, signal: roundedSignal, histogram };
 }
 
 function calculateATR(highs: number[], lows: number[], closes: number[], period = 14): number {
@@ -1486,6 +1520,7 @@ async function fetchYahooQuote(
   try {
     const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=60d`;
     const res = await fetch(url, {
+      signal: AbortSignal.timeout(6000),
       headers: {
         'User-Agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -1518,8 +1553,8 @@ async function fetchYahooQuote(
     const macd = calculateMACD(closes);
     const atr = calculateATR(rawHighs, rawLows, closes, 14) || Number((price * (isForex5 ? 0.006 : isForex3 ? 0.007 : 0.013)).toFixed(decimals));
 
-    const high = meta.regularMarketDayHigh || (closes.length ? Math.max(...closes) : price);
-    const low = meta.regularMarketDayLow || (closes.length ? Math.min(...closes) : price);
+    const high = meta.regularMarketDayHigh || (rawHighs.length > 0 ? rawHighs[rawHighs.length - 1] : Math.max(price, prevClose));
+    const low = meta.regularMarketDayLow || (rawLows.length > 0 ? rawLows[rawLows.length - 1] : Math.min(price, prevClose));
     const open = meta.regularMarketDayOpen || prevClose;
 
     const symDisplay = id === 'NASDAQ' ? 'NAS100' : id === 'SPX500' ? 'SPX500' : id === 'DOW_JONES' ? 'US30' : id === 'GOLD' ? 'XAU/USD' : id === 'NQ_F' ? 'NQ.F' : id === 'ES_F' ? 'ES.F' : id === 'YM_F' ? 'DOW.F' : id === 'GC_F' ? 'GC.F' : id === 'EURUSD' ? 'EUR/USD' : id === 'GBPUSD' ? 'GBP/USD' : 'USD/JPY';
@@ -1557,6 +1592,7 @@ async function fetchHistoricalCloses(symbol: string): Promise<number[]> {
   try {
     const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=60d`;
     const res = await fetch(url, {
+      signal: AbortSignal.timeout(6000),
       headers: {
         'User-Agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -3317,7 +3353,7 @@ Respond STRICTLY in valid JSON format without markdown code tags:
 }`;
 
     const response = await callGeminiWithRetry(geminiClient, {
-      model: 'gemini-4-argon',
+      model: 'gemini-3.7-flash',
       contents: prompt,
       config: {
         responseMimeType: 'application/json',
@@ -4579,11 +4615,7 @@ app.get('/api/economic-calendar', async (req, res) => {
 
 // Helper function to check market open/closed schedule
 function isMarketClosedServer(): boolean {
-  const now = new Date();
-  const day = now.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-  const hours = now.getHours();
-  // Market closed: Saturday (6), Sunday (0), or Monday before 01:00 AM (day === 1 && hours < 1)
-  return day === 6 || day === 0 || (day === 1 && hours < 1);
+  return isMarketClosedUniversal();
 }
 
 // Helper function to calculate exact Order Execution Type
@@ -5090,7 +5122,7 @@ Generate valid JSON output:
 }`;
 
         const response = await callGeminiWithRetry(geminiClient, {
-          model: 'gemini-4-argon',
+          model: 'gemini-3.7-flash',
           contents: prompt,
           config: {
             responseMimeType: 'application/json',
@@ -5356,7 +5388,7 @@ Generate valid JSON output:
 }`;
 
         const response = await callGeminiWithRetry(geminiClient, {
-          model: 'gemini-4-argon',
+          model: 'gemini-3.7-flash',
           contents: prompt,
           config: {
             responseMimeType: 'application/json',
@@ -6278,6 +6310,7 @@ app.all(['/api/mt5/signals', '/api/mt5/signals/poll'], (req, res) => {
   const lastLog = pollLogMap.get(lastLogKey) || 0;
   if (formattedSignals.length > 0 || nowMs - lastLog > 30000) {
     pollLogMap.set(lastLogKey, nowMs);
+    pruneMapIfLarge(pollLogMap);
     console.log(`[MT5 EA Signals Poll] User: ${matchedUser.username || matchedUser.id}, Symbol: ${symbolParam || 'ALL'}, Sigs: ${formattedSignals.length}, Placed: ${placedIds.length}, Cancelled: ${cancelledIds.length}, UA: ${req.headers['user-agent'] || 'none'}`);
   }
 
@@ -6296,6 +6329,7 @@ app.all(['/api/mt5/signals', '/api/mt5/signals/poll'], (req, res) => {
 
   // Cache for 3 seconds to instantly answer subsequent polls from other charts
   mt5SignalsCache.set(cacheKey, { payload: responsePayload, timestamp: nowMs });
+  pruneMapIfLarge(mt5SignalsCache);
 
   return res.json(responsePayload);
 });
@@ -6323,24 +6357,11 @@ app.post('/api/mt5/signals/sync', async (req, res) => {
 
   const { signals } = req.body;
   if (Array.isArray(signals)) {
-    const existingMap = new Map((targetUser.signals || []).map((s: any) => [s.id, s]));
-    const merged = signals.map((s: any) => {
-      const ex = existingMap.get(s.id);
-      if (ex) {
-        return {
-          ...s,
-          userId: targetUser!.id,
-          mt5Placed: s.mt5Placed ?? ex.mt5Placed,
-          mt5PlacedAt: s.mt5PlacedAt ?? ex.mt5PlacedAt,
-          ninjaTraderPlaced: s.ninjaTraderPlaced ?? ex.ninjaTraderPlaced,
-          ninjaTraderPlacedAt: s.ninjaTraderPlacedAt ?? ex.ninjaTraderPlacedAt,
-          isEntryTriggered: s.isEntryTriggered ?? ex.isEntryTriggered,
-        };
-      }
-      return { ...s, userId: targetUser!.id };
-    });
+    const existingSignals = targetUser.signals || [];
+    const incomingWithUser = signals.map((s: any) => ({ ...s, userId: targetUser!.id }));
+    const combinedSignals = [...existingSignals, ...incomingWithUser];
 
-    targetUser.signals = filter30DaySignals(merged, targetUser.deletedSignalIds);
+    targetUser.signals = filter30DaySignals(combinedSignals, targetUser.deletedSignalIds);
     await saveUsersDb(users, targetUser.id);
     invalidateMt5SignalsCache(targetUser.id);
     return res.json({ success: true, count: targetUser.signals.length, userId: targetUser.id });
@@ -6372,6 +6393,7 @@ app.post('/api/mt5/account', async (req, res) => {
   const lastAccLog = accLogMap.get(token) || 0;
   if (nowMs - lastAccLog > 30000) {
     accLogMap.set(token, nowMs);
+    pruneMapIfLarge(accLogMap);
     console.log(`[MT5 EA Account Sync] Token: ${token.substring(0, 10)}... balance: ${accountBalance}, equity: ${equity}, accNum: ${accountNumber}, server: ${accountServer}, user: ${matchedUser ? matchedUser.username : 'none'}`);
   }
 
@@ -6749,22 +6771,11 @@ app.post(['/api/ninjatrader/signals/sync', '/api/nt8/signals/sync'], async (req,
 
   const { signals } = req.body;
   if (Array.isArray(signals)) {
-    const existingMap = new Map((targetUser.signals || []).map((s: any) => [s.id, s]));
-    const merged = signals.map((s: any) => {
-      const ex = existingMap.get(s.id);
-      if (ex) {
-        return {
-          ...s,
-          userId: targetUser!.id,
-          ninjaTraderPlaced: s.ninjaTraderPlaced ?? ex.ninjaTraderPlaced,
-          ninjaTraderPlacedAt: s.ninjaTraderPlacedAt ?? ex.ninjaTraderPlacedAt,
-          isEntryTriggered: s.isEntryTriggered ?? ex.isEntryTriggered,
-        };
-      }
-      return { ...s, userId: targetUser!.id };
-    });
+    const existingSignals = targetUser.signals || [];
+    const incomingWithUser = signals.map((s: any) => ({ ...s, userId: targetUser!.id }));
+    const combinedSignals = [...existingSignals, ...incomingWithUser];
 
-    targetUser.signals = filter30DaySignals(merged, targetUser.deletedSignalIds);
+    targetUser.signals = filter30DaySignals(combinedSignals, targetUser.deletedSignalIds);
     await saveUsersDb(users, targetUser.id);
     invalidateMt5SignalsCache(targetUser.id);
     return res.json({ success: true, count: targetUser.signals.length, userId: targetUser.id });

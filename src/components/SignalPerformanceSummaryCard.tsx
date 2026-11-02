@@ -52,19 +52,11 @@ export const SignalPerformanceSummaryCard: React.FC<SignalPerformanceSummaryCard
       ? activeSignalList
       : activeSignalList.filter((s) => s.instrumentId === selectedAssetFilter);
 
-  // Statistics calculation
-  const tp1Count = filteredList.filter(
-    (s) => s.outcomeStatus === 'TP1_HIT' || s.firstHitMilestone === 'TP1'
-  ).length;
-  const tp2Count = filteredList.filter(
-    (s) => s.outcomeStatus === 'TP2_HIT' || s.firstHitMilestone === 'TP2'
-  ).length;
-  const tp3Count = filteredList.filter(
-    (s) => s.outcomeStatus === 'TP3_HIT' || s.firstHitMilestone === 'TP3'
-  ).length;
-  const slCount = filteredList.filter(
-    (s) => s.outcomeStatus === 'SL_HIT' || s.firstHitMilestone === 'SL'
-  ).length;
+  // Statistics calculation (strictly mutually exclusive per trade to avoid duplicate counting)
+  const tp1Count = filteredList.filter((s) => s.outcomeStatus === 'TP1_HIT').length;
+  const tp2Count = filteredList.filter((s) => s.outcomeStatus === 'TP2_HIT').length;
+  const tp3Count = filteredList.filter((s) => s.outcomeStatus === 'TP3_HIT').length;
+  const slCount = filteredList.filter((s) => s.outcomeStatus === 'SL_HIT').length;
   const runningCount = filteredList.filter(
     (s) =>
       s.outcomeStatus === 'RUNNING' ||
@@ -108,21 +100,15 @@ export const SignalPerformanceSummaryCard: React.FC<SignalPerformanceSummaryCard
 
   const instrumentBreakdown = baseInstruments.map((item) => {
     const assetSigs = activeSignalList.filter((s) => s.instrumentId === item.id);
-    const w = assetSigs.filter(
-      (s) =>
-        ['TP1_HIT', 'TP2_HIT', 'TP3_HIT'].includes(s.outcomeStatus || '') ||
-        ['TP1', 'TP2', 'TP3'].includes(s.firstHitMilestone || '')
-    ).length;
-    const l = assetSigs.filter(
-      (s) => s.outcomeStatus === 'SL_HIT' || s.firstHitMilestone === 'SL'
-    ).length;
+    const w = assetSigs.filter((s) => ['TP1_HIT', 'TP2_HIT', 'TP3_HIT'].includes(s.outcomeStatus || '')).length;
+    const l = assetSigs.filter((s) => s.outcomeStatus === 'SL_HIT').length;
     const closed = w + l;
     return {
       ...item,
       wins: w,
       losses: l,
       total: assetSigs.length,
-      winRate: closed > 0 ? Math.round((w / closed) * 100) : 87,
+      winRate: closed > 0 ? Math.round((w / closed) * 100) : 0,
     };
   });
 

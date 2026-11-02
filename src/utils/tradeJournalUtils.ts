@@ -316,7 +316,7 @@ export function getDailyJournalMap(entries: TradeJournalEntry[]): Record<string,
       day.totalRR += entry.rrAchieved || 0;
     } else if (entry.status === 'LOSS') {
       day.lossCount++;
-      day.totalRR += entry.rrAchieved || -1;
+      day.totalRR += -Math.abs(entry.rrAchieved !== undefined && !isNaN(entry.rrAchieved) ? entry.rrAchieved : 1);
     } else if (entry.status === 'BREAKEVEN') {
       day.beCount++;
     } else if (entry.status === 'RUNNING') {
@@ -387,7 +387,7 @@ export function calculateMonthlyStats(
       totalWinRR += entry.rrAchieved || 0;
     } else if (entry.status === 'LOSS') {
       lossCount++;
-      totalNetRR += entry.rrAchieved || -1;
+      totalNetRR += -Math.abs(entry.rrAchieved !== undefined && !isNaN(entry.rrAchieved) ? entry.rrAchieved : 1);
     } else if (entry.status === 'BREAKEVEN') {
       beCount++;
     } else if (entry.status === 'RUNNING') {
