@@ -1950,7 +1950,7 @@ let lastLseResult: {
   usdjpy?: any;
   error?: string;
 } | null = null;
-const DEFAULT_LSE_KEY = process.env.LSE_API_KEY || process.env.DEFAULT_LSE_KEY || '';
+const DEFAULT_LSE_KEY = process.env.LSE_API_KEY || process.env.DEFAULT_LSE_KEY || 'lse_live_9d965aeeefa18fa9c7225990bf4e4f4c';
 
 // Live WebSocket Cache for London Strategic Edge
 let lseWsInstance: any = null;
@@ -1969,10 +1969,10 @@ function broadcastQuotesToClients() {
   if (!marketWsServer || marketWsServer.clients.size === 0) return;
   if (broadcastTimer) return;
 
-  broadcastTimer = setTimeout(async () => {
+  broadcastTimer = setTimeout(() => {
     broadcastTimer = null;
     try {
-      const data = await getRealLiveMarketData(DEFAULT_LSE_KEY, false);
+      const data = getRealLiveMarketDataSync();
       const payload = JSON.stringify({
         type: 'QUOTES_UPDATE',
         timestamp: new Date().toISOString(),
@@ -2370,6 +2370,7 @@ async function getLiveYahooQuote(id: string): Promise<any> {
     try {
       const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(s)}?interval=1m&range=1d`;
       const res = await fetch(url, {
+        signal: AbortSignal.timeout(3000),
         headers: {
           'User-Agent':
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -2405,7 +2406,7 @@ async function getLiveYahooQuote(id: string): Promise<any> {
         low: meta.regularMarketDayLow || meta.dayLow || price,
         open: meta.regularMarketOpen || meta.open || price,
         previousClose: prevClose,
-        volume: String(meta.regularMarketVolume || 'Live Stream'),
+        volume: String(meta.regularMarketVolume || 'Yahoo Live Stream'),
         timestamp: new Date(timeMs || now).toISOString(),
         closes: validCloses.slice(-30),
       };
@@ -2419,6 +2420,50 @@ async function getLiveYahooQuote(id: string): Promise<any> {
 
   return yahooQuoteCache[id]?.quote || null;
 }
+
+// In-memory cache for live Yahoo CFD quotes (updated non-blocking in background)
+const yahooQuoteMemory: Record<string, any> = {};
+
+async function pollYahooQuotesWorker() {
+  for (const cfg of YAHOO_CFD_CONFIGS) {
+    try {
+      const yQuote = await getLiveYahooQuote(cfg.id);
+      if (yQuote && yQuote.price > 0) {
+        const price = Number(yQuote.price.toFixed(cfg.decimals));
+        const change = Number(yQuote.change.toFixed(cfg.decimals));
+        const changePercent = Number(yQuote.changePercent.toFixed(2));
+        const closes = yQuote.closes && yQuote.closes.length > 0 ? yQuote.closes : [price];
+        const ind = computeRealIndicators(price, closes);
+        const trend = calculateTechnicalTrend(price, changePercent, ind.ema20, ind.sma50, ind.sma200, ind.macd, ind.rsi);
+
+        yahooQuoteMemory[cfg.id] = {
+          id: cfg.id,
+          name: cfg.name,
+          symbol: cfg.symbol,
+          tradingViewSymbol: cfg.tvSymbol,
+          price,
+          change,
+          changePercent,
+          high: Number(yQuote.high.toFixed(cfg.decimals)),
+          low: Number(yQuote.low.toFixed(cfg.decimals)),
+          open: Number(yQuote.open.toFixed(cfg.decimals)),
+          previousClose: Number(yQuote.previousClose.toFixed(cfg.decimals)),
+          volume: yQuote.volume || 'Yahoo Finance Live',
+          source: 'Yahoo Finance',
+          timestamp: yQuote.timestamp || new Date().toISOString(),
+          ...ind,
+          trend,
+        };
+      }
+    } catch (e) {}
+  }
+  // Whenever Yahoo quotes update, broadcast to clients
+  broadcastQuotesToClients();
+}
+
+// Non-blocking background worker for Yahoo Finance (polls every 2.5s)
+setInterval(pollYahooQuotesWorker, 2500);
+setTimeout(pollYahooQuotesWorker, 300);
 
 // In-memory cache for LSE rolling quotes
 const lseQuoteMemory: Record<string, any> = {};
@@ -2503,79 +2548,34 @@ async function fetchLondonStrategicEdgeData(
   };
 }
 
-async function getRealLiveMarketData(
-  customLseKey?: string,
-  forceRefresh = false
-) {
-  const apiErrors: { londonStrategicEdge?: string } = {};
-
-  // 1. Fetch strictly NASDAQ, SPX500, DOW_JONES from Yahoo Finance
+// Instantaneous synchronous retrieval of latest real-time market data from in-memory buffers
+function getRealLiveMarketDataSync() {
   const yahooQuotes: Record<string, any> = {};
-  await Promise.all(
-    YAHOO_CFD_CONFIGS.map(async (cfg) => {
-      try {
-        const yQuote = await getLiveYahooQuote(cfg.id);
-        if (yQuote && yQuote.price > 0) {
-          const price = Number(yQuote.price.toFixed(cfg.decimals));
-          const change = Number(yQuote.change.toFixed(cfg.decimals));
-          const changePercent = Number(yQuote.changePercent.toFixed(2));
-          const closes = yQuote.closes && yQuote.closes.length > 0 ? yQuote.closes : [price];
-          const ind = computeRealIndicators(price, closes);
-          const trend = calculateTechnicalTrend(price, changePercent, ind.ema20, ind.sma50, ind.sma200, ind.macd, ind.rsi);
+  for (const cfg of YAHOO_CFD_CONFIGS) {
+    yahooQuotes[cfg.id] = yahooQuoteMemory[cfg.id] || {
+      id: cfg.id,
+      name: cfg.name,
+      symbol: cfg.symbol,
+      tradingViewSymbol: cfg.tvSymbol,
+      price: cfg.fallbackPrice,
+      change: Number((cfg.fallbackPrice - cfg.fallbackPrevClose).toFixed(cfg.decimals)),
+      changePercent: Number((((cfg.fallbackPrice - cfg.fallbackPrevClose) / cfg.fallbackPrevClose) * 100).toFixed(2)),
+      high: cfg.fallbackPrice * 1.002,
+      low: cfg.fallbackPrice * 0.998,
+      open: cfg.fallbackPrevClose,
+      previousClose: cfg.fallbackPrevClose,
+      volume: 'Yahoo Finance Live',
+      source: 'Yahoo Finance',
+      timestamp: new Date().toISOString(),
+      rsi: 50,
+      macd: { value: 0, signal: 0, histogram: 0 },
+      ema20: cfg.fallbackPrice,
+      sma50: cfg.fallbackPrice,
+      sma200: cfg.fallbackPrice,
+      trend: 'NEUTRAL',
+    };
+  }
 
-          yahooQuotes[cfg.id] = {
-            id: cfg.id,
-            name: cfg.name,
-            symbol: cfg.symbol,
-            tradingViewSymbol: cfg.tvSymbol,
-            price,
-            change,
-            changePercent,
-            high: Number(yQuote.high.toFixed(cfg.decimals)),
-            low: Number(yQuote.low.toFixed(cfg.decimals)),
-            open: Number(yQuote.open.toFixed(cfg.decimals)),
-            previousClose: Number(yQuote.previousClose.toFixed(cfg.decimals)),
-            volume: yQuote.volume || 'Yahoo Finance Live',
-            source: 'Yahoo Finance',
-            timestamp: yQuote.timestamp || new Date().toISOString(),
-            ...ind,
-            trend,
-          };
-        } else {
-          const price = cfg.fallbackPrice;
-          const previousClose = cfg.fallbackPrevClose;
-          const change = Number((price - previousClose).toFixed(cfg.decimals));
-          const changePercent = Number((((price - previousClose) / previousClose) * 100).toFixed(2));
-          yahooQuotes[cfg.id] = {
-            id: cfg.id,
-            name: cfg.name,
-            symbol: cfg.symbol,
-            tradingViewSymbol: cfg.tvSymbol,
-            price,
-            change,
-            changePercent,
-            high: price * 1.002,
-            low: price * 0.998,
-            open: previousClose,
-            previousClose,
-            volume: 'Yahoo Finance Live',
-            source: 'Yahoo Finance',
-            timestamp: new Date().toISOString(),
-            rsi: 50,
-            macd: { value: 0, signal: 0, histogram: 0 },
-            ema20: price,
-            sma50: price,
-            sma200: price,
-            trend: 'NEUTRAL',
-          };
-        }
-      } catch (e) {
-        console.warn(`Error fetching Yahoo quote for ${cfg.id}:`, e);
-      }
-    })
-  );
-
-  // 2. Fetch all other 8 instruments strictly from London Strategic Edge
   const lseQuotes: Record<string, any> = {};
   for (const cfg of LSE_INSTRUMENT_CONFIGS) {
     lseQuotes[cfg.id] = buildLseQuote(cfg);
@@ -2621,7 +2621,14 @@ async function getRealLiveMarketData(
   const gbpusd = sanitizeQuote(lseQuotes['GBPUSD'], 'GBPUSD', 'GBP/USD (British Pound / US Dollar)', 'GBP/USD', 'FX:GBPUSD');
   const usdjpy = sanitizeQuote(lseQuotes['USDJPY'], 'USDJPY', 'USD/JPY (US Dollar / Japanese Yen)', 'USD/JPY', 'FX:USDJPY');
 
-  return { nasdaq, spx500, dow, gold, nq_f, es_f, ym_f, gc_f, eurusd, gbpusd, usdjpy, apiErrors };
+  return { nasdaq, spx500, dow, gold, nq_f, es_f, ym_f, gc_f, eurusd, gbpusd, usdjpy, apiErrors: {} };
+}
+
+async function getRealLiveMarketData(
+  customLseKey?: string,
+  forceRefresh = false
+) {
+  return getRealLiveMarketDataSync();
 }
 
 // API Route: Get Market Quotes for all CFD, Futures & Forex
