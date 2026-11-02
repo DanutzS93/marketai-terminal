@@ -1172,7 +1172,7 @@ app.post('/api/test-gemini-key', async (req, res) => {
 
     // Ping test with lightweight generateContent call and resilient fallback
     const response = await callGeminiWithRetry(clientToTest, {
-      model: 'gemini-3.7-flash',
+      model: 'gemini-4-argon',
       contents: 'Ping test connection. Respond ONLY with OK.',
     });
 
@@ -1264,8 +1264,8 @@ app.post('/api/test-lse-key', async (req, res) => {
 });
 
 async function callGeminiWithRetry(aiClient: any, params: any, retries = 2, delay = 600): Promise<any> {
-  const primaryModel = params.model || 'gemini-3.7-flash';
-  const candidatePool = [primaryModel, 'gemini-3.7-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
+  const primaryModel = params.model || 'gemini-4-argon';
+  const candidatePool = [primaryModel, 'gemini-4-argon', 'gemini-3.7-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
   const modelsToTry = candidatePool.filter((v, i, a) => a.indexOf(v) === i);
   let lastError: any = null;
 
@@ -3317,7 +3317,7 @@ Respond STRICTLY in valid JSON format without markdown code tags:
 }`;
 
     const response = await callGeminiWithRetry(geminiClient, {
-      model: 'gemini-3.7-flash',
+      model: 'gemini-4-argon',
       contents: prompt,
       config: {
         responseMimeType: 'application/json',
@@ -5090,7 +5090,7 @@ Generate valid JSON output:
 }`;
 
         const response = await callGeminiWithRetry(geminiClient, {
-          model: 'gemini-3.7-flash',
+          model: 'gemini-4-argon',
           contents: prompt,
           config: {
             responseMimeType: 'application/json',
@@ -5356,7 +5356,7 @@ Generate valid JSON output:
 }`;
 
         const response = await callGeminiWithRetry(geminiClient, {
-          model: 'gemini-3.7-flash',
+          model: 'gemini-4-argon',
           contents: prompt,
           config: {
             responseMimeType: 'application/json',
