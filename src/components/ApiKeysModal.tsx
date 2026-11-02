@@ -33,8 +33,9 @@ export const ApiKeysModal: React.FC<ApiKeysModalProps> = ({
   if (!isOpen) return null;
 
   const isAdmin = user?.role === 'admin' || user?.username.toLowerCase() === 'admin';
+  const defaultLse = (import.meta as any).env?.VITE_LSE_API_KEY || '';
   const [geminiApiKey, setGeminiApiKey] = useState(apiKeys.geminiApiKey || '');
-  const [lseKey, setLseKey] = useState(apiKeys.lseKey || 'lse_live_9d965aeeefa18fa9c7225990bf4e4f4c');
+  const [lseKey, setLseKey] = useState(apiKeys.lseKey || defaultLse);
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
@@ -414,7 +415,7 @@ export const ApiKeysModal: React.FC<ApiKeysModalProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    setLseKey('lse_live_9d965aeeefa18fa9c7225990bf4e4f4c');
+                    setLseKey(defaultLse);
                     setLseTestResult(null);
                   }}
                   className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-mono text-slate-400 hover:text-cyan-300 bg-white/5 hover:bg-white/10 px-2 py-1 rounded border border-white/10 transition cursor-pointer"

@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import {
   isSupabaseConfigured,
   fetchUsersFromSupabase,
@@ -9,6 +10,39 @@ import {
   saveInviteCodeToSupabase,
   deleteInviteCodeFromSupabase,
 } from './supabaseDb';
+
+/**
+ * Secure password hashing using Node.js scrypt with cryptographic salt
+ */
+export function hashPassword(password: string): string {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const derivedKey = crypto.scryptSync(password.trim(), salt, 64);
+  return `scrypt:${salt}:${derivedKey.toString('hex')}`;
+}
+
+/**
+ * Verifies password against stored hash.
+ * Supports both modern scrypt hashes and backward-compatible legacy Base64 hashes.
+ */
+export function verifyPassword(password: string, storedHash: string): boolean {
+  if (!password || !storedHash) return false;
+  const trimmed = password.trim();
+
+  // If using modern scrypt hash
+  if (storedHash.startsWith('scrypt:')) {
+    const parts = storedHash.split(':');
+    if (parts.length !== 3) return false;
+    const salt = parts[1];
+    const key = parts[2];
+    const keyBuffer = Buffer.from(key, 'hex');
+    const derived = crypto.scryptSync(trimmed, salt, 64);
+    return keyBuffer.length === derived.length && crypto.timingSafeEqual(keyBuffer, derived);
+  }
+
+  // Backward compatibility: legacy base64 hash
+  const legacyHash = Buffer.from(trimmed).toString('base64');
+  return storedHash === legacyHash;
+}
 
 export interface StoredUser {
   id: string;
@@ -286,13 +320,17 @@ export async function initUsersDbCache(): Promise<void> {
     );
     if (!adminUser) {
       const adminId = 'usr_admin_001';
+      const initialAdminPass = process.env.ADMIN_INITIAL_PASSWORD || crypto.randomBytes(12).toString('hex');
+      if (!process.env.ADMIN_INITIAL_PASSWORD) {
+        console.log(`🔑 [SECURITY] Initial admin password generated: ${initialAdminPass} (Set ADMIN_INITIAL_PASSWORD env var to customize)`);
+      }
       adminUser = {
         id: adminId,
         username: 'admin',
-        passwordHash: Buffer.from('admin2026').toString('base64'),
+        passwordHash: hashPassword(initialAdminPass),
         inviteCodeUsed: 'SYSTEM_ADMIN',
         createdAt: new Date().toISOString(),
-        token: `tok_${adminId}_${Date.now()}`,
+        token: `tok_${crypto.randomBytes(24).toString('hex')}`,
         role: 'admin',
         status: 'active',
         subscriptionExpiresAt: '2099-12-31T23:59:59.000Z',
@@ -303,7 +341,11 @@ export async function initUsersDbCache(): Promise<void> {
       };
       mergedUsers[adminId] = adminUser;
     } else if (!adminUser.passwordHash) {
-      adminUser.passwordHash = Buffer.from('admin2026').toString('base64');
+      const initialAdminPass = process.env.ADMIN_INITIAL_PASSWORD || crypto.randomBytes(12).toString('hex');
+      adminUser.passwordHash = hashPassword(initialAdminPass);
+      if (!process.env.ADMIN_INITIAL_PASSWORD) {
+        console.log(`🔑 [SECURITY] Initial admin password generated: ${initialAdminPass}`);
+      }
     }
 
     usersCache = mergedUsers;

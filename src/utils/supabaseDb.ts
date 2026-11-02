@@ -83,12 +83,17 @@ CREATE TABLE IF NOT EXISTS public.app_invite_codes (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Activează securitatea RLS sau permisiuni de bază
+-- Activează securitatea RLS și limitează accesul exclusiv la service_role (backend securizat)
 ALTER TABLE public.app_users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.app_invite_codes ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Allow full access for app_users" ON public.app_users FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow full access for app_invite_codes" ON public.app_invite_codes FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Allow full access for app_users" ON public.app_users;
+DROP POLICY IF EXISTS "Allow full access for app_invite_codes" ON public.app_invite_codes;
+DROP POLICY IF EXISTS "Service role full access on app_users" ON public.app_users;
+DROP POLICY IF EXISTS "Service role full access on app_invite_codes" ON public.app_invite_codes;
+
+CREATE POLICY "Service role full access on app_users" ON public.app_users FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "Service role full access on app_invite_codes" ON public.app_invite_codes FOR ALL TO service_role USING (true) WITH CHECK (true);
 `;
 
 /**

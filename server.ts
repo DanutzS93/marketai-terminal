@@ -2,6 +2,7 @@ import http from 'http';
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import compression from 'compression';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
@@ -15,6 +16,8 @@ import {
   getInviteCodesFromCache,
   saveInviteCodeToDb,
   deleteInviteCodeFromDb,
+  hashPassword,
+  verifyPassword,
   StoredUser,
   StoredInviteCode,
 } from './src/utils/usersDb';
@@ -222,9 +225,10 @@ function ensureUserMt5ApiKey(user: StoredUser): string {
   const currentKey = user.apiKeys.mt5ApiKey || user.mt5ApiKey;
   const isAdmin = user.id === 'usr_admin_001' || user.username?.toLowerCase() === 'admin' || user.role === 'admin';
   if (isAdmin) {
-    user.apiKeys.mt5ApiKey = 'mt5_live_admin001_wdyjbn7o';
-    user.mt5ApiKey = 'mt5_live_admin001_wdyjbn7o';
-    return 'mt5_live_admin001_wdyjbn7o';
+    const adminKey = process.env.ADMIN_MT5_API_KEY || currentKey || `mt5_live_admin_${crypto.randomBytes(8).toString('hex')}`;
+    user.apiKeys.mt5ApiKey = adminKey;
+    user.mt5ApiKey = adminKey;
+    return adminKey;
   }
   if (
     !currentKey ||
@@ -234,7 +238,7 @@ function ensureUserMt5ApiKey(user: StoredUser): string {
     currentKey.length < 16
   ) {
     const cleanId = (user.id || '').replace(/[^a-zA-Z0-9]/g, '').slice(-8) || 'user';
-    const randPart = Math.random().toString(36).substring(2, 10);
+    const randPart = crypto.randomBytes(6).toString('hex');
     const generatedKey = `mt5_live_${cleanId}_${randPart}`;
     user.apiKeys.mt5ApiKey = generatedKey;
     user.mt5ApiKey = generatedKey;
@@ -256,7 +260,7 @@ function ensureUserNinjaTraderApiKey(user: StoredUser): string {
   if (!user.apiKeys) user.apiKeys = {};
   if (!user.apiKeys.ninjaTraderApiKey || typeof user.apiKeys.ninjaTraderApiKey !== 'string' || !user.apiKeys.ninjaTraderApiKey.startsWith('nt8_live_')) {
     const cleanId = (user.id || '').replace(/[^a-zA-Z0-9]/g, '').slice(-8) || 'user';
-    const randPart = Math.random().toString(36).substring(2, 10);
+    const randPart = crypto.randomBytes(6).toString('hex');
     const generatedKey = `nt8_live_${cleanId}_${randPart}`;
     user.apiKeys.ninjaTraderApiKey = generatedKey;
     user.ninjaTraderApiKey = generatedKey;
@@ -352,11 +356,63 @@ function formatUserForClient(u: StoredUser) {
   };
 }
 
+// Active subscription verification helper
+function isSubscriptionActive(u: StoredUser): boolean {
+  if (!u) return false;
+  if (u.role === 'admin' || u.username?.toLowerCase() === 'admin') return true;
+  if (u.status === 'blocked') return false;
+  if (!u.subscriptionExpiresAt) return true;
+  return new Date(u.subscriptionExpiresAt).getTime() > Date.now();
+}
+
+// Login rate limiting (Brute-force protection: max 5 failed attempts per IP or username per 15 minutes)
+interface FailedLoginRecord {
+  count: number;
+  firstAttemptAt: number;
+  lockedUntil?: number;
+}
+const loginAttemptsMap = new Map<string, FailedLoginRecord>();
+
+function recordFailedLogin(key: string) {
+  const now = Date.now();
+  const existing = loginAttemptsMap.get(key) || { count: 0, firstAttemptAt: now };
+  if (now - existing.firstAttemptAt > 15 * 60 * 1000) {
+    existing.count = 0;
+    existing.firstAttemptAt = now;
+    existing.lockedUntil = undefined;
+  }
+  existing.count += 1;
+  if (existing.count >= 5) {
+    existing.lockedUntil = now + 15 * 60 * 1000;
+  }
+  loginAttemptsMap.set(key, existing);
+}
+
+function checkLoginRateLimit(key: string): { limited: boolean; remainingSeconds?: number } {
+  const record = loginAttemptsMap.get(key);
+  if (!record || !record.lockedUntil) return { limited: false };
+  const now = Date.now();
+  if (now < record.lockedUntil) {
+    return { limited: true, remainingSeconds: Math.ceil((record.lockedUntil - now) / 1000) };
+  }
+  loginAttemptsMap.delete(key);
+  return { limited: false };
+}
+
+function clearFailedLogin(key: string) {
+  loginAttemptsMap.delete(key);
+}
+
 // Authentication API Routes
 app.post('/api/auth/register', async (req, res) => {
   const { username, password, inviteCode } = req.body;
   if (!username || !password) {
     return res.status(400).json({ error: 'Numele de utilizator și parola sunt obligatorii.' });
+  }
+
+  const passTrimmed = String(password).trim();
+  if (passTrimmed.length < 6) {
+    return res.status(400).json({ error: 'Parola trebuie să aibă cel puțin 6 caractere.' });
   }
 
   if (!isInviteCodeValid(inviteCode)) {
@@ -379,12 +435,12 @@ app.post('/api/auth/register', async (req, res) => {
     ? '2099-12-31T23:59:59.000Z'
     : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
-  const userId = `usr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-  const token = `tok_${userId}_${Date.now()}`;
+  const userId = `usr_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
+  const token = `tok_${crypto.randomBytes(32).toString('hex')}`;
   const newUser: StoredUser = {
     id: userId,
     username: username.trim(),
-    passwordHash: Buffer.from(password).toString('base64'),
+    passwordHash: hashPassword(passTrimmed),
     inviteCodeUsed: cleanCode,
     createdAt: new Date().toISOString(),
     token: token,
@@ -424,11 +480,24 @@ app.post('/api/auth/login', async (req, res) => {
     return res.status(400).json({ error: 'Numele de utilizator și parola sunt obligatorii.' });
   }
 
-  const users = loadUsersDb();
-  const lowerUser = username.trim().toLowerCase();
-  const passTrimmed = password.trim();
-  const passHash = Buffer.from(passTrimmed).toString('base64');
+  const lowerUser = String(username).trim().toLowerCase();
+  const passTrimmed = String(password).trim();
 
+  // Brute-force rate limiting check on client IP and target username
+  const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || req.socket.remoteAddress || 'unknown';
+  const ipKey = `ip_${clientIp}`;
+  const userKey = `user_${lowerUser}`;
+  const ipLimit = checkLoginRateLimit(ipKey);
+  const userLimit = checkLoginRateLimit(userKey);
+  if (ipLimit.limited || userLimit.limited) {
+    const sec = Math.max(ipLimit.remainingSeconds || 0, userLimit.remainingSeconds || 0);
+    return res.status(429).json({
+      error: `Prea multe încercări eșuate de conectare. Te rugăm să încerci din nou peste ${sec} secunde.`,
+      remainingSeconds: sec,
+    });
+  }
+
+  const users = loadUsersDb();
   const matchingUsers = Object.values(users).filter(
     (u) => u.username.toLowerCase() === lowerUser
   );
@@ -436,18 +505,26 @@ app.post('/api/auth/login', async (req, res) => {
   const user = matchingUsers[0];
 
   if (!user) {
+    recordFailedLogin(ipKey);
+    recordFailedLogin(userKey);
     return res.status(401).json({ error: 'Nume de utilizator sau parolă incorectă.' });
   }
 
-  // Admin fallback password check (only initialize if passwordHash is not yet set)
-  if ((user.role === 'admin' || lowerUser === 'admin') && !user.passwordHash) {
-    if (passTrimmed === 'admin2026') {
-      user.passwordHash = Buffer.from('admin2026').toString('base64');
-    } else {
-      return res.status(401).json({ error: 'Nume de utilizator sau parolă incorectă.' });
-    }
-  } else if (user.passwordHash !== passHash) {
+  // Cryptographic password verification (supports scrypt and backward-compatible base64)
+  const isPassValid = verifyPassword(passTrimmed, user.passwordHash);
+  if (!isPassValid) {
+    recordFailedLogin(ipKey);
+    recordFailedLogin(userKey);
     return res.status(401).json({ error: 'Nume de utilizator sau parolă incorectă.' });
+  }
+
+  // Clear failed attempt tracking on successful authentication
+  clearFailedLogin(ipKey);
+  clearFailedLogin(userKey);
+
+  // Transparently upgrade legacy Base64 hashes to scrypt
+  if (!user.passwordHash.startsWith('scrypt:')) {
+    user.passwordHash = hashPassword(passTrimmed);
   }
 
   if (user.status === 'blocked') {
@@ -456,7 +533,16 @@ app.post('/api/auth/login', async (req, res) => {
     });
   }
 
-  user.token = `tok_${user.id}_${Date.now()}`;
+  if (!isSubscriptionActive(user)) {
+    return res.status(403).json({
+      error: 'Abonamentul tău a expirat! Te rugăm să contactezi administratorul sau să reînnoiești abonamentul.',
+      isExpired: true,
+      user: formatUserForClient(user),
+    });
+  }
+
+  // Cryptographically secure session token
+  user.token = `tok_${crypto.randomBytes(32).toString('hex')}`;
   saveUsersDb(users, user.id).catch((err) => console.warn('Background save user token error:', err));
 
   return res.json({
@@ -481,6 +567,14 @@ app.get('/api/auth/me', (req, res) => {
     });
   }
 
+  if (!isSubscriptionActive(user)) {
+    return res.status(403).json({
+      error: 'Abonamentul tău a expirat! Te rugăm să reînnoiești abonamentul.',
+      isExpired: true,
+      user: formatUserForClient(user),
+    });
+  }
+
   return res.json({
     user: formatUserForClient(user),
   });
@@ -494,6 +588,19 @@ app.get('/api/user/sync-data', (req, res) => {
   const users = loadUsersDb();
   const user = Object.values(users).find((u) => u.token === token);
   if (!user) return res.status(401).json({ error: 'Sesiune nevalidă.' });
+
+  if (user.status === 'blocked') {
+    return res.status(403).json({
+      error: 'Accesul tău a fost blocat de administrator!',
+    });
+  }
+
+  if (!isSubscriptionActive(user)) {
+    return res.status(403).json({
+      error: 'Abonamentul tău a expirat! Te rugăm să reînnoiești abonamentul.',
+      isExpired: true,
+    });
+  }
 
   const deletedIds = user.deletedSignalIds || [];
   const cleanSignals = filter30DaySignals(user.signals || [], deletedIds);
@@ -1032,7 +1139,22 @@ function formatFullDateTimeServer(d: Date = new Date(), isEn = false) {
   const time = d.toLocaleTimeString(isEn ? 'en-US' : 'ro-RO', { hour: '2-digit', minute: '2-digit' });
   return `${day} ${month} ${year}, ${time}`;
 }
+// Rate limiting for AI endpoints: max 15 requests per minute per IP / User
+const aiRateLimitMap = new Map<string, { count: number; windowStart: number }>();
+function checkAiRateLimit(key: string, maxRequests = 15, windowMs = 60000): boolean {
+  const now = Date.now();
+  const record = aiRateLimitMap.get(key) || { count: 0, windowStart: now };
+  if (now - record.windowStart > windowMs) {
+    record.count = 0;
+    record.windowStart = now;
+  }
+  record.count += 1;
+  aiRateLimitMap.set(key, record);
+  return record.count <= maxRequests;
+}
+
 function getGeminiClient(req?: express.Request) {
+  // 1. User-supplied custom key via header or body
   const customKey = (req?.headers['x-gemini-api-key'] as string) || req?.body?.geminiApiKey;
   if (customKey && typeof customKey === 'string' && customKey.trim().length > 0) {
     return new GoogleGenAI({
@@ -1045,24 +1167,25 @@ function getGeminiClient(req?: express.Request) {
     });
   }
 
-  // Check if requesting user has stored geminiApiKey
+  // 2. Check if requesting user is authenticated and subscription active
   const authHeader = req?.headers?.authorization;
   const token = authHeader?.replace('Bearer ', '').trim();
   if (token) {
     const users = loadUsersDb();
     const user = Object.values(users).find((u) => u.token === token);
-    if (user?.apiKeys?.geminiApiKey && typeof user.apiKeys.geminiApiKey === 'string' && user.apiKeys.geminiApiKey.trim().length > 0) {
-      return new GoogleGenAI({
-        apiKey: user.apiKeys.geminiApiKey.trim(),
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
+    if (user && isSubscriptionActive(user)) {
+      // User's own stored custom key
+      if (user.apiKeys?.geminiApiKey && typeof user.apiKeys.geminiApiKey === 'string' && user.apiKeys.geminiApiKey.trim().length > 0) {
+        return new GoogleGenAI({
+          apiKey: user.apiKeys.geminiApiKey.trim(),
+          httpOptions: {
+            headers: {
+              'User-Agent': 'aistudio-build',
+            },
           },
-        },
-      });
-    }
-    if (user && (user.role === 'admin' || user.username.toLowerCase() === 'admin')) {
-      // Use system server environment GEMINI_API_KEY for admin
+        });
+      }
+      // Authorized active user using system server key
       if (process.env.GEMINI_API_KEY) {
         return new GoogleGenAI({
           apiKey: process.env.GEMINI_API_KEY,
@@ -1076,7 +1199,7 @@ function getGeminiClient(req?: express.Request) {
     }
   }
 
-  // Also fallback if request user is verified admin without token parameter check
+  // 3. Verified system admin via token
   const admin = req ? verifyAdminToken(req) : null;
   if (admin && process.env.GEMINI_API_KEY) {
     return new GoogleGenAI({
@@ -1089,19 +1212,7 @@ function getGeminiClient(req?: express.Request) {
     });
   }
 
-  // Master server environment fallback if available
-  if (process.env.GEMINI_API_KEY) {
-    return new GoogleGenAI({
-      apiKey: process.env.GEMINI_API_KEY,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        },
-      },
-    });
-  }
-
-  // Require custom API key from regular user if no server key is configured!
+  // Do NOT allow anonymous unauthenticated requests to consume the server's global GEMINI_API_KEY!
   return null;
 }
 
@@ -1760,7 +1871,7 @@ let lastLseResult: {
   usdjpy?: any;
   error?: string;
 } | null = null;
-const DEFAULT_LSE_KEY = 'lse_live_9d965aeeefa18fa9c7225990bf4e4f4c';
+const DEFAULT_LSE_KEY = process.env.LSE_API_KEY || process.env.DEFAULT_LSE_KEY || '';
 
 // Live WebSocket Cache for London Strategic Edge
 let lseWsInstance: any = null;
@@ -2796,6 +2907,35 @@ app.get('/api/candles', async (req, res) => {
             }
           }
 
+          // Aggregate 1h bars into true 4h OHLC bars when 4h timeframe is requested
+          if (timeframe === '4h' && candles.length > 0) {
+            const buckets = new Map<number, typeof candles>();
+            for (const c of candles) {
+              const bucketTime = Math.floor(c.time / 14400) * 14400;
+              if (!buckets.has(bucketTime)) buckets.set(bucketTime, []);
+              buckets.get(bucketTime)!.push(c);
+            }
+            const aggregated: typeof candles = [];
+            for (const [bTime, bCandles] of buckets.entries()) {
+              bCandles.sort((a, b) => a.time - b.time);
+              const o = bCandles[0].open;
+              const h = Math.max(...bCandles.map((x) => x.high));
+              const l = Math.min(...bCandles.map((x) => x.low));
+              const c = bCandles[bCandles.length - 1].close;
+              const v = bCandles.reduce((acc, curr) => acc + (curr.volume || 0), 0);
+              aggregated.push({
+                time: bTime,
+                open: Number(o.toFixed(decimals)),
+                high: Number(h.toFixed(decimals)),
+                low: Number(l.toFixed(decimals)),
+                close: Number(c.toFixed(decimals)),
+                volume: v > 0 ? v : undefined,
+              });
+            }
+            aggregated.sort((a, b) => a.time - b.time);
+            candles = aggregated;
+          }
+
           if (candles.length > 0) {
             candleCache[cacheKey] = {
               timestamp: now,
@@ -2812,7 +2952,9 @@ app.get('/api/candles', async (req, res) => {
     const liveTick = getLseTick(tickAliases);
 
     // If candles are still empty, build mathematically consistent synthetic continuation candles
+    let isSynthetic = false;
     if (candles.length === 0) {
+      isSynthetic = true;
       const currentPrice = liveTick?.price || fallbackBasePrice;
       candles = generateFallbackCandles(currentPrice, timeframe, decimals, stepSeconds);
     }
@@ -2831,6 +2973,8 @@ app.get('/api/candles', async (req, res) => {
       yahooSymbol,
       timeframe,
       candlesCount: candles.length,
+      isSynthetic,
+      source: isSynthetic ? 'synthetic_fallback' : 'yahoo_finance',
       currentLivePrice: liveTick?.price || (candles.length > 0 ? candles[candles.length - 1].close : fallbackBasePrice),
       candles,
     });
@@ -2842,6 +2986,8 @@ app.get('/api/candles', async (req, res) => {
       symbol: 'NQ.F',
       timeframe: '5m',
       candlesCount: fallbackCandles.length,
+      isSynthetic: true,
+      source: 'synthetic_fallback',
       currentLivePrice: 29550,
       candles: fallbackCandles,
     });
@@ -4918,11 +5064,61 @@ function validateAndFixSignalPrices(sig: any, liveMarketPrice?: number, liveATR?
   return updated;
 }
 
-// API Route: Generate AI Signal via Gemini 3.6 Flash (Standard)
+// API Route: Generate AI Signal via Gemini 3.7 Flash (Standard)
 app.post('/api/generate-ai-signal', async (req, res) => {
   try {
     const { instrumentId = 'NASDAQ', timeframe = '1h', strategy = 'Intraday Trend', lang = 'ro', bypassMarketCheck = false } = req.body;
     const isEn = lang === 'en';
+
+    // 1. Authentication and Authorization Check
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.replace('Bearer ', '').trim();
+    const customKey = (req.headers['x-gemini-api-key'] as string) || req.body?.geminiApiKey;
+
+    let requestingUser: StoredUser | null = null;
+    if (token) {
+      const users = loadUsersDb();
+      requestingUser = Object.values(users).find((u) => u.token === token) || null;
+    }
+
+    if (!requestingUser && !customKey) {
+      return res.status(401).json({
+        error: 'UNAUTHORIZED_AI_ACCESS',
+        message: isEn
+          ? 'Authentication required or custom Gemini API Key required to generate signals.'
+          : 'Autentificare necesară sau cheie API Gemini personalizată necesară pentru generarea de semnale.',
+      });
+    }
+
+    if (requestingUser) {
+      if (requestingUser.status === 'blocked') {
+        return res.status(403).json({
+          error: 'ACCOUNT_BLOCKED',
+          message: isEn ? 'Your account has been blocked.' : 'Contul tău a fost blocat de administrator.',
+        });
+      }
+      if (!isSubscriptionActive(requestingUser)) {
+        return res.status(403).json({
+          error: 'SUBSCRIPTION_EXPIRED',
+          isExpired: true,
+          message: isEn
+            ? 'Your subscription has expired. Please renew your subscription to generate AI signals.'
+            : 'Abonamentul tău a expirat. Te rugăm să reînnoiești abonamentul pentru a genera semnale AI.',
+        });
+      }
+    }
+
+    // 2. AI Request Rate Limiting (max 15 requests/min)
+    const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || req.socket.remoteAddress || 'unknown';
+    const rateLimitKey = requestingUser ? `usr_${requestingUser.id}` : `ip_${clientIp}`;
+    if (!checkAiRateLimit(rateLimitKey)) {
+      return res.status(429).json({
+        error: 'RATE_LIMIT_EXCEEDED',
+        message: isEn
+          ? 'Rate limit exceeded: Please wait a moment before generating more AI signals.'
+          : 'Ai depășit limita de cereri AI: Te rugăm să aștepți un moment înainte de a genera alte semnale.',
+      });
+    }
 
     if (isMarketClosedServer() && !bypassMarketCheck) {
       return res.status(400).json({
@@ -5230,6 +5426,56 @@ app.post('/api/generate-custom-rule-signal', async (req, res) => {
   try {
     const { rule, lang = 'ro', bypassMarketCheck = false } = req.body;
     const isEn = lang === 'en';
+
+    // 1. Authentication and Authorization Check
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.replace('Bearer ', '').trim();
+    const customKey = (req.headers['x-gemini-api-key'] as string) || req.body?.geminiApiKey;
+
+    let requestingUser: StoredUser | null = null;
+    if (token) {
+      const users = loadUsersDb();
+      requestingUser = Object.values(users).find((u) => u.token === token) || null;
+    }
+
+    if (!requestingUser && !customKey) {
+      return res.status(401).json({
+        error: 'UNAUTHORIZED_AI_ACCESS',
+        message: isEn
+          ? 'Authentication required or custom Gemini API Key required to generate signals.'
+          : 'Autentificare necesară sau cheie API Gemini personalizată necesară pentru generarea de semnale.',
+      });
+    }
+
+    if (requestingUser) {
+      if (requestingUser.status === 'blocked') {
+        return res.status(403).json({
+          error: 'ACCOUNT_BLOCKED',
+          message: isEn ? 'Your account has been blocked.' : 'Contul tău a fost blocat de administrator.',
+        });
+      }
+      if (!isSubscriptionActive(requestingUser)) {
+        return res.status(403).json({
+          error: 'SUBSCRIPTION_EXPIRED',
+          isExpired: true,
+          message: isEn
+            ? 'Your subscription has expired. Please renew your subscription to generate AI signals.'
+            : 'Abonamentul tău a expirat. Te rugăm să reînnoiești abonamentul pentru a genera semnale AI.',
+        });
+      }
+    }
+
+    // 2. AI Request Rate Limiting (max 15 requests/min)
+    const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || req.socket.remoteAddress || 'unknown';
+    const rateLimitKey = requestingUser ? `usr_${requestingUser.id}` : `ip_${clientIp}`;
+    if (!checkAiRateLimit(rateLimitKey)) {
+      return res.status(429).json({
+        error: 'RATE_LIMIT_EXCEEDED',
+        message: isEn
+          ? 'Rate limit exceeded: Please wait a moment before generating more AI signals.'
+          : 'Ai depășit limita de cereri AI: Te rugăm să aștepți un moment înainte de a genera alte semnale.',
+      });
+    }
 
     if (isMarketClosedServer() && !bypassMarketCheck) {
       return res.status(400).json({
@@ -6516,8 +6762,7 @@ app.post('/api/mt5/update', async (req, res) => {
       if (matchedUser.signals) {
         const target = matchedUser.signals.find((s: any) => 
           s.id === signal_id || 
-          s.signal_id === signal_id ||
-          (signal_id && s.id && (s.id.startsWith(signal_id) || signal_id.startsWith(s.id)))
+          s.signal_id === signal_id
         );
         if (target) {
           if (!target.mt5Placed) { target.mt5Placed = true; didChange = true; }
@@ -6584,8 +6829,7 @@ app.post('/api/mt5/update', async (req, res) => {
 
       const serverTarget = serverActiveSignals.find((s) => 
         s.id === signal_id || 
-        s.signal_id === signal_id ||
-        (signal_id && s.id && (s.id.startsWith(signal_id) || signal_id.startsWith(s.id)))
+        s.signal_id === signal_id
       );
       if (serverTarget) {
         serverTarget.mt5Placed = true;
@@ -6991,8 +7235,7 @@ app.post(['/api/ninjatrader/update', '/api/nt8/update'], async (req, res) => {
       if (matchedUser.signals && Array.isArray(matchedUser.signals)) {
         const target = matchedUser.signals.find((s: any) => 
           s.id === signal_id || 
-          s.signal_id === signal_id ||
-          (signal_id && s.id && (s.id.startsWith(signal_id) || signal_id.startsWith(s.id)))
+          s.signal_id === signal_id
         );
         if (target) {
           target.ninjaTraderPlaced = true;
@@ -7056,12 +7299,22 @@ app.post('/api/signals/update-pnl', async (req, res) => {
   const { signalId, pnl, exitPrice, outcomeStatus, status } = req.body;
   if (!signalId) return res.status(400).json({ error: 'signalId is required' });
 
+  // Whitelist validation for status and outcomeStatus values
+  const ALLOWED_STATUSES = new Set(['ACTIVE', 'PENDING', 'CLOSED', 'CANCELLED']);
+  const ALLOWED_OUTCOME_STATUSES = new Set(['PENDING', 'ACTIVE', 'RUNNING', 'TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT', 'CANCELLED']);
+
+  if (status && !ALLOWED_STATUSES.has(status)) {
+    return res.status(400).json({ error: `Invalid status: ${status}. Allowed values: ${Array.from(ALLOWED_STATUSES).join(', ')}` });
+  }
+  if (outcomeStatus && !ALLOWED_OUTCOME_STATUSES.has(outcomeStatus)) {
+    return res.status(400).json({ error: `Invalid outcomeStatus: ${outcomeStatus}. Allowed values: ${Array.from(ALLOWED_OUTCOME_STATUSES).join(', ')}` });
+  }
+
   let updated = false;
   if (targetUser.signals) {
     const s = targetUser.signals.find((sig: any) => 
       sig.id === signalId || 
-      sig.signal_id === signalId ||
-      (signalId && sig.id && (sig.id.startsWith(signalId) || signalId.startsWith(sig.id)))
+      sig.signal_id === signalId
     );
     if (s) {
       if (pnl !== undefined && !isNaN(Number(pnl))) {
@@ -7095,8 +7348,7 @@ app.post('/api/signals/update-pnl', async (req, res) => {
   // Update server active signals if applicable
   const serverS = serverActiveSignals.find((sig) => 
     sig.id === signalId || 
-    sig.signal_id === signalId ||
-    (signalId && sig.id && (sig.id.startsWith(signalId) || signalId.startsWith(sig.id)))
+    sig.signal_id === signalId
   );
   if (serverS) {
     if (pnl !== undefined && !isNaN(Number(pnl))) {

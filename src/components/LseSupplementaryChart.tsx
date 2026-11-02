@@ -20,6 +20,7 @@ export const LseSupplementaryChart: React.FC<LseSupplementaryChartProps> = ({
 }) => {
   const [activePair, setActivePair] = useState<LsePairKey>('NQ.F');
   const [timeframe, setTimeframe] = useState<'1m' | '5m' | '15m' | '1h' | '1d'>('5m');
+  const [isSynthetic, setIsSynthetic] = useState(false);
 
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartInstanceRef = useRef<IChartApi | null>(null);
@@ -125,6 +126,9 @@ export const LseSupplementaryChart: React.FC<LseSupplementaryChartProps> = ({
         const res = await fetch(`/api/candles?symbol=${encodeURIComponent(activePair)}&timeframe=${timeframe}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
+        if (isSubscribed) {
+          setIsSynthetic(Boolean(data.isSynthetic));
+        }
 
         if (isSubscribed && Array.isArray(data.candles) && data.candles.length > 0) {
           const validCandles = data.candles.filter(
@@ -177,6 +181,9 @@ export const LseSupplementaryChart: React.FC<LseSupplementaryChartProps> = ({
         const res = await fetch(`/api/candles?symbol=${encodeURIComponent(activePair)}&timeframe=${timeframe}`);
         if (!res.ok) return;
         const data = await res.json();
+        if (isSubscribed) {
+          setIsSynthetic(Boolean(data.isSynthetic));
+        }
         if (isSubscribed && Array.isArray(data.candles) && data.candles.length > 0) {
           const last = data.candles[data.candles.length - 1];
           if (
@@ -280,6 +287,19 @@ export const LseSupplementaryChart: React.FC<LseSupplementaryChartProps> = ({
             {isLoadingCandles && (
               <span className="text-[10px] text-slate-400 italic animate-pulse ml-1">
                 ({lang === 'ro' ? 'Se încarcă date API...' : 'Loading API data...'})
+              </span>
+            )}
+            {isSynthetic && (
+              <span
+                className="px-2 py-0.5 rounded text-[10px] font-sans font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1 shadow-sm ml-1"
+                title={
+                  lang === 'ro'
+                    ? 'Date estimate (Yahoo Finance temporar indisponibil sau sesiune închisă)'
+                    : 'Estimated synthetic data (Yahoo Finance temporarily offline or closed session)'
+                }
+              >
+                <span>⚠️</span>
+                <span>{lang === 'ro' ? 'Date Estimate' : 'Synthetic Data'}</span>
               </span>
             )}
           </div>

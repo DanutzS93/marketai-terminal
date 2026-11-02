@@ -87,7 +87,18 @@ export function updateMt5Ea(): void {
     console.log(`📁 Director gasit: ${expertsDir}`);
 
     const bridgeFile = path.join(expertsDir, 'MarketAI-Bridge.mq5');
-    let apiKey = 'mt5_live_admin001_wdyjbn7o';
+    let apiKey = process.env.ADMIN_MT5_API_KEY || '';
+    if (!apiKey) {
+      try {
+        const dbPath = path.join(process.cwd(), 'users_cloud_db.json');
+        if (fs.existsSync(dbPath)) {
+          const dbData = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
+          const admin = Object.values(dbData).find((u: any) => u.role === 'admin' || u.username === 'admin') as any;
+          if (admin?.mt5ApiKey) apiKey = admin.mt5ApiKey;
+        }
+      } catch (_) {}
+    }
+    if (!apiKey) apiKey = 'mt5_live_YOUR_API_KEY';
     let endpoint = 'https://marketai-terminal.fly.dev/api/mt5/signals';
     let updateUrl = 'https://marketai-terminal.fly.dev/api/mt5/update';
 

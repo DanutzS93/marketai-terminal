@@ -1160,8 +1160,9 @@ export default function App() {
     async (force = false) => {
       setIsRefreshing(true);
       try {
+        const defaultLse = (import.meta as any).env?.VITE_LSE_API_KEY || '';
         const queryParams = new URLSearchParams({
-          lseKey: apiKeys.lseKey || 'lse_live_9d965aeeefa18fa9c7225990bf4e4f4c',
+          lseKey: apiKeys.lseKey || defaultLse,
         });
         if (force) {
           queryParams.append('force', 'true');
@@ -1209,8 +1210,9 @@ export default function App() {
     const startSseFallback = () => {
       if (eventSource || isDisposed || wsConnected) return;
       try {
+        const defaultLse = (import.meta as any).env?.VITE_LSE_API_KEY || '';
         const queryParams = new URLSearchParams({
-          lseKey: apiKeys.lseKey || 'lse_live_9d965aeeefa18fa9c7225990bf4e4f4c',
+          lseKey: apiKeys.lseKey || defaultLse,
         });
         eventSource = new EventSource(`/api/market-stream?${queryParams.toString()}`);
 
