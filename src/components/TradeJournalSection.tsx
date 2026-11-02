@@ -27,6 +27,7 @@ import {
   TradingSignal,
   MarketQuote,
   InstrumentId,
+  UserProfile,
 } from '../types';
 import {
   getCalendarGridForMonth,
@@ -48,6 +49,7 @@ interface TradeJournalSectionProps {
   onClearAllManualTrades?: () => void;
   onViewSignalDetails?: (signal: TradingSignal) => void;
   lang: 'ro' | 'en';
+  user?: UserProfile | null;
 }
 
 export const TradeJournalSection: React.FC<TradeJournalSectionProps> = ({
@@ -59,6 +61,7 @@ export const TradeJournalSection: React.FC<TradeJournalSectionProps> = ({
   onClearAllManualTrades,
   onViewSignalDetails,
   lang,
+  user,
 }) => {
   // Current view date: year & month
   const today = new Date();
@@ -78,14 +81,14 @@ export const TradeJournalSection: React.FC<TradeJournalSectionProps> = ({
 
   // Unify platform signals and manual trades
   const unifiedEntries = useMemo(() => {
-    let list = unifyJournalEntries(signals, manualTrades, quotes);
+    let list = unifyJournalEntries(signals, manualTrades, quotes, user);
     if (sourceFilter === 'SIGNALS') {
       list = list.filter((t) => !t.isManual);
     } else if (sourceFilter === 'MANUAL') {
       list = list.filter((t) => t.isManual);
     }
     return list;
-  }, [signals, manualTrades, quotes, sourceFilter]);
+  }, [signals, manualTrades, quotes, sourceFilter, user]);
 
   // Calendar cells for current year and month
   const calendarCells = useMemo(() => {

@@ -25,7 +25,7 @@ export function calculateSignalAchievedRR(
   currentPrice?: number
 ): { rr: number; status: 'WIN' | 'LOSS' | 'BREAKEVEN' | 'RUNNING'; label: string } {
   const isBuy = signal.type.toUpperCase().includes('BUY');
-  const riskDist = Math.abs(signal.entryPrice - signal.stopLoss) || 1;
+  const riskDist = Math.max(0.0001, Math.abs(signal.entryPrice - signal.stopLoss));
 
   switch (signal.outcomeStatus) {
     case 'TP3_HIT': {
@@ -55,8 +55,33 @@ export function calculateSignalAchievedRR(
     case 'SL_HIT':
       return { rr: -1.0, status: 'LOSS', label: 'Stop Loss Hit 🛑' };
 
-    case 'CANCELLED':
-      return { rr: 0, status: 'BREAKEVEN', label: 'Anulat' };
+    case 'CANCELLED': {
+      const finalExit = signal.exitPrice || (currentPrice && currentPrice > 0 ? currentPrice : signal.entryPrice);
+      const move = isBuy ? (finalExit - signal.entryPrice) : (signal.entryPrice - finalExit);
+      const rawRr = Math.round((move / riskDist) * 10) / 10;
+
+      if (signal.pnl !== undefined) {
+        if (signal.pnl > 0) {
+          return { rr: Math.max(0.1, rawRr), status: 'WIN', label: `Închis Manual (+$${signal.pnl.toFixed(2)})` };
+        } else if (signal.pnl < 0) {
+          return { rr: Math.min(-0.1, rawRr), status: 'LOSS', label: `Închis Manual (-$${Math.abs(signal.pnl).toFixed(2)})` };
+        } else {
+          return { rr: 0, status: 'BREAKEVEN', label: 'Închis Manual (BE)' };
+        }
+      }
+
+      if (signal.isEntryTriggered || (finalExit && finalExit !== signal.entryPrice)) {
+        if (move > 0) {
+          return { rr: Math.max(0.1, rawRr), status: 'WIN', label: `Închis Manual Profit (+${rawRr}R)` };
+        } else if (move < 0) {
+          return { rr: Math.min(-0.1, rawRr), status: 'LOSS', label: `Închis Manual Pierdere (${rawRr}R)` };
+        } else {
+          return { rr: 0, status: 'BREAKEVEN', label: 'Închis Manual (BE)' };
+        }
+      }
+
+      return { rr: 0, status: 'BREAKEVEN', label: 'Ordin Anulat' };
+    }
 
     case 'RUNNING': {
       if (typeof currentPrice === 'number' && currentPrice > 0) {
@@ -81,7 +106,8 @@ export function calculateSignalAchievedRR(
 
 export function convertSignalToJournalEntry(
   signal: TradingSignal,
-  quotes?: Record<string, MarketQuote>
+  quotes?: Record<string, MarketQuote>,
+  user?: any
 ): TradeJournalEntry {
   const currentQuote = quotes ? quotes[signal.instrumentId] : undefined;
   const currPrice = currentQuote?.price ?? signal.currentMarketPrice;
@@ -91,23 +117,68 @@ export function convertSignalToJournalEntry(
   const dKey = getLocalDateKey(signal.createdAt);
   const timeStr = formatTimeFromDate(signal.createdAt);
 
+  const accountBalance = user?.accountBalance || 100000;
+  const riskPerTrade = user?.riskSettings?.riskPerTrade ?? 1.0;
+  const dollarRisk = Math.max(10, Math.round(accountBalance * (riskPerTrade / 100)));
+
   const hasRealPnl = signal.pnl !== undefined && typeof signal.pnl === 'number';
-  const realPnl = hasRealPnl ? Math.round(signal.pnl! * 100) / 100 : undefined;
+  let realPnl: number;
+  if (hasRealPnl) {
+    realPnl = Math.round(signal.pnl! * 100) / 100;
+  } else if (status === 'WIN') {
+    realPnl = Math.round(dollarRisk * rr * 100) / 100;
+  } else if (status === 'LOSS') {
+    realPnl = rr === -1.0 ? -dollarRisk : Math.round(dollarRisk * rr * 100) / 100;
+  } else if (status === 'BREAKEVEN') {
+    realPnl = 0;
+  } else {
+    realPnl = Math.round(dollarRisk * rr * 100) / 100;
+  }
 
   let finalStatus = status;
   let finalLabel = label;
   if (hasRealPnl && realPnl !== undefined) {
     if (realPnl > 0) {
       finalStatus = 'WIN';
-      finalLabel = `MT5 Realizat (+$${realPnl.toFixed(2)})`;
+      finalLabel = signal.outcomeStatus === 'TP3_HIT'
+        ? `TP3 Realizat (+$${realPnl.toFixed(2)})`
+        : signal.outcomeStatus === 'TP2_HIT'
+        ? `TP2 Realizat (+$${realPnl.toFixed(2)})`
+        : `Profit Realizat (+$${realPnl.toFixed(2)})`;
     } else if (realPnl < 0) {
       finalStatus = 'LOSS';
-      finalLabel = `MT5 Realizat (-$${Math.abs(realPnl).toFixed(2)})`;
+      finalLabel = `Pierdere Realizată (-$${Math.abs(realPnl).toFixed(2)})`;
     } else {
       finalStatus = 'BREAKEVEN';
-      finalLabel = 'MT5 BE ($0.00)';
+      finalLabel = 'BE Realizat ($0.00)';
     }
+  } else if (status === 'WIN') {
+    finalLabel = signal.outcomeStatus === 'TP3_HIT'
+      ? `TP3 Max Hit (+$${realPnl.toFixed(2)}) 💎`
+      : signal.outcomeStatus === 'TP2_HIT'
+      ? `TP2 Hit (+$${realPnl.toFixed(2)}) 🚀`
+      : signal.outcomeStatus === 'TP1_HIT'
+      ? `TP1 Securizat (+$${realPnl.toFixed(2)}) 🎯`
+      : label;
+  } else if (status === 'LOSS') {
+    finalLabel = signal.outcomeStatus === 'SL_HIT'
+      ? `Stop Loss (-$${Math.abs(realPnl).toFixed(2)}) 🛑`
+      : label;
   }
+
+  const exitPrice =
+    signal.exitPrice ||
+    (signal.outcomeStatus === 'TP3_HIT'
+      ? signal.targetPrice3
+      : signal.outcomeStatus === 'TP2_HIT'
+      ? signal.targetPrice2
+      : signal.outcomeStatus === 'TP1_HIT'
+      ? signal.targetPrice1
+      : finalStatus === 'LOSS'
+      ? signal.stopLoss
+      : currPrice);
+
+  const takeProfit = signal.targetPrice3 || signal.targetPrice2 || signal.targetPrice1;
 
   return {
     id: `sig_journal_${signal.id}`,
@@ -120,14 +191,8 @@ export function convertSignalToJournalEntry(
     executionType: signal.executionType || (isBuy ? 'BUY MARKET' : 'SELL MARKET'),
     entryPrice: signal.entryPrice,
     stopLoss: signal.stopLoss,
-    takeProfit: signal.targetPrice2 || signal.targetPrice1,
-    exitPrice:
-      signal.exitPrice ||
-      (finalStatus === 'WIN'
-        ? signal.targetPrice2 || signal.targetPrice1
-        : finalStatus === 'LOSS'
-        ? signal.stopLoss
-        : currPrice),
+    takeProfit: takeProfit,
+    exitPrice: exitPrice,
     rrAchieved: rr,
     pnl: realPnl,
     status: finalStatus,
@@ -136,7 +201,7 @@ export function convertSignalToJournalEntry(
     notes: signal.summary || signal.rationale || '',
     timeframe: signal.timeframe,
     linkedSignalId: signal.id,
-    isManual: false,
+    isManual: signal.status === 'CANCELLED' && Boolean(signal.cancelReasonRo?.includes('manual')),
     generatedAt: signal.createdAt,
     entryDate: dKey,
     entryTime: timeStr,
@@ -164,22 +229,73 @@ export function isDemoOrSampleTrade(trade: any): boolean {
 export function unifyJournalEntries(
   signals: TradingSignal[],
   manualEntries: TradeJournalEntry[],
-  quotes?: Record<string, MarketQuote>
+  quotes?: Record<string, MarketQuote>,
+  user?: any
 ): TradeJournalEntry[] {
   // Strip out any demo or dummy sample entries
   const cleanManual = (manualEntries || []).filter((m) => !isDemoOrSampleTrade(m));
-  const convertedSignals = (signals || []).map((s) => convertSignalToJournalEntry(s, quotes));
-  const linkedSignalIds = new Set(
-    cleanManual.filter((m) => m.linkedSignalId).map((m) => m.linkedSignalId)
-  );
+  const convertedSignals = (signals || []).map((s) => convertSignalToJournalEntry(s, quotes, user));
 
-  // Exclude signals that already have an explicit manual override
-  const cleanConverted = convertedSignals.filter((s) => !linkedSignalIds.has(s.linkedSignalId));
+  const manualMap = new Map<string, TradeJournalEntry>();
+  for (const m of cleanManual) {
+    const key = m.linkedSignalId || m.id;
+    manualMap.set(key, m);
+  }
 
-  const all = [...cleanManual, ...cleanConverted];
+  const result: TradeJournalEntry[] = [];
+  const processedKeys = new Set<string>();
+
+  for (const cs of convertedSignals) {
+    const key = cs.linkedSignalId || cs.id;
+    processedKeys.add(key);
+    const existingManual = manualMap.get(key);
+
+    if (existingManual) {
+      // If signal reached a milestone (TP1, TP2, TP3, SL) or has higher achieved RR / profit:
+      // Always update the journal entry to reflect the latest status, TP3 milestone, and profit!
+      const csRr = cs.rrAchieved || 0;
+      const exRr = existingManual.rrAchieved || 0;
+      const isProgressed = cs.status === 'WIN' && (csRr > exRr || cs.outcomeLabel.includes('TP3') || cs.outcomeLabel.includes('TP2'));
+      const isTerminalUpdate = (cs.status === 'WIN' || cs.status === 'LOSS') && existingManual.status === 'RUNNING';
+
+      if (isProgressed || isTerminalUpdate) {
+        result.push({
+          ...existingManual,
+          status: cs.status,
+          outcomeLabel: cs.outcomeLabel,
+          rrAchieved: cs.rrAchieved,
+          pnl: cs.pnl,
+          exitPrice: cs.exitPrice,
+          takeProfit: cs.takeProfit,
+          closedAt: cs.closedAt || existingManual.closedAt,
+        });
+      } else {
+        // Keep existing manual details, ensuring pnl is not lost
+        if (existingManual.pnl === undefined && cs.pnl !== undefined) {
+          result.push({
+            ...existingManual,
+            pnl: cs.pnl,
+            rrAchieved: existingManual.rrAchieved || cs.rrAchieved,
+          });
+        } else {
+          result.push(existingManual);
+        }
+      }
+    } else {
+      result.push(cs);
+    }
+  }
+
+  // Include all manual entries that do not have an active signal (e.g. manually closed signals)
+  for (const m of cleanManual) {
+    const key = m.linkedSignalId || m.id;
+    if (!processedKeys.has(key)) {
+      result.push(m);
+    }
+  }
 
   // Sort by date + time descending
-  return all.sort((a, b) => {
+  return result.sort((a, b) => {
     const timeA = new Date(`${a.date}T${a.time || '12:00'}:00`).getTime();
     const timeB = new Date(`${b.date}T${b.time || '12:00'}:00`).getTime();
     return timeB - timeA;

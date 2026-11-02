@@ -20,7 +20,7 @@ import { SessionProfitabilityBentoModule } from './components/SessionProfitabili
 import { MarketQuote, TradingSignal, InstrumentId, TimeFrame, UserApiKeys, CustomSignalRule, UserProfile, TradeJournalEntry } from './types';
 import { evaluateSignalOutcome, filter30DaySignals, mergeSignals } from './utils/signalUtils';
 import { getMarketScheduleStatus, isSignalExpiredByMarketClose } from './utils/marketSchedule';
-import { INITIAL_SAMPLE_TRADES, isDemoOrSampleTrade } from './utils/tradeJournalUtils';
+import { INITIAL_SAMPLE_TRADES, isDemoOrSampleTrade, getLocalDateKey, formatTimeFromDate } from './utils/tradeJournalUtils';
 import { ShieldCheck, Info, Sparkles, BarChart2, Sliders, Newspaper, LayoutGrid, AlertTriangle } from 'lucide-react';
 
 const LOCAL_STORAGE_SIGNALS_KEY = 'market_ai_signals_v2';
@@ -719,10 +719,66 @@ export default function App() {
 
   const handleCloseTrade = async (signalId: string) => {
     const targetSig = signals.find((s) => s.id === signalId);
-    const liveQ = targetSig ? quotes[targetSig.instrumentId] : null;
+    if (!targetSig) return;
+    const liveQ = quotes[targetSig.instrumentId];
     const exitPrice = liveQ && liveQ.price > 0 ? liveQ.price : (targetSig?.currentMarketPrice || targetSig?.entryPrice || 0);
 
-    // 1. Mark as CANCELLED with manual close reason
+    const isBuy = (targetSig.type || '').toUpperCase().includes('BUY');
+    const riskDist = Math.max(0.0001, Math.abs(targetSig.entryPrice - targetSig.stopLoss));
+    const move = isBuy ? (exitPrice - targetSig.entryPrice) : (targetSig.entryPrice - exitPrice);
+    const rr = Math.round((move / riskDist) * 10) / 10;
+
+    const accountBalance = user?.accountBalance || 100000;
+    const riskPerTrade = user?.riskSettings?.riskPerTrade ?? 1.0;
+    const dollarRisk = Math.max(10, Math.round(accountBalance * (riskPerTrade / 100)));
+
+    const finalPnl = targetSig.pnl !== undefined
+      ? Math.round(targetSig.pnl * 100) / 100
+      : Math.round(dollarRisk * rr * 100) / 100;
+    const finalStatus: 'WIN' | 'LOSS' | 'BREAKEVEN' = finalPnl > 0 ? 'WIN' : finalPnl < 0 ? 'LOSS' : 'BREAKEVEN';
+    const outcomeLabel = finalPnl > 0
+      ? `Închis Manual Profit (+$${finalPnl.toFixed(2)})`
+      : finalPnl < 0
+      ? `Închis Manual Pierdere (-$${Math.abs(finalPnl).toFixed(2)})`
+      : 'Închis Manual (BE)';
+
+    const nowIso = new Date().toISOString();
+    const dKey = getLocalDateKey(targetSig.createdAt);
+    const timeStr = formatTimeFromDate(targetSig.createdAt);
+
+    // 1. Create and persist permanent trade journal entry with real profit / loss
+    const journalEntry: TradeJournalEntry = {
+      id: `sig_journal_${targetSig.id}`,
+      date: dKey,
+      time: timeStr,
+      instrumentId: targetSig.instrumentId,
+      symbol: targetSig.symbol,
+      instrumentName: targetSig.instrumentName,
+      direction: isBuy ? 'BUY' : 'SELL',
+      executionType: targetSig.executionType || (isBuy ? 'BUY MARKET' : 'SELL MARKET'),
+      entryPrice: targetSig.entryPrice,
+      stopLoss: targetSig.stopLoss,
+      takeProfit: targetSig.targetPrice3 || targetSig.targetPrice2 || targetSig.targetPrice1,
+      exitPrice: exitPrice,
+      rrAchieved: rr,
+      pnl: finalPnl,
+      status: finalStatus,
+      outcomeLabel: outcomeLabel,
+      setup: targetSig.title || 'Manual Closed Trade',
+      notes: `Închis manual la prețul de $${exitPrice} (${finalPnl >= 0 ? '+' : ''}$${finalPnl.toFixed(2)})`,
+      timeframe: targetSig.timeframe,
+      linkedSignalId: targetSig.id,
+      isManual: true,
+      generatedAt: targetSig.createdAt,
+      entryDate: dKey,
+      entryTime: timeStr,
+      closedAt: nowIso,
+      createdAt: targetSig.createdAt,
+    };
+
+    handleSaveManualTrade(journalEntry);
+
+    // 2. Mark signal as CANCELLED / CLOSED with manual close details
     setSignals((prev) =>
       prev.map((s) => {
         if (s.id === signalId) {
@@ -730,17 +786,19 @@ export default function App() {
             ...s,
             status: 'CANCELLED',
             outcomeStatus: 'CANCELLED',
-            cancelReasonRo: 'Închis manual din interfață (Comandă Stop MT5 / NinjaTrader)',
-            cancelReasonEn: 'Manually closed from dashboard (Stop order MT5 / NinjaTrader)',
-            closedAt: new Date().toISOString(),
+            cancelReasonRo: `Închis manual din interfață la $${exitPrice} (${finalPnl >= 0 ? '+' : ''}$${finalPnl.toFixed(2)})`,
+            cancelReasonEn: `Manually closed from dashboard at $${exitPrice} (${finalPnl >= 0 ? '+' : ''}$${finalPnl.toFixed(2)})`,
+            closedAt: nowIso,
             exitPrice: exitPrice,
+            pnl: finalPnl,
+            realizedProfit: finalPnl,
           };
         }
         return s;
       })
     );
 
-    // 2. Add to deletedSignalIds so MT5 & NinjaTrader receive it in cancelled_ids immediately
+    // 3. Add to deletedSignalIds so MT5 & NinjaTrader receive it in cancelled_ids immediately
     const updatedDeleted = Array.from(new Set([...deletedSignalIds, signalId]));
     setDeletedSignalIds(updatedDeleted);
     try {
@@ -749,7 +807,7 @@ export default function App() {
       console.warn('Could not save deletedSignalIds to localStorage:', e);
     }
 
-    // 3. Post to /api/user/close-trade
+    // 4. Post to /api/user/close-trade
     const token = authToken || localStorage.getItem('market_ai_auth_token');
     if (token) {
       try {
@@ -759,7 +817,14 @@ export default function App() {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ signalId, exitPrice }),
+          body: JSON.stringify({
+            signalId,
+            exitPrice,
+            pnl: finalPnl,
+            status: finalStatus,
+            outcomeLabel,
+            journalEntry,
+          }),
         });
       } catch (err) {
         console.warn('Cloud close-trade failed:', err);
@@ -775,25 +840,94 @@ export default function App() {
 
     const closingIds = activeSigs.map((s) => s.id);
     const nowIso = new Date().toISOString();
+    const accountBalance = user?.accountBalance || 100000;
+    const riskPerTrade = user?.riskSettings?.riskPerTrade ?? 1.0;
+    const dollarRisk = Math.max(10, Math.round(accountBalance * (riskPerTrade / 100)));
+
+    const createdJournalEntries: TradeJournalEntry[] = [];
 
     setSignals((prev) =>
       prev.map((s) => {
         if (closingIds.includes(s.id)) {
           const liveQ = quotes[s.instrumentId];
           const exitPrice = liveQ && liveQ.price > 0 ? liveQ.price : (s.currentMarketPrice || s.entryPrice || 0);
+          const isBuy = (s.type || '').toUpperCase().includes('BUY');
+          const riskDist = Math.max(0.0001, Math.abs(s.entryPrice - s.stopLoss));
+          const move = isBuy ? (exitPrice - s.entryPrice) : (s.entryPrice - exitPrice);
+          const rr = Math.round((move / riskDist) * 10) / 10;
+          const finalPnl = s.pnl !== undefined
+            ? Math.round(s.pnl * 100) / 100
+            : Math.round(dollarRisk * rr * 100) / 100;
+          const finalStatus: 'WIN' | 'LOSS' | 'BREAKEVEN' = finalPnl > 0 ? 'WIN' : finalPnl < 0 ? 'LOSS' : 'BREAKEVEN';
+          const outcomeLabel = finalPnl > 0
+            ? `Închis Manual Profit (+$${finalPnl.toFixed(2)})`
+            : finalPnl < 0
+            ? `Închis Manual Pierdere (-$${Math.abs(finalPnl).toFixed(2)})`
+            : 'Închis Manual (BE)';
+
+          const dKey = getLocalDateKey(s.createdAt);
+          const timeStr = formatTimeFromDate(s.createdAt);
+
+          const jEntry: TradeJournalEntry = {
+            id: `sig_journal_${s.id}`,
+            date: dKey,
+            time: timeStr,
+            instrumentId: s.instrumentId,
+            symbol: s.symbol,
+            instrumentName: s.instrumentName,
+            direction: isBuy ? 'BUY' : 'SELL',
+            executionType: s.executionType || (isBuy ? 'BUY MARKET' : 'SELL MARKET'),
+            entryPrice: s.entryPrice,
+            stopLoss: s.stopLoss,
+            takeProfit: s.targetPrice3 || s.targetPrice2 || s.targetPrice1,
+            exitPrice: exitPrice,
+            rrAchieved: rr,
+            pnl: finalPnl,
+            status: finalStatus,
+            outcomeLabel: outcomeLabel,
+            setup: s.title || 'Manual Closed Trade (Close All)',
+            notes: `Închis manual la comanda Închidere Totală ($${exitPrice})`,
+            timeframe: s.timeframe,
+            linkedSignalId: s.id,
+            isManual: true,
+            generatedAt: s.createdAt,
+            entryDate: dKey,
+            entryTime: timeStr,
+            closedAt: nowIso,
+            createdAt: s.createdAt,
+          };
+          createdJournalEntries.push(jEntry);
+
           return {
             ...s,
             status: 'CANCELLED',
             outcomeStatus: 'CANCELLED',
-            cancelReasonRo: 'Închis manual din interfață (Comandă Închidere Totală)',
-            cancelReasonEn: 'Manually closed from dashboard (Close All command)',
+            cancelReasonRo: `Închis manual din interfață la $${exitPrice} (${finalPnl >= 0 ? '+' : ''}$${finalPnl.toFixed(2)})`,
+            cancelReasonEn: `Manually closed from dashboard at $${exitPrice} (${finalPnl >= 0 ? '+' : ''}$${finalPnl.toFixed(2)})`,
             closedAt: nowIso,
             exitPrice: exitPrice,
+            pnl: finalPnl,
+            realizedProfit: finalPnl,
           };
         }
         return s;
       })
     );
+
+    // Save all to manualTrades
+    if (createdJournalEntries.length > 0) {
+      setManualTrades((prev) => {
+        const existingMap = new Map(prev.map((t) => [t.id, t]));
+        for (const e of createdJournalEntries) {
+          existingMap.set(e.id, e);
+        }
+        const updated = Array.from(existingMap.values()).filter((t) => !isDemoOrSampleTrade(t));
+        try {
+          localStorage.setItem(LOCAL_STORAGE_MANUAL_TRADES_KEY, JSON.stringify(updated));
+        } catch (e) {}
+        return updated;
+      });
+    }
 
     const updatedDeleted = Array.from(new Set([...deletedSignalIds, ...closingIds]));
     setDeletedSignalIds(updatedDeleted);
@@ -812,7 +946,7 @@ export default function App() {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ signalIds: closingIds }),
+          body: JSON.stringify({ signalIds: closingIds, journalEntries: createdJournalEntries }),
         });
       } catch (err) {
         console.warn('Cloud close-all-trades failed:', err);
@@ -1031,6 +1165,7 @@ export default function App() {
     setSignals((prevSignals) => {
       let hasChanges = false;
       const newlyCancelledIds: string[] = [];
+      const milestoneJournalEntries: TradeJournalEntry[] = [];
 
       const updated = prevSignals.map((sig) => {
         const liveQuote = quotes[sig.instrumentId];
@@ -1053,6 +1188,79 @@ export default function App() {
 
         if (statusOrMilestoneChanged) {
           hasChanges = true;
+          const isBuy = (sig.type || '').toUpperCase().includes('BUY');
+          const riskDist = Math.max(0.0001, Math.abs(sig.entryPrice - sig.stopLoss));
+          const dollarRisk = Math.max(10, Math.round((user?.accountBalance || 100000) * ((user?.riskSettings?.riskPerTrade ?? 1.0) / 100)));
+
+          let milestoneExit = sig.exitPrice;
+          let calculatedPnl = sig.pnl;
+          let milestoneStatus: 'WIN' | 'LOSS' | 'BREAKEVEN' | 'RUNNING' = 'RUNNING';
+          let milestoneLabel = '';
+
+          if (evalResult.outcomeStatus === 'TP3_HIT') {
+            milestoneExit = sig.targetPrice3 || evalPrice;
+            const tp3Rr = sig.targetPrice3 ? Math.round((Math.abs(sig.targetPrice3 - sig.entryPrice) / riskDist) * 10) / 10 : 3.0;
+            calculatedPnl = sig.pnl !== undefined ? sig.pnl : Math.round(dollarRisk * Math.max(3.0, tp3Rr) * 100) / 100;
+            milestoneStatus = 'WIN';
+            milestoneLabel = `TP3 Max Hit (+$${calculatedPnl.toFixed(2)}) 💎`;
+          } else if (evalResult.outcomeStatus === 'TP2_HIT') {
+            milestoneExit = sig.targetPrice2 || evalPrice;
+            const tp2Rr = sig.targetPrice2 ? Math.round((Math.abs(sig.targetPrice2 - sig.entryPrice) / riskDist) * 10) / 10 : 2.0;
+            calculatedPnl = sig.pnl !== undefined ? sig.pnl : Math.round(dollarRisk * Math.max(2.0, tp2Rr) * 100) / 100;
+            milestoneStatus = 'WIN';
+            milestoneLabel = `TP2 Hit (+$${calculatedPnl.toFixed(2)}) 🚀`;
+          } else if (evalResult.outcomeStatus === 'TP1_HIT') {
+            milestoneExit = sig.targetPrice1 || evalPrice;
+            const tp1Rr = sig.targetPrice1 ? Math.round((Math.abs(sig.targetPrice1 - sig.entryPrice) / riskDist) * 10) / 10 : 1.0;
+            calculatedPnl = sig.pnl !== undefined ? sig.pnl : Math.round(dollarRisk * Math.max(1.0, tp1Rr) * 100) / 100;
+            milestoneStatus = 'WIN';
+            milestoneLabel = `TP1 Securizat (+$${calculatedPnl.toFixed(2)}) 🎯`;
+          } else if (evalResult.outcomeStatus === 'SL_HIT') {
+            milestoneExit = sig.stopLoss;
+            calculatedPnl = sig.pnl !== undefined ? sig.pnl : -dollarRisk;
+            milestoneStatus = 'LOSS';
+            milestoneLabel = `Stop Loss Hit (-$${Math.abs(calculatedPnl).toFixed(2)}) 🛑`;
+          } else if (evalResult.isBeHitAfterTp1 || evalResult.isBeHitAfterTp2) {
+            milestoneExit = sig.entryPrice;
+            calculatedPnl = sig.pnl !== undefined ? sig.pnl : 0;
+            milestoneStatus = 'BREAKEVEN';
+            milestoneLabel = 'Break-Even Hit 🛡️';
+          }
+
+          if (milestoneStatus !== 'RUNNING') {
+            const dKey = getLocalDateKey(sig.createdAt);
+            const timeStr = formatTimeFromDate(sig.createdAt);
+            const autoJEntry: TradeJournalEntry = {
+              id: `sig_journal_${sig.id}`,
+              date: dKey,
+              time: timeStr,
+              instrumentId: sig.instrumentId,
+              symbol: sig.symbol,
+              instrumentName: sig.instrumentName,
+              direction: isBuy ? 'BUY' : 'SELL',
+              executionType: sig.executionType || (isBuy ? 'BUY MARKET' : 'SELL MARKET'),
+              entryPrice: sig.entryPrice,
+              stopLoss: sig.stopLoss,
+              takeProfit: sig.targetPrice3 || sig.targetPrice2 || sig.targetPrice1,
+              exitPrice: milestoneExit || evalPrice,
+              rrAchieved: calculatedPnl !== undefined ? Math.round((calculatedPnl / dollarRisk) * 10) / 10 : 0,
+              pnl: calculatedPnl,
+              status: milestoneStatus,
+              outcomeLabel: milestoneLabel,
+              setup: sig.title || 'Signal Automated Execution',
+              notes: `Atingere milestone: ${evalResult.outcomeStatus}`,
+              timeframe: sig.timeframe,
+              linkedSignalId: sig.id,
+              isManual: false,
+              generatedAt: sig.createdAt,
+              entryDate: dKey,
+              entryTime: timeStr,
+              closedAt: (evalResult.outcomeStatus === 'TP3_HIT' || evalResult.outcomeStatus === 'SL_HIT' || evalResult.isBeHitAfterTp1 || evalResult.isBeHitAfterTp2) ? (sig.closedAt || new Date().toISOString()) : undefined,
+              createdAt: sig.createdAt,
+            };
+            milestoneJournalEntries.push(autoJEntry);
+          }
+
           return {
             ...sig,
             status: isNewlyCancelled ? 'CANCELLED' : sig.status,
@@ -1064,10 +1272,55 @@ export default function App() {
             isBeHitAfterTp2: evalResult.isBeHitAfterTp2 ?? sig.isBeHitAfterTp2,
             cancelReasonRo: evalResult.cancelReasonRo || sig.cancelReasonRo,
             cancelReasonEn: evalResult.cancelReasonEn || sig.cancelReasonEn,
+            exitPrice: milestoneExit,
+            pnl: calculatedPnl,
+            realizedProfit: calculatedPnl,
+            closedAt: (evalResult.outcomeStatus === 'TP3_HIT' || evalResult.outcomeStatus === 'SL_HIT' || evalResult.isBeHitAfterTp1 || evalResult.isBeHitAfterTp2) ? (sig.closedAt || new Date().toISOString()) : sig.closedAt,
           };
         }
         return sig;
       });
+
+      if (milestoneJournalEntries.length > 0) {
+        setManualTrades((prev) => {
+          const map = new Map(prev.map((t) => [t.id, t]));
+          for (const m of milestoneJournalEntries) {
+            const existing = map.get(m.id);
+            if (existing) {
+              map.set(m.id, {
+                ...existing,
+                status: m.status,
+                outcomeLabel: m.outcomeLabel,
+                rrAchieved: m.rrAchieved,
+                pnl: m.pnl,
+                exitPrice: m.exitPrice,
+                takeProfit: m.takeProfit,
+                closedAt: m.closedAt || existing.closedAt,
+              });
+            } else {
+              map.set(m.id, m);
+            }
+          }
+          const updatedTrades = Array.from(map.values()).filter((t) => !isDemoOrSampleTrade(t));
+          try {
+            localStorage.setItem(LOCAL_STORAGE_MANUAL_TRADES_KEY, JSON.stringify(updatedTrades));
+          } catch (e) {}
+
+          const token = authToken || localStorage.getItem('market_ai_auth_token');
+          if (token) {
+            fetch('/api/user/sync-data', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({ tradeJournal: updatedTrades }),
+            }).catch(() => {});
+          }
+
+          return updatedTrades;
+        });
+      }
 
       if (newlyCancelledIds.length > 0) {
         setDeletedSignalIds((prevDel) => {
@@ -1096,7 +1349,7 @@ export default function App() {
 
       return hasChanges ? updated : prevSignals;
     });
-  }, [quotes]);
+  }, [quotes, user, authToken]);
 
   // Periodic check for 23:00 Romania time market close cutoff for unactivated orders
   useEffect(() => {
@@ -1600,6 +1853,7 @@ export default function App() {
                 setSelectedInstrument(sig.instrumentId);
               }}
               lang={lang}
+              user={user}
             />
           </div>
         )}
