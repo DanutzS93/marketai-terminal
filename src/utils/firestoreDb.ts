@@ -1,33 +1,14 @@
-import { initializeApp, getApps, getApp } from 'firebase/app';
-import {
-  getFirestore,
-  doc,
-  getDoc,
-  setDoc,
-  updateDoc,
-  deleteDoc,
-  collection,
-  getDocs,
-  disableNetwork,
-} from 'firebase/firestore';
 import fs from 'fs';
 import path from 'path';
-import firebaseConfigData from '../../firebase-applet-config.json';
 import {
+  isSupabaseConfigured,
+  fetchUsersFromSupabase,
   saveUserToSupabase,
   deleteUserFromSupabase,
-  fetchUsersFromSupabase,
+  fetchInviteCodesFromSupabase,
   saveInviteCodeToSupabase,
   deleteInviteCodeFromSupabase,
-  fetchInviteCodesFromSupabase,
-  isSupabaseConfigured,
 } from './supabaseDb';
-
-const firebaseApp = getApps().length === 0 ? initializeApp(firebaseConfigData) : getApp();
-
-export const firestoreDb = firebaseConfigData.firestoreDatabaseId
-  ? getFirestore(firebaseApp, firebaseConfigData.firestoreDatabaseId)
-  : getFirestore(firebaseApp);
 
 export interface StoredUser {
   id: string;
@@ -83,21 +64,11 @@ export interface StoredInviteCode {
 const DB_FILE = path.join(process.cwd(), 'users_cloud_db.json');
 const INVITE_CODES_FILE = path.join(process.cwd(), 'invite_codes_db.json');
 
-// In-memory cache synced with Firestore for fast synchronous access
+// In-memory cache synced with Supabase and local disk for fast 0ms access
 let usersCache: Record<string, StoredUser> = readLocalUsersFile();
 let inviteCodesCache: Record<string, StoredInviteCode> = readLocalInviteCodesFile();
 let isInitialized = false;
 let isInitializing = false;
-let isQuotaExhausted = false;
-
-function withTimeout<T>(promise: Promise<T>, ms: number = 3000, fallbackName: string = 'Firestore'): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(`${fallbackName} request timed out after ${ms}ms`)), ms)
-    ),
-  ]);
-}
 
 function sanitizeUserObj(user: StoredUser): StoredUser {
   if (!user) return user;
@@ -174,7 +145,7 @@ function readLocalUsersFile(): Record<string, StoredUser> {
 
 function writeLocalUsersFile(users: Record<string, StoredUser>): void {
   try {
-    fs.writeFile(DB_FILE, JSON.stringify(users), 'utf-8', (err) => {
+    fs.writeFile(DB_FILE, JSON.stringify(users, null, 2), 'utf-8', (err) => {
       if (err) console.warn('⚠️ Could not write users_cloud_db.json:', err);
     });
   } catch (e) {
@@ -202,11 +173,12 @@ function writeLocalInviteCodesFile(codes: Record<string, StoredInviteCode>): voi
   }
 }
 
+/**
+ * Initialize cache from Supabase (primary) and local disk (fallback)
+ */
 export async function initFirestoreCache(): Promise<void> {
   if (isInitialized) return;
-  if (isInitializing) {
-    return;
-  }
+  if (isInitializing) return;
 
   isInitializing = true;
   try {
@@ -214,7 +186,7 @@ export async function initFirestoreCache(): Promise<void> {
     const localUsers = readLocalUsersFile();
     let mergedUsers: Record<string, StoredUser> = { ...localUsers };
 
-    // 1.5. Read Supabase users first if Supabase is live & configured
+    // 2. Read Supabase users first if Supabase is live & configured
     if (isSupabaseConfigured()) {
       try {
         const supabaseUsers = await fetchUsersFromSupabase();
@@ -226,6 +198,7 @@ export async function initFirestoreCache(): Promise<void> {
                 ...sbUser,
                 signals: sbUser.signals?.length ? sbUser.signals : mergedUsers[sbUser.id].signals,
                 customRules: sbUser.customRules?.length ? sbUser.customRules : mergedUsers[sbUser.id].customRules,
+                tradeJournal: sbUser.tradeJournal?.length ? sbUser.tradeJournal : mergedUsers[sbUser.id].tradeJournal,
               };
             } else {
               mergedUsers[sbUser.id] = sbUser;
@@ -235,27 +208,6 @@ export async function initFirestoreCache(): Promise<void> {
         }
       } catch (err) {
         console.warn('⚠️ Supabase sync note:', err);
-      }
-    } else if (!isQuotaExhausted) {
-      // 2. Read Firestore users only if Supabase is not configured
-      try {
-        const usersSnap = await withTimeout(getDocs(collection(firestoreDb, 'users')), 2000, 'getDocs(users)');
-        usersSnap.forEach((docSnap) => {
-          const fsUser = docSnap.data() as StoredUser;
-          if (mergedUsers[fsUser.id]) {
-            mergedUsers[fsUser.id] = {
-              ...mergedUsers[fsUser.id],
-              ...fsUser,
-              signals: fsUser.signals?.length ? fsUser.signals : mergedUsers[fsUser.id].signals,
-              customRules: fsUser.customRules?.length ? fsUser.customRules : mergedUsers[fsUser.id].customRules,
-            };
-          } else {
-            mergedUsers[fsUser.id] = fsUser;
-          }
-        });
-      } catch (err: any) {
-        isQuotaExhausted = true;
-        disableNetwork(firestoreDb).catch(() => {});
       }
     }
 
@@ -278,6 +230,7 @@ export async function initFirestoreCache(): Promise<void> {
         signals: [],
         customRules: [],
         apiKeys: {},
+        tradeJournal: [],
       };
       mergedUsers[adminId] = adminUser;
     } else if (!adminUser.passwordHash) {
@@ -287,39 +240,9 @@ export async function initFirestoreCache(): Promise<void> {
     usersCache = mergedUsers;
     writeLocalUsersFile(mergedUsers);
 
-    // Sync any missing local users to Firestore in background
-    if (!isQuotaExhausted) {
-      for (const u of Object.values(mergedUsers)) {
-        try {
-          await withTimeout(setDoc(doc(firestoreDb, 'users', u.id), u), 1500, `setDoc(user ${u.id})`);
-        } catch (e: any) {
-          if (String(e?.message || e).includes('RESOURCE_EXHAUSTED')) {
-            isQuotaExhausted = true;
-            disableNetwork(firestoreDb).catch(() => {});
-            break;
-          }
-        }
-      }
-    }
-
     // 4. Invite Codes Synchronization
     const localCodes = readLocalInviteCodesFile();
     let mergedCodes: Record<string, StoredInviteCode> = { ...localCodes };
-
-    if (!isQuotaExhausted) {
-      try {
-        const codesSnap = await withTimeout(getDocs(collection(firestoreDb, 'inviteCodes')), 3000, 'getDocs(inviteCodes)');
-        codesSnap.forEach((docSnap) => {
-          const fsCode = docSnap.data() as StoredInviteCode;
-          mergedCodes[fsCode.code] = { ...mergedCodes[fsCode.code], ...fsCode };
-        });
-      } catch (err: any) {
-        if (String(err?.message || err).includes('RESOURCE_EXHAUSTED')) {
-          isQuotaExhausted = true;
-          disableNetwork(firestoreDb).catch(() => {});
-        }
-      }
-    }
 
     if (isSupabaseConfigured()) {
       try {
@@ -351,24 +274,20 @@ export async function initFirestoreCache(): Promise<void> {
     inviteCodesCache = mergedCodes;
     writeLocalInviteCodesFile(mergedCodes);
 
-    if (!isQuotaExhausted) {
-      for (const codeObj of Object.values(mergedCodes)) {
-        try {
-          await withTimeout(setDoc(doc(firestoreDb, 'inviteCodes', codeObj.code), codeObj), 1500, `setDoc(invite ${codeObj.code})`);
-        } catch (e: any) {
-          if (String(e?.message || e).includes('RESOURCE_EXHAUSTED')) {
-            isQuotaExhausted = true;
-            disableNetwork(firestoreDb).catch(() => {});
-            break;
-          }
-        }
+    // Sync any missing invite codes or admin user to Supabase
+    if (isSupabaseConfigured()) {
+      for (const u of Object.values(mergedUsers)) {
+        saveUserToSupabase(u).catch(() => {});
+      }
+      for (const c of Object.values(mergedCodes)) {
+        saveInviteCodeToSupabase(c).catch(() => {});
       }
     }
 
     isInitialized = true;
-    console.log(`✅ Firestore database connected & synchronized successfully! Total users: ${Object.keys(usersCache).length}`);
+    console.log(`✅ Database connected & synchronized successfully (Supabase + Local Disk)! Total users: ${Object.keys(usersCache).length}`);
   } catch (err: any) {
-    console.error('❌ Firestore initialization error:', err);
+    console.error('❌ Database initialization error:', err);
   } finally {
     isInitializing = false;
   }
@@ -378,7 +297,7 @@ export function getUsersFromCache(): Record<string, StoredUser> {
   return usersCache;
 }
 
-// High-performance write debouncing & batching for disk and cloud
+// High-performance write debouncing & batching for disk and Supabase
 const pendingPersistUsers = new Map<string, StoredUser>();
 let persistTimer: NodeJS.Timeout | null = null;
 
@@ -387,28 +306,13 @@ async function flushPendingUsers() {
   const toSave = Array.from(pendingPersistUsers.values());
   pendingPersistUsers.clear();
 
-  // 1. Single asynchronous disk write for all batched users
+  // 1. Single disk write for all batched users
   writeLocalUsersFile(usersCache);
 
-  // 2. Persist each user in background without blocking web requests
+  // 2. Persist each user in background to Supabase without blocking web requests
   for (const user of toSave) {
     if (isSupabaseConfigured()) {
       saveUserToSupabase(user).catch((e) => console.warn('Supabase save background error:', e));
-    }
-
-    if (!isQuotaExhausted) {
-      try {
-        const cleanUser = JSON.parse(JSON.stringify(user));
-        await withTimeout(setDoc(doc(firestoreDb, 'users', user.id), cleanUser), 2000, `setDoc(user ${user.id})`);
-      } catch (err: any) {
-        const msg = String(err?.message || err);
-        if (msg.includes('RESOURCE_EXHAUSTED') || msg.includes('Quota limit exceeded') || msg.includes('timed out')) {
-          isQuotaExhausted = true;
-          disableNetwork(firestoreDb).catch(() => {});
-          console.warn(`[Firestore Offline/Timeout] Daily write limit or timeout reached for user ${user.id}. Stored in local disk & Supabase.`);
-          break;
-        }
-      }
     }
   }
 }
@@ -443,21 +347,6 @@ export async function deleteUserFromFirestore(userId: string): Promise<void> {
   if (isSupabaseConfigured()) {
     deleteUserFromSupabase(userId).catch((e) => console.warn('Supabase delete background error:', e));
   }
-
-  if (isQuotaExhausted) return;
-  try {
-    await withTimeout(deleteDoc(doc(firestoreDb, 'users', userId)), 2000, `deleteDoc(user ${userId})`);
-    console.log(`✅ User ${userId} deleted from Firestore!`);
-  } catch (err: any) {
-    const msg = String(err?.message || err);
-    if (msg.includes('RESOURCE_EXHAUSTED') || msg.includes('Quota limit exceeded') || msg.includes('timed out')) {
-      isQuotaExhausted = true;
-      disableNetwork(firestoreDb).catch(() => {});
-      console.warn(`[Firestore Offline/Timeout] Daily write limit or timeout reached for user ${userId}. Removed from local disk & Supabase.`);
-      return;
-    }
-    console.warn(`⚠️ Could not delete user ${userId} from Firestore:`, msg);
-  }
 }
 
 export function getInviteCodesFromCache(): Record<string, StoredInviteCode> {
@@ -470,20 +359,6 @@ export async function saveInviteCodeToFirestore(inviteCode: StoredInviteCode): P
 
   if (isSupabaseConfigured()) {
     saveInviteCodeToSupabase(inviteCode).catch((e) => console.warn('Supabase invite save background error:', e));
-  }
-
-  if (isQuotaExhausted) return;
-  try {
-    await withTimeout(setDoc(doc(firestoreDb, 'inviteCodes', inviteCode.code), inviteCode), 2000, `setDoc(invite ${inviteCode.code})`);
-  } catch (err: any) {
-    const msg = String(err?.message || err);
-    if (msg.includes('RESOURCE_EXHAUSTED') || msg.includes('Quota limit exceeded') || msg.includes('timed out')) {
-      isQuotaExhausted = true;
-      disableNetwork(firestoreDb).catch(() => {});
-      console.warn(`[Firestore Offline/Timeout] Daily write limit or timeout reached for invite code ${inviteCode.code}. Stored in local disk.`);
-      return;
-    }
-    console.warn(`⚠️ Could not save invite code ${inviteCode.code} to Firestore:`, msg);
   }
 }
 
@@ -498,19 +373,4 @@ export async function deleteInviteCodeFromFirestore(code: string): Promise<void>
       console.warn('Supabase invite delete error:', e);
     }
   }
-
-  if (isQuotaExhausted) return;
-  try {
-    await withTimeout(deleteDoc(doc(firestoreDb, 'inviteCodes', code)), 2000, `deleteDoc(invite ${code})`);
-  } catch (err: any) {
-    const msg = String(err?.message || err);
-    if (msg.includes('RESOURCE_EXHAUSTED') || msg.includes('Quota limit exceeded') || msg.includes('timed out')) {
-      isQuotaExhausted = true;
-      disableNetwork(firestoreDb).catch(() => {});
-      console.warn(`[Firestore Offline/Timeout] Daily write limit or timeout reached for invite code ${code}. Removed from local disk.`);
-      return;
-    }
-    console.warn(`⚠️ Could not delete invite code ${code} from Firestore:`, msg);
-  }
 }
-

@@ -166,7 +166,7 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
     }
   }, [signal?.id, signal?.timeframe]);
 
-  // Helper calculation for EMA
+  // Helper calculation for EMA (unrounded float to preserve smooth curves across all asset classes, including Forex)
   const calculateEMA = (data: { time: any; close: number }[], period: number) => {
     if (!data || data.length < period) return [];
     const k = 2 / (period + 1);
@@ -176,17 +176,17 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
       sum += data[i].close;
     }
     let prevEma = sum / period;
-    result.push({ time: data[period - 1].time, value: parseFloat(prevEma.toFixed(2)) });
+    result.push({ time: data[period - 1].time, value: prevEma });
 
     for (let i = period; i < data.length; i++) {
       const currentEma = data[i].close * k + prevEma * (1 - k);
-      result.push({ time: data[i].time, value: parseFloat(currentEma.toFixed(2)) });
+      result.push({ time: data[i].time, value: currentEma });
       prevEma = currentEma;
     }
     return result;
   };
 
-  // Helper calculation for SMA
+  // Helper calculation for SMA (unrounded float to preserve smooth curves across all asset classes, including Forex)
   const calculateSMA = (data: { time: any; close: number }[], period: number) => {
     if (!data || data.length < period) return [];
     const result: { time: any; value: number }[] = [];
@@ -195,7 +195,7 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
       for (let j = 0; j < period; j++) {
         sum += data[i - j].close;
       }
-      result.push({ time: data[i].time, value: parseFloat((sum / period).toFixed(2)) });
+      result.push({ time: data[i].time, value: sum / period });
     }
     return result;
   };
@@ -432,6 +432,20 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
 
     chartInstanceRef.current = chart;
 
+    // Determine precision and minMove dynamically based on instrument & price level
+    const inst = (signal.instrumentId || signal.symbol || '').toUpperCase();
+    const samplePrice = signal.currentMarketPrice || signal.entryPrice || 0;
+    const isForex5 = inst.includes('EUR') || inst.includes('GBP') || (samplePrice > 0 && samplePrice < 5);
+    const isForex3 = inst.includes('JPY') || (samplePrice >= 50 && samplePrice < 300 && !inst.includes('SPX') && !inst.includes('DOW') && !inst.includes('GOLD') && !inst.includes('NQ') && !inst.includes('ES') && !inst.includes('GC'));
+    const decimals = isForex5 ? 5 : isForex3 ? 3 : 2;
+    const minMove = isForex5 ? 0.00001 : isForex3 ? 0.001 : 0.01;
+
+    const seriesPriceFormat = {
+      type: 'price' as const,
+      precision: decimals,
+      minMove: minMove,
+    };
+
     // Candlestick Series
     const candlestickSeries = (chart as any).addCandlestickSeries
       ? (chart as any).addCandlestickSeries({
@@ -440,6 +454,7 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
           borderVisible: false,
           wickUpColor: '#10B981',
           wickDownColor: '#EF4444',
+          priceFormat: seriesPriceFormat,
         })
       : chart.addSeries(CandlestickSeries, {
           upColor: '#10B981',
@@ -447,6 +462,7 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
           borderVisible: false,
           wickUpColor: '#10B981',
           wickDownColor: '#EF4444',
+          priceFormat: seriesPriceFormat,
         });
 
     candlestickSeriesRef.current = candlestickSeries;
@@ -458,12 +474,14 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
           lineWidth: 2,
           title: 'EMA 20',
           priceLineVisible: false,
+          priceFormat: seriesPriceFormat,
         })
       : chart.addSeries(LineSeries, {
           color: '#38BDF8',
           lineWidth: 2,
           title: 'EMA 20',
           priceLineVisible: false,
+          priceFormat: seriesPriceFormat,
         });
 
     const smaSeries = (chart as any).addLineSeries
@@ -472,12 +490,14 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
           lineWidth: 2,
           title: 'SMA 50',
           priceLineVisible: false,
+          priceFormat: seriesPriceFormat,
         })
       : chart.addSeries(LineSeries, {
           color: '#F59E0B',
           lineWidth: 2,
           title: 'SMA 50',
           priceLineVisible: false,
+          priceFormat: seriesPriceFormat,
         });
 
     emaSeriesRef.current = emaSeries;
@@ -498,12 +518,6 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
     // Fetch Candles with Automatic Resilient Fallback
     setIsLoading(true);
     const targetSymbol = signal.symbol || signal.instrumentId;
-    const decimals =
-      signal.instrumentId === 'EURUSD' || signal.instrumentId === 'GBPUSD'
-        ? 5
-        : signal.instrumentId === 'USDJPY'
-        ? 3
-        : 2;
 
     const fetchCandles = async () => {
       try {
@@ -820,6 +834,13 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
   const tp3Distance = typeof tp3Price === 'number' ? Math.abs(tp3Price - entryPrice) : 0;
 
   const riskPercent = entryPrice > 0 ? ((riskDistance / entryPrice) * 100).toFixed(2) : '0.00';
+  const isForexPair =
+    (signal.instrumentId || signal.symbol || '').toUpperCase().includes('EUR') ||
+    (signal.instrumentId || signal.symbol || '').toUpperCase().includes('GBP') ||
+    (entryPrice > 0 && entryPrice < 5);
+  const distanceUnit = isForexPair ? 'pips' : 'pct';
+  const displayRiskDistance = isForexPair ? (riskDistance * 10000).toFixed(1) : riskDistance.toFixed(1);
+  const displayTp1Distance = isForexPair ? (tp1Distance * 10000).toFixed(1) : tp1Distance.toFixed(1);
   const execType =
     signal.executionType ||
     calculateExecutionType(signal.type, signal.entryPrice, signal.currentMarketPrice || signal.entryPrice);
@@ -1162,7 +1183,7 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
                         Distanță Risc (SL)
                       </span>
                       <span className="text-xs font-black text-rose-400 font-mono">
-                        -{riskDistance.toFixed(1)} pct ({riskPercent}%)
+                        -{displayRiskDistance} {distanceUnit} ({riskPercent}%)
                       </span>
                     </div>
 
@@ -1171,7 +1192,7 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
                         Țintă Principală (TP1)
                       </span>
                       <span className="text-xs font-black text-emerald-400 font-mono">
-                        +{tp1Distance.toFixed(1)} pct
+                        +{displayTp1Distance} {distanceUnit}
                       </span>
                     </div>
                   </div>
