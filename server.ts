@@ -5931,7 +5931,8 @@ app.all(['/api/mt5/signals', '/api/mt5/signals/poll'], (req, res) => {
   }
 
   // Check short-lived cache (TTL 3s) to eliminate redundant processing when multiple MT5 charts poll concurrently
-  const symbolParam = ((req.query.symbol as string) || (req.body && req.body.symbol)) as string;
+  const rawSymbol = ((req.query.symbol as string) || (req.body && req.body.symbol)) as string;
+  const symbolParam = (typeof rawSymbol === 'string' ? rawSymbol.trim() : '') || '';
   const nowMs = Date.now();
   const cacheKey = `${matchedUser.id}:${symbolParam || 'ALL'}`;
   const cached = mt5SignalsCache.get(cacheKey);
@@ -6078,7 +6079,7 @@ app.all(['/api/mt5/signals', '/api/mt5/signals/poll'], (req, res) => {
   const lastLog = pollLogMap.get(lastLogKey) || 0;
   if (formattedSignals.length > 0 || nowMs - lastLog > 30000) {
     pollLogMap.set(lastLogKey, nowMs);
-    console.log(`[MT5 EA Signals Poll] User: ${matchedUser.email || matchedUser.id}, Symbol: ${symbolParam || 'ALL'}, Sigs: ${formattedSignals.length}, Placed: ${placedIds.length}, Cancelled: ${cancelledIds.length}`);
+    console.log(`[MT5 EA Signals Poll] User: ${matchedUser.username || matchedUser.id}, Symbol: ${symbolParam || 'ALL'}, Sigs: ${formattedSignals.length}, Placed: ${placedIds.length}, Cancelled: ${cancelledIds.length}`);
   }
 
   const responsePayload = {

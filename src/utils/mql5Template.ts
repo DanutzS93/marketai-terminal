@@ -1,4 +1,4 @@
-export const MT5_EA_VERSION = '4.77';
+export const MT5_EA_VERSION = '4.78';
 
 export function getMql5EaCode(
   mt5Endpoint: string,
@@ -138,6 +138,10 @@ bool DoSymbolsMatch(string chartSym, string sigSym)
    if(chartSym == "" || sigSym == "") return true;
    string c = chartSym;
    string s = sigSym;
+   StringTrimLeft(c);
+   StringTrimRight(c);
+   StringTrimLeft(s);
+   StringTrimRight(s);
    StringToUpper(c);
    StringToUpper(s);
    
@@ -778,6 +782,7 @@ void SendAccountSync()
    string cleanKey = GetCleanApiKey();
    string headers = "Authorization: Bearer " + cleanKey + "\\r\\n" +
                     "Content-Type: application/json\\r\\n" +
+                    "User-Agent: Mozilla/5.0 MarketAI-Bridge/${MT5_EA_VERSION}\\r\\n" +
                     "Connection: close\\r\\n";
    
    long login = AccountInfoInteger(ACCOUNT_LOGIN);
@@ -802,12 +807,12 @@ void SendAccountSync()
    string payload = "{\\"accountNumber\\":\\"" + IntegerToString(login) + "\\",\\"accountServer\\":\\"" + serverName + "\\",\\"accountCurrency\\":\\"" + currency + "\\",\\"accountCompany\\":\\"" + company + "\\",\\"accountBalance\\":" + DoubleToString(balance, 2) + ",\\"equity\\":" + DoubleToString(equity, 2) + "}";
    int copied = StringToCharArray(payload, data, 0, WHOLE_ARRAY, CP_UTF8);
    if(copied > 0 && data[copied - 1] == 0) ArrayResize(data, copied - 1);
-   ArrayFree(result);
+   ArrayResize(result, 0);
    ResetLastError();
    
    string origin = ForceHttps("${currentOrigin}");
    string accountURL = origin + "/api/mt5/account?apiKey=" + cleanKey;
-   int res = WebRequest("POST", accountURL, headers, 4000, data, result, result_headers);
+   int res = WebRequest("POST", accountURL, headers, 8000, data, result, result_headers);
    if(res == -1)
    {
       int err = GetLastError();
@@ -908,6 +913,7 @@ void SendTradeUpdate(string signalId, string status, string outcome, string mile
    string cleanKey = GetCleanApiKey();
    string headers = "Authorization: Bearer " + cleanKey + "\\r\\n" +
                     "Content-Type: application/json\\r\\n" +
+                    "User-Agent: Mozilla/5.0 MarketAI-Bridge/${MT5_EA_VERSION}\\r\\n" +
                     "Connection: close\\r\\n";
    
    long login = AccountInfoInteger(ACCOUNT_LOGIN);
@@ -938,7 +944,7 @@ void SendTradeUpdate(string signalId, string status, string outcome, string mile
                     
    int copied = StringToCharArray(payload, data, 0, WHOLE_ARRAY, CP_UTF8);
    if(copied > 0 && data[copied - 1] == 0) ArrayResize(data, copied - 1);
-   ArrayFree(result);
+   ArrayResize(result, 0);
    ResetLastError();
    
    string updateURL = InpUpdateURL;
@@ -950,7 +956,7 @@ void SendTradeUpdate(string signalId, string status, string outcome, string mile
    if(StringFind(updateURL, "?") < 0) updateURL = updateURL + "?apiKey=" + cleanKey;
    else updateURL = updateURL + "&apiKey=" + cleanKey;
 
-   int res = WebRequest("POST", updateURL, headers, 4000, data, result, result_headers);
+   int res = WebRequest("POST", updateURL, headers, 8000, data, result, result_headers);
    if(res == 200)
    {
       Print("[MarketAI] Status & Realized PnL updated for signal ", signalId, " -> ", milestone, " | PnL: $", DoubleToString(pnl, 2), (exitPrice > 0 ? (" @ " + DoubleToString(exitPrice, 2)) : ""));
@@ -1157,6 +1163,8 @@ void SyncClosedHistoricalTrades()
 void FetchAndExecuteSignals()
 {
    string targetSymbol = (InpBrokerSymbol != "") ? InpBrokerSymbol : _Symbol;
+   StringTrimLeft(targetSymbol);
+   StringTrimRight(targetSymbol);
 
    // Diagnostic check for Algo Trading permissions in MT5
    if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED))
@@ -1187,30 +1195,18 @@ void FetchAndExecuteSignals()
    string origin = ForceHttps("${currentOrigin}");
    string signalsUrl = origin + "/api/mt5/signals?apiKey=" + cleanKey + "&symbol=" + safeSymbol;
    
-   // Direct JSON POST request with Connection: close to ensure instant TCP socket close on WinINet
+   // Direct JSON POST request with User-Agent and Connection: close
    string postHeaders = "Authorization: Bearer " + cleanKey + "\\r\\n" +
                         "Content-Type: application/json\\r\\n" +
+                        "User-Agent: Mozilla/5.0 MarketAI-Bridge/${MT5_EA_VERSION}\\r\\n" +
                         "Connection: close\\r\\n";
    string postPayload = "{\\\"apiKey\\\":\\\"" + cleanKey + "\\\",\\\"symbol\\\":\\\"" + targetSymbol + "\\\"}";
    int copied = StringToCharArray(postPayload, data, 0, WHOLE_ARRAY, CP_UTF8);
    if(copied > 0 && data[copied - 1] == 0) ArrayResize(data, copied - 1);
-   ArrayFree(result);
+   ArrayResize(result, 0);
    ResetLastError();
    
-   int res = WebRequest("POST", signalsUrl, postHeaders, 4000, data, result, result_headers);
-   
-   // Resilient fallback to GET if POST was rejected or timed out
-   if(res != 200 && res != 401 && res != 403)
-   {
-      string getHeaders = "Authorization: Bearer " + cleanKey + "\\r\\n" +
-                          "Connection: close\\r\\n" +
-                          "User-Agent: Mozilla/5.0 MarketAI-Bridge/${MT5_EA_VERSION}\\r\\n";
-      char getData[];
-      ArrayResize(getData, 0);
-      ArrayFree(result);
-      ResetLastError();
-      res = WebRequest("GET", signalsUrl, getHeaders, 4000, getData, result, result_headers);
-   }
+   int res = WebRequest("POST", signalsUrl, postHeaders, 8000, data, result, result_headers);
    
    if(res == -1)
    {
@@ -1236,7 +1232,7 @@ void FetchAndExecuteSignals()
          if(res == 401)
             Print("[MarketAI HTTP 401] Cheia API este invalida sau a expirat! Verificati InpApiKey: '", cleanKey, "'");
          else if(res == 1003)
-            Print("[MarketAI HTTP 1003] Timeout retea MT5 (WinINet). Server: '", origin, "' | LastError: ", GetLastError(), (StringLen(errBody) > 0 ? (" | Răspuns: " + errBody) : ""));
+            Print("[MarketAI HTTP 1003] Timeout conexiune MT5 (WinINet). Server: '", origin, "' | LastError: ", GetLastError(), (StringLen(errBody) > 0 ? (" | Răspuns: " + errBody) : ""));
          else
             Print("[MarketAI HTTP ", res, "] Serverul a raspuns: ", errBody);
          lastHttpErr = TimeCurrent();
