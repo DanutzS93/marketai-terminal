@@ -1,5 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { StoredUser, StoredInviteCode } from './firestoreDb';
+import { StoredUser, StoredInviteCode } from './usersDb';
 
 let supabaseClient: SupabaseClient | null = null;
 let lastSupabaseFailureTime = 0;

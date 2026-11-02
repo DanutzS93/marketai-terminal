@@ -1,37 +1,3 @@
-// Filter console.error and console.warn for known background Firestore quota limits
-const serverConsoleError = console.error;
-const serverConsoleWarn = console.warn;
-
-const shouldFilterServerMsg = (...args: any[]) => {
-  const str = args
-    .map((a) => {
-      if (typeof a === 'string') return a;
-      if (a && a.message) return a.message;
-      try {
-        return JSON.stringify(a);
-      } catch (e) {
-        return String(a);
-      }
-    })
-    .join(' ');
-  return (
-    str.includes('RESOURCE_EXHAUSTED') ||
-    str.includes('Quota limit exceeded') ||
-    str.includes('GrpcConnection RPC') ||
-    str.includes('certificate has expired')
-  );
-};
-
-console.error = (...args: any[]) => {
-  if (shouldFilterServerMsg(...args)) return;
-  serverConsoleError.apply(console, args);
-};
-
-console.warn = (...args: any[]) => {
-  if (shouldFilterServerMsg(...args)) return;
-  serverConsoleWarn.apply(console, args);
-};
-
 import http from 'http';
 import express from 'express';
 import path from 'path';
@@ -42,16 +8,16 @@ import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 import WebSocket, { WebSocketServer } from 'ws';
 import {
-  initFirestoreCache,
+  initUsersDbCache,
   getUsersFromCache,
-  saveUserToFirestore,
-  deleteUserFromFirestore,
+  saveUserToDb,
+  deleteUserFromDb,
   getInviteCodesFromCache,
-  saveInviteCodeToFirestore,
-  deleteInviteCodeFromFirestore,
+  saveInviteCodeToDb,
+  deleteInviteCodeFromDb,
   StoredUser,
   StoredInviteCode,
-} from './src/utils/firestoreDb';
+} from './src/utils/usersDb';
 import {
   isSupabaseConfigured,
   SUPABASE_SQL_SCHEMA,
@@ -173,8 +139,8 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
   next(err);
 });
 
-// Initialize Cloud Firestore database on boot (non-blocking)
-initFirestoreCache().catch((err) => console.error('Failed to init Firestore cache on boot:', err));
+// Initialize Users database cache on boot (non-blocking)
+initUsersDbCache().catch((err) => console.error('Failed to init Users DB cache on boot:', err));
 
 function loadUsersDb(): Record<string, StoredUser> {
   return { ...getUsersFromCache() };
@@ -182,10 +148,10 @@ function loadUsersDb(): Record<string, StoredUser> {
 
 async function saveUsersDb(users: Record<string, StoredUser>, modifiedUserId?: string) {
   if (modifiedUserId && users[modifiedUserId]) {
-    await saveUserToFirestore(users[modifiedUserId]);
+    await saveUserToDb(users[modifiedUserId]);
   } else {
     for (const userObj of Object.values(users)) {
-      await saveUserToFirestore(userObj);
+      await saveUserToDb(userObj);
     }
   }
 }
@@ -196,10 +162,10 @@ function loadInviteCodesDb(): Record<string, StoredInviteCode> {
 
 async function saveInviteCodesDb(codes: Record<string, StoredInviteCode>, modifiedCode?: string) {
   if (modifiedCode && codes[modifiedCode]) {
-    await saveInviteCodeToFirestore(codes[modifiedCode]);
+    await saveInviteCodeToDb(codes[modifiedCode]);
   } else {
     for (const codeObj of Object.values(codes)) {
-      await saveInviteCodeToFirestore(codeObj);
+      await saveInviteCodeToDb(codeObj);
     }
   }
 }
@@ -860,7 +826,7 @@ app.delete('/api/admin/invite-codes/:code', async (req, res) => {
   const codes = loadInviteCodesDb();
   if (codes[cleanCode]) {
     delete codes[cleanCode];
-    await deleteInviteCodeFromFirestore(cleanCode);
+    await deleteInviteCodeFromDb(cleanCode);
   }
 
   return res.json({ success: true });
@@ -917,7 +883,7 @@ app.post('/api/admin/users/create', async (req, res) => {
 
     return res.json({
       success: true,
-      message: `Contul utilizatorului ${newUser.username} a fost creat și salvat în Cloud Firestore!`,
+      message: `Contul utilizatorului ${newUser.username} a fost creat și salvat în baza de date!`,
       user: formatUserForClient(newUser),
     });
   }
@@ -997,7 +963,7 @@ app.get('/api/admin/supabase-status', async (req, res) => {
   });
 });
 
-// Admin endpoint: Trigger data migration from local/Firestore cache to Supabase
+// Admin endpoint: Trigger data migration from local cache to Supabase
 app.post('/api/admin/migrate-to-supabase', async (req, res) => {
   const admin = verifyAdminToken(req);
   if (!admin) return res.status(403).json({ error: 'Acces interzis! Necesită drepturi de administrator.' });
@@ -1039,7 +1005,7 @@ app.delete('/api/admin/users/:userId', async (req, res) => {
   }
 
   delete users[userId];
-  await deleteUserFromFirestore(userId);
+  await deleteUserFromDb(userId);
 
   return res.json({ success: true });
 });

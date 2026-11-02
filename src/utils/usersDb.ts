@@ -245,7 +245,7 @@ function writeLocalInviteCodesFile(codes: Record<string, StoredInviteCode>): voi
 /**
  * Initialize cache from Supabase (primary) and local disk (fallback)
  */
-export async function initFirestoreCache(): Promise<void> {
+export async function initUsersDbCache(): Promise<void> {
   if (isInitialized) return;
   if (isInitializing) return;
 
@@ -399,7 +399,9 @@ if (typeof process !== 'undefined') {
   process.on('beforeExit', () => { syncFlushOnExit(); });
 }
 
-export async function saveUserToFirestore(user: StoredUser, immediate = false): Promise<void> {
+export const initFirestoreCache = initUsersDbCache;
+
+export async function saveUserToDb(user: StoredUser, immediate = false): Promise<void> {
   const sanitized = sanitizeUserObj(user);
   // Update in-memory cache instantaneously (0ms latency for all callers)
   usersCache[sanitized.id] = sanitized;
@@ -420,8 +422,9 @@ export async function saveUserToFirestore(user: StoredUser, immediate = false): 
     }
   }
 }
+export const saveUserToFirestore = saveUserToDb;
 
-export async function deleteUserFromFirestore(userId: string): Promise<void> {
+export async function deleteUserFromDb(userId: string): Promise<void> {
   delete usersCache[userId];
   writeLocalUsersFile(usersCache);
 
@@ -430,12 +433,13 @@ export async function deleteUserFromFirestore(userId: string): Promise<void> {
     deleteUserFromSupabase(userId).catch((e) => console.warn('Supabase delete background error:', e));
   }
 }
+export const deleteUserFromFirestore = deleteUserFromDb;
 
 export function getInviteCodesFromCache(): Record<string, StoredInviteCode> {
   return inviteCodesCache;
 }
 
-export async function saveInviteCodeToFirestore(inviteCode: StoredInviteCode): Promise<void> {
+export async function saveInviteCodeToDb(inviteCode: StoredInviteCode): Promise<void> {
   inviteCodesCache[inviteCode.code] = inviteCode;
   writeLocalInviteCodesFile(inviteCodesCache);
 
@@ -443,8 +447,9 @@ export async function saveInviteCodeToFirestore(inviteCode: StoredInviteCode): P
     saveInviteCodeToSupabase(inviteCode).catch((e) => console.warn('Supabase invite save background error:', e));
   }
 }
+export const saveInviteCodeToFirestore = saveInviteCodeToDb;
 
-export async function deleteInviteCodeFromFirestore(code: string): Promise<void> {
+export async function deleteInviteCodeFromDb(code: string): Promise<void> {
   delete inviteCodesCache[code];
   writeLocalInviteCodesFile(inviteCodesCache);
 
@@ -456,3 +461,4 @@ export async function deleteInviteCodeFromFirestore(code: string): Promise<void>
     }
   }
 }
+export const deleteInviteCodeFromFirestore = deleteInviteCodeFromDb;
