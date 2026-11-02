@@ -1,4 +1,4 @@
-export const MT5_EA_VERSION = '4.78';
+export const MT5_EA_VERSION = '4.79';
 
 export function getMql5EaCode(
   mt5Endpoint: string,
@@ -131,7 +131,139 @@ void SetupTradeFillingMode(string sym)
 }
 
 //+------------------------------------------------------------------+
-//| Symbol Matching Helper                                           |
+//| Check if symbol has futures indicator (.F, _F, -F, FUT, -, etc.) |
+//+------------------------------------------------------------------+
+bool HasFuturesTagMql(string sym)
+{
+   if(StringFind(sym, "CASH") != -1 || StringFind(sym, "SPOT") != -1) return false;
+   if(StringFind(sym, ".F") != -1 || StringFind(sym, "_F") != -1 || StringFind(sym, "-F") != -1 || StringFind(sym, "/F") != -1) return true;
+   if(StringFind(sym, ".FT") != -1 || StringFind(sym, "_FT") != -1 || StringFind(sym, "FT.") != -1 || StringFind(sym, "FUT") != -1) return true;
+   if(StringFind(sym, "-") != -1) return true; // XM Global futures: US100-, US500-, US30-, GOLD-
+   if(StringFind(sym, "@") != -1) return true; // CME prefix: @NQ, @ES, @YM, @GC
+   
+   int len = StringLen(sym);
+   if(len > 1)
+   {
+      // Ends with 'F' or "FT"
+      if(StringSubstr(sym, len - 2) == "FT") return true;
+      if(StringSubstr(sym, len - 1) == "F") return true;
+   }
+   
+   // Check CME/Dated futures expiry patterns like JAN..DEC
+   if(StringFind(sym, "JAN") != -1 || StringFind(sym, "FEB") != -1 || StringFind(sym, "MAR") != -1 ||
+      StringFind(sym, "APR") != -1 || StringFind(sym, "MAY") != -1 || StringFind(sym, "JUN") != -1 ||
+      StringFind(sym, "JUL") != -1 || StringFind(sym, "AUG") != -1 || StringFind(sym, "SEP") != -1 ||
+      StringFind(sym, "OCT") != -1 || StringFind(sym, "NOV") != -1 || StringFind(sym, "DEC") != -1)
+   {
+      return true;
+   }
+
+   // CME Single-letter month code + 1 or 2 digits at end (e.g. Z26, H27, M6)
+   if(len >= 3)
+   {
+      ushort lastChar = StringGetCharacter(sym, len - 1);
+      if(lastChar >= '0' && lastChar <= '9')
+      {
+         int monthPos = len - 2;
+         ushort prevChar = StringGetCharacter(sym, monthPos);
+         if(prevChar >= '0' && prevChar <= '9')
+         {
+            monthPos = len - 3;
+         }
+         if(monthPos >= 0)
+         {
+            ushort mCode = StringGetCharacter(sym, monthPos);
+            if(mCode == 'F' || mCode == 'G' || mCode == 'H' || mCode == 'J' || mCode == 'K' ||
+               mCode == 'M' || mCode == 'N' || mCode == 'Q' || mCode == 'U' || mCode == 'V' ||
+               mCode == 'X' || mCode == 'Z')
+            {
+               return true;
+            }
+         }
+      }
+   }
+   
+   return false;
+}
+
+bool IsGoldFuturesMql(string sym)
+{
+   if(StringFind(sym, "CASH") != -1 || StringFind(sym, "SPOT") != -1) return false;
+   // AMP CME Futures: GC, MGC (e.g. GC, GCZ26, @GC, GC#, GC.F, MGC, MGCZ26)
+   if(sym == "GC" || sym == "MGC" || StringFind(sym, "@GC") != -1 || StringFind(sym, "GC#") != -1 || StringFind(sym, "MGC#") != -1 || StringFind(sym, "MGC") != -1 ||
+      (StringFind(sym, "GC") == 0 && StringLen(sym) <= 6 && (HasFuturesTagMql(sym) || StringLen(sym) >= 3))) return true;
+      
+   // BlackBull (XAUUSD.f, GOLD.f), XM (GOLD-, GOLD-DEC26), Generic (GC.F, XAUUSDft, etc.)
+   if((StringFind(sym, "GOLD") != -1 || StringFind(sym, "XAU") != -1) && HasFuturesTagMql(sym)) return true;
+   return false;
+}
+
+bool IsGoldSpotMql(string sym)
+{
+   if(IsGoldFuturesMql(sym)) return false;
+   return (StringFind(sym, "XAU") != -1 || StringFind(sym, "GOLD") != -1);
+}
+
+bool IsNasdaqFuturesMql(string sym)
+{
+   if(StringFind(sym, "CASH") != -1 || StringFind(sym, "SPOT") != -1) return false;
+   // AMP CME Futures: NQ, MNQ, ENQ (e.g. NQ, MNQ, ENQ, NQZ26, MNQZ26, ENQZ26, @NQ, NQ#, NQ.F)
+   if(StringFind(sym, "NQ") != -1 || StringFind(sym, "MNQ") != -1 || StringFind(sym, "ENQ") != -1) return true;
+   // BlackBull (USTEC.f, US100.f, NAS100.f, NDX.f), XM (US100-, US100-DEC26), Generic (NQ.F, NAS100ft, etc.)
+   if((StringFind(sym, "NAS") != -1 || StringFind(sym, "US100") != -1 || StringFind(sym, "USA100") != -1 || StringFind(sym, "USTEC") != -1 || StringFind(sym, "NDX") != -1) && HasFuturesTagMql(sym)) return true;
+   return false;
+}
+
+bool IsNasdaqSpotMql(string sym)
+{
+   if(IsNasdaqFuturesMql(sym)) return false;
+   return (StringFind(sym, "NAS100") != -1 || StringFind(sym, "NASDAQ") != -1 || StringFind(sym, "US100") != -1 || StringFind(sym, "USA100") != -1 || StringFind(sym, "USTEC") != -1 || StringFind(sym, "NDX") != -1 || StringFind(sym, "NAS") == 0);
+}
+
+bool IsSpxFuturesMql(string sym)
+{
+   if(StringFind(sym, "CASH") != -1 || StringFind(sym, "SPOT") != -1) return false;
+   // Avoid false matches for European indices like Euro Stoxx (ESTX50) or Spain (ESP35)
+   if(StringFind(sym, "ESTX") != -1 || StringFind(sym, "ESP35") != -1 || StringFind(sym, "ES35") != -1) return false;
+   
+   // AMP CME Futures: ES, MES, EP (e.g. ES, ESM26, ESZ26, @ES, ES#, ES.F, MES, MESZ26, EP, EPZ26)
+   if(sym == "ES" || sym == "MES" || sym == "EP" ||
+      StringFind(sym, "@ES") != -1 || StringFind(sym, "ES#") != -1 || StringFind(sym, "ES.F") != -1 || StringFind(sym, "ES_F") != -1 ||
+      StringFind(sym, "MES") != -1 || (StringFind(sym, "EP") == 0 && StringLen(sym) <= 5)) return true;
+      
+   if((StringFind(sym, "ES") == 0 && StringLen(sym) <= 6) && (StringFind(sym, "500") != -1 || HasFuturesTagMql(sym))) return true;
+   
+   // BlackBull (US500.f, SPX500.f), XM (US500-, US500-DEC26), Generic (SPX500ft, etc.)
+   if((StringFind(sym, "SPX") != -1 || StringFind(sym, "US500") != -1 || StringFind(sym, "USA500") != -1 || StringFind(sym, "SP500") != -1) && HasFuturesTagMql(sym)) return true;
+   
+   return false;
+}
+
+bool IsSpxSpotMql(string sym)
+{
+   if(IsSpxFuturesMql(sym)) return false;
+   if(StringFind(sym, "ESTX") != -1 || StringFind(sym, "ESP35") != -1 || StringFind(sym, "ES35") != -1) return false;
+   return (StringFind(sym, "SPX500") != -1 || StringFind(sym, "US500") != -1 || StringFind(sym, "USA500") != -1 || StringFind(sym, "SP500") != -1 || StringFind(sym, "SPX") != -1);
+}
+
+bool IsDowFuturesMql(string sym)
+{
+   if(StringFind(sym, "CASH") != -1 || StringFind(sym, "SPOT") != -1) return false;
+   // AMP CME Futures: YM, MYM (e.g. YM, YMZ26, @YM, YM#, YM.F, MYM, MYMZ26)
+   if(StringFind(sym, "YM") != -1 || StringFind(sym, "MYM") != -1) return true;
+   // BlackBull (US30.f, DJ30.f, WALLST30.f), XM (US30-, US30-DEC26), Generic (YM.F, US30ft, etc.)
+   if((StringFind(sym, "US30") != -1 || StringFind(sym, "USA30") != -1 || StringFind(sym, "DJ30") != -1 || StringFind(sym, "DOW") != -1 || StringFind(sym, "WS30") != -1 || StringFind(sym, "WALLST") != -1) && HasFuturesTagMql(sym)) return true;
+   return false;
+}
+
+bool IsDowSpotMql(string sym)
+{
+   if(IsDowFuturesMql(sym)) return false;
+   return (StringFind(sym, "US30") != -1 || StringFind(sym, "USA30") != -1 || StringFind(sym, "DJ30") != -1 || StringFind(sym, "DOW") != -1 || StringFind(sym, "WS30") != -1 || StringFind(sym, "WALLST") != -1);
+}
+
+//+------------------------------------------------------------------+
+//| Symbol Matching Helper (Supports BlackBull, XM, AMP, and Generic)|
 //+------------------------------------------------------------------+
 bool DoSymbolsMatch(string chartSym, string sigSym)
 {
@@ -145,55 +277,49 @@ bool DoSymbolsMatch(string chartSym, string sigSym)
    StringToUpper(c);
    StringToUpper(s);
    
-   // --- STRICT SEPARATION: GOLD SPOT (XAUUSD) vs GOLD FUTURES (GC.F / XAUUSDft) ---
-   bool sigIsGoldFutures = (StringFind(s, "GC") != -1 || StringFind(s, "MGC") != -1 || ((StringFind(s, "GOLD") != -1 || StringFind(s, "XAU") != -1) && (StringFind(s, "FT") != -1 || StringFind(s, "FUT") != -1 || StringFind(s, ".F") != -1 || StringFind(s, "_F") != -1)));
-   bool chartIsGoldFutures = (StringFind(c, "GC") != -1 || StringFind(c, "MGC") != -1 || ((StringFind(c, "GOLD") != -1 || StringFind(c, "XAU") != -1) && (StringFind(c, "FT") != -1 || StringFind(c, "FUT") != -1 || StringFind(c, ".F") != -1 || StringFind(c, "_F") != -1)));
-
-   bool sigIsGoldSpot = (!sigIsGoldFutures && (StringFind(s, "XAU") != -1 || StringFind(s, "GOLD") != -1));
-   bool chartIsGoldSpot = (!chartIsGoldFutures && (StringFind(c, "XAU") != -1 || StringFind(c, "GOLD") != -1));
+   // 1. STRICT SEPARATION: GOLD SPOT (XAUUSD) vs GOLD FUTURES (GC.F / XAUUSD.f / GC)
+   bool sigIsGoldFutures   = IsGoldFuturesMql(s);
+   bool chartIsGoldFutures = IsGoldFuturesMql(c);
+   bool sigIsGoldSpot      = IsGoldSpotMql(s);
+   bool chartIsGoldSpot    = IsGoldSpotMql(c);
 
    if(sigIsGoldFutures) return chartIsGoldFutures;
    if(sigIsGoldSpot)    return chartIsGoldSpot;
 
-   // --- STRICT SEPARATION: NASDAQ SPOT (NAS100/US100/USTEC) vs NASDAQ FUTURES (NQ.F/NQ/MNQ/ENQ/NAS100ft) ---
-   bool sigIsNasFutures = (StringFind(s, "NQ") != -1 || StringFind(s, "MNQ") != -1 || StringFind(s, "ENQ") != -1 || ((StringFind(s, "NAS") != -1 || StringFind(s, "US100") != -1 || StringFind(s, "USTEC") != -1 || StringFind(s, "NDX") != -1) && (StringFind(s, "FT") != -1 || StringFind(s, "FUT") != -1 || StringFind(s, ".F") != -1 || StringFind(s, "_F") != -1)));
-   bool chartIsNasFutures = (StringFind(c, "NQ") != -1 || StringFind(c, "MNQ") != -1 || StringFind(c, "ENQ") != -1 || ((StringFind(c, "NAS") != -1 || StringFind(c, "US100") != -1 || StringFind(c, "USTEC") != -1 || StringFind(c, "NDX") != -1) && (StringFind(c, "FT") != -1 || StringFind(c, "FUT") != -1 || StringFind(c, ".F") != -1 || StringFind(c, "_F") != -1)));
-
-   bool sigIsNasSpot = (!sigIsNasFutures && (StringFind(s, "NAS") != -1 || StringFind(s, "US100") != -1 || StringFind(s, "USTEC") != -1 || StringFind(s, "NDX") != -1));
-   bool chartIsNasSpot = (!chartIsNasFutures && (StringFind(c, "NAS") != -1 || StringFind(c, "US100") != -1 || StringFind(c, "USTEC") != -1 || StringFind(c, "NDX") != -1));
+   // 2. STRICT SEPARATION: NASDAQ SPOT (NAS100/US100/USTEC/US100Cash) vs NASDAQ FUTURES (NQ.F/USTEC.f/NQ/MNQ/ENQ)
+   bool sigIsNasFutures   = IsNasdaqFuturesMql(s);
+   bool chartIsNasFutures = IsNasdaqFuturesMql(c);
+   bool sigIsNasSpot      = IsNasdaqSpotMql(s);
+   bool chartIsNasSpot    = IsNasdaqSpotMql(c);
 
    if(sigIsNasFutures) return chartIsNasFutures;
    if(sigIsNasSpot)    return chartIsNasSpot;
 
-   // --- STRICT SEPARATION: SPX500 SPOT (SPX500/US500/SP500) vs S&P 500 FUTURES (ES.F/ES/MES/EP/US500ft) ---
-   bool sigIsSpxFutures = (StringFind(s, "ES") != -1 || StringFind(s, "MES") != -1 || StringFind(s, "EP") != -1 || ((StringFind(s, "SPX") != -1 || StringFind(s, "US500") != -1 || StringFind(s, "SP500") != -1) && (StringFind(s, "FT") != -1 || StringFind(s, "FUT") != -1 || StringFind(s, ".F") != -1 || StringFind(s, "_F") != -1)));
-   bool chartIsSpxFutures = (StringFind(c, "ES") != -1 || StringFind(c, "MES") != -1 || StringFind(c, "EP") != -1 || ((StringFind(c, "SPX") != -1 || StringFind(c, "US500") != -1 || StringFind(c, "SP500") != -1) && (StringFind(c, "FT") != -1 || StringFind(c, "FUT") != -1 || StringFind(c, ".F") != -1 || StringFind(c, "_F") != -1)));
-
-   bool sigIsSpxSpot = (!sigIsSpxFutures && (StringFind(s, "SPX") != -1 || StringFind(s, "US500") != -1 || StringFind(s, "SP500") != -1));
-   bool chartIsSpxSpot = (!chartIsSpxFutures && (StringFind(c, "SPX") != -1 || StringFind(c, "US500") != -1 || StringFind(c, "SP500") != -1));
+   // 3. STRICT SEPARATION: SPX500 SPOT (SPX500/US500/US500Cash) vs S&P 500 FUTURES (ES.F/US500.f/ES/MES/EP)
+   bool sigIsSpxFutures   = IsSpxFuturesMql(s);
+   bool chartIsSpxFutures = IsSpxFuturesMql(c);
+   bool sigIsSpxSpot      = IsSpxSpotMql(s);
+   bool chartIsSpxSpot    = IsSpxSpotMql(c);
 
    if(sigIsSpxFutures) return chartIsSpxFutures;
    if(sigIsSpxSpot)    return chartIsSpxSpot;
 
-   // --- STRICT SEPARATION: DOW JONES SPOT (US30/DJ30/DOW) vs DOW JONES FUTURES (YM.F/YM/DJ30ft) ---
-   bool sigIsDowFutures = (StringFind(s, "YM") != -1 || StringFind(s, "MYM") != -1 || ((StringFind(s, "US30") != -1 || StringFind(s, "DJ30") != -1 || StringFind(s, "DOW") != -1 || StringFind(s, "WS30") != -1) && (StringFind(s, "FT") != -1 || StringFind(s, "FUT") != -1 || StringFind(s, ".F") != -1 || StringFind(s, "_F") != -1)));
-   bool chartIsDowFutures = (StringFind(c, "YM") != -1 || StringFind(c, "MYM") != -1 || ((StringFind(c, "US30") != -1 || StringFind(c, "DJ30") != -1 || StringFind(c, "DOW") != -1 || StringFind(c, "WS30") != -1) && (StringFind(c, "FT") != -1 || StringFind(c, "FUT") != -1 || StringFind(c, ".F") != -1 || StringFind(c, "_F") != -1)));
-
-   bool sigIsDowSpot = (!sigIsDowFutures && (StringFind(s, "US30") != -1 || StringFind(s, "DJ30") != -1 || StringFind(s, "DOW") != -1 || StringFind(s, "WS30") != -1));
-   bool chartIsDowSpot = (!chartIsDowFutures && (StringFind(c, "US30") != -1 || StringFind(c, "DJ30") != -1 || StringFind(c, "DOW") != -1 || StringFind(c, "WS30") != -1));
+   // 4. STRICT SEPARATION: DOW JONES SPOT (US30/US30Cash/DJ30) vs DOW JONES FUTURES (YM.F/US30.f/YM/MYM)
+   bool sigIsDowFutures   = IsDowFuturesMql(s);
+   bool chartIsDowFutures = IsDowFuturesMql(c);
+   bool sigIsDowSpot      = IsDowSpotMql(s);
+   bool chartIsDowSpot    = IsDowSpotMql(c);
 
    if(sigIsDowFutures) return chartIsDowFutures;
    if(sigIsDowSpot)    return chartIsDowSpot;
 
+   // Direct match
    if(c == s || StringFind(c, s) != -1 || StringFind(s, c) != -1) return true;
    
-   // Forex Pairs Matching (including CME futures EU6, 6E, BP6, 6B, JY6, 6J)
+   // Forex Pairs Matching (including CME futures EU6, 6E, BP6, 6B, JY6, 6J, and broker suffixes .pro, micro, #)
    if((StringFind(s, "EURUSD") != -1 || StringFind(s, "EUR/USD") != -1) && (StringFind(c, "EURUSD") != -1 || StringFind(c, "EU6") != -1 || StringFind(c, "6E") != -1)) return true;
    if((StringFind(s, "GBPUSD") != -1 || StringFind(s, "GBP/USD") != -1) && (StringFind(c, "GBPUSD") != -1 || StringFind(c, "BP6") != -1 || StringFind(c, "6B") != -1)) return true;
    if((StringFind(s, "USDJPY") != -1 || StringFind(s, "USD/JPY") != -1) && (StringFind(c, "USDJPY") != -1 || StringFind(c, "JY6") != -1 || StringFind(c, "6J") != -1)) return true;
-   
-   // Dow Jones
-   if((StringFind(s, "US30") != -1 || StringFind(s, "DOW") != -1) && (StringFind(c, "US30") != -1 || StringFind(c, "DJ30") != -1 || StringFind(c, "WS30") != -1 || StringFind(c, "DOW") != -1)) return true;
    
    return false;
 }

@@ -5758,24 +5758,42 @@ function mapToMt5Symbol(instrumentId: string): string {
 }
 
 function hasFuturesTag(upper: string, clean: string): boolean {
+  if (upper.includes('CASH') || upper.includes('SPOT')) return false;
   return (
     upper.includes('.F') ||
     upper.includes('_F') ||
+    upper.includes('/F') ||
+    upper.includes('-F') ||
     upper.includes('.FT') ||
     upper.includes('_FT') ||
     upper.includes('FT.') ||
     upper.includes('FUT') ||
+    upper.includes('-') ||
+    upper.startsWith('@') ||
     clean.endsWith('FT') ||
     clean.endsWith('F') ||
-    clean.includes('FUT')
+    clean.includes('FUT') ||
+    /[FGHJKMNQUVXZ]\d{1,2}$/.test(clean) ||
+    /(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\d{2}/.test(upper)
   );
 }
 
 function isGoldFutures(sym: string): boolean {
   if (!sym) return false;
   const upper = sym.toUpperCase().trim();
+  if (upper.includes('CASH') || upper.includes('SPOT')) return false;
   const clean = upper.replace(/[^A-Z0-9]/g, '');
-  if (clean.startsWith('GC') || clean.startsWith('MGC')) return true;
+
+  // AMP CME Futures: GC, MGC (e.g. GC, MGC, GCZ26, MGCZ26, @GC, GC#)
+  if (clean === 'GC' || clean === 'MGC') return true;
+  if (/^(GC|MGC)([FGHJKMNQUVXZ]\d{1,2}|(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\d{2}|F|FT)?$/i.test(clean)) return true;
+  if (upper.startsWith('@GC') || upper.startsWith('@MGC') || upper.startsWith('GC#') || upper.startsWith('MGC#') ||
+      (clean.startsWith('GC') && clean.length <= 6 && (hasFuturesTag(upper, clean) || clean.length >= 3)) ||
+      (clean.startsWith('MGC') && clean.length <= 6)) {
+    return true;
+  }
+
+  // BlackBull (XAUUSD.f, GOLD.f), XM (GOLD-DEC26, GOLD-), Generic (GC_F, GC.F, GOLDft, XAUUSDft)
   if ((clean.includes('GOLD') || clean.includes('XAU')) && hasFuturesTag(upper, clean)) return true;
   return false;
 }
@@ -5785,15 +5803,28 @@ function isGoldSpot(sym: string): boolean {
   if (isGoldFutures(sym)) return false;
   const upper = sym.toUpperCase().trim();
   const clean = upper.replace(/[^A-Z0-9]/g, '');
-  return clean.includes('XAU') || clean.startsWith('GOLD');
+  return clean.includes('XAU') || clean.includes('GOLD');
 }
 
 function isNasdaqFutures(sym: string): boolean {
   if (!sym) return false;
   const upper = sym.toUpperCase().trim();
+  if (upper.includes('CASH') || upper.includes('SPOT')) return false;
   const clean = upper.replace(/[^A-Z0-9]/g, '');
-  if (clean.startsWith('NQ') || clean.startsWith('MNQ') || clean.startsWith('ENQ')) return true;
-  if ((clean.includes('NAS') || clean.includes('US100') || clean.includes('USTEC') || clean.includes('NDX')) && hasFuturesTag(upper, clean)) return true;
+
+  // AMP CME Futures: NQ, MNQ, ENQ (e.g. NQ, MNQ, ENQ, NQZ26, MNQM26, ENQZ26, @NQ, NQ#, NQ.F)
+  if (clean === 'NQ' || clean === 'MNQ' || clean === 'ENQ') return true;
+  if (/^(NQ|MNQ|ENQ)([FGHJKMNQUVXZ]\d{1,2}|(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\d{2}|F|FT)?$/i.test(clean)) return true;
+  if (upper.startsWith('@NQ') || upper.startsWith('@MNQ') || upper.startsWith('@ENQ') ||
+      upper.startsWith('NQ#') || upper.startsWith('MNQ#') || upper.startsWith('ENQ#') ||
+      clean.startsWith('NQ') || clean.startsWith('MNQ') || clean.startsWith('ENQ')) {
+    return true;
+  }
+
+  // BlackBull (USTEC.f, US100.f, NAS100.f, NDX.f), XM (US100-, US100-DEC26), Generic (NQ.F, NAS100ft, etc.)
+  if ((clean.includes('NAS') || clean.includes('US100') || clean.includes('USA100') || clean.includes('USTEC') || clean.includes('NDX')) && hasFuturesTag(upper, clean)) {
+    return true;
+  }
   return false;
 }
 
@@ -5806,6 +5837,7 @@ function isNasdaqSpot(sym: string): boolean {
     clean.includes('NAS100') ||
     clean.includes('NASDAQ') ||
     clean.includes('US100') ||
+    clean.includes('USA100') ||
     clean.includes('USTEC') ||
     clean.includes('NDX') ||
     clean.startsWith('NAS')
@@ -5815,9 +5847,27 @@ function isNasdaqSpot(sym: string): boolean {
 function isSpxFutures(sym: string): boolean {
   if (!sym) return false;
   const upper = sym.toUpperCase().trim();
+  if (upper.includes('CASH') || upper.includes('SPOT')) return false;
   const clean = upper.replace(/[^A-Z0-9]/g, '');
-  if (clean.startsWith('ES') || clean.startsWith('MES') || clean.startsWith('EP')) return true;
-  if ((clean.includes('SPX') || clean.includes('US500') || clean.includes('SP500')) && hasFuturesTag(upper, clean)) return true;
+
+  // Avoid European indices false positives
+  if (clean.startsWith('ESTX') || clean.startsWith('ESP35') || clean.startsWith('ES35')) return false;
+
+  // AMP CME Futures: ES, MES, EP (e.g. ES, ESM26, ESZ26, @ES, ES#, ES.F, MES, MESZ26, EP, EPZ26)
+  if (clean === 'ES' || clean === 'MES' || clean === 'EP') return true;
+  if (/^(ES|MES|EP)([FGHJKMNQUVXZ]\d{1,2}|(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\d{2}|F|FT)?$/i.test(clean)) return true;
+  if (upper.startsWith('@ES') || upper.startsWith('@MES') || upper.startsWith('@EP') ||
+      upper.startsWith('ES#') || upper.startsWith('MES#') || upper.startsWith('EP#') ||
+      upper.startsWith('ES.') || upper.startsWith('ES_') || upper.startsWith('MES.') || upper.startsWith('MES_') ||
+      clean.startsWith('MES') || (clean.startsWith('EP') && clean.length <= 5) ||
+      (clean.startsWith('ES') && clean.length <= 6 && (clean.includes('500') || hasFuturesTag(upper, clean)))) {
+    return true;
+  }
+
+  // BlackBull (US500.f, SPX500.f, SP500.f), XM (US500-, US500-DEC26), Generic (ES_F, ES.F, SPX500ft, etc.)
+  if ((clean.includes('SPX') || clean.includes('US500') || clean.includes('USA500') || clean.includes('SP500')) && hasFuturesTag(upper, clean)) {
+    return true;
+  }
   return false;
 }
 
@@ -5826,9 +5876,11 @@ function isSpxSpot(sym: string): boolean {
   if (isSpxFutures(sym)) return false;
   const upper = sym.toUpperCase().trim();
   const clean = upper.replace(/[^A-Z0-9]/g, '');
+  if (clean.startsWith('ESTX') || clean.startsWith('ESP35') || clean.startsWith('ES35')) return false;
   return (
     clean.includes('SPX500') ||
     clean.includes('US500') ||
+    clean.includes('USA500') ||
     clean.includes('SP500') ||
     clean.includes('SPX')
   );
@@ -5837,9 +5889,22 @@ function isSpxSpot(sym: string): boolean {
 function isDowFutures(sym: string): boolean {
   if (!sym) return false;
   const upper = sym.toUpperCase().trim();
+  if (upper.includes('CASH') || upper.includes('SPOT')) return false;
   const clean = upper.replace(/[^A-Z0-9]/g, '');
-  if (clean.startsWith('YM') || clean.startsWith('MYM')) return true;
-  if ((clean.includes('US30') || clean.includes('DJ30') || clean.includes('DOW') || clean.includes('WS30')) && hasFuturesTag(upper, clean)) return true;
+
+  // AMP CME Futures: YM, MYM (e.g. YM, MYM, YMZ26, MYMZ26, @YM, YM#, YM.F)
+  if (clean === 'YM' || clean === 'MYM') return true;
+  if (/^(YM|MYM)([FGHJKMNQUVXZ]\d{1,2}|(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\d{2}|F|FT)?$/i.test(clean)) return true;
+  if (upper.startsWith('@YM') || upper.startsWith('@MYM') ||
+      upper.startsWith('YM#') || upper.startsWith('MYM#') ||
+      clean.startsWith('YM') || clean.startsWith('MYM')) {
+    return true;
+  }
+
+  // BlackBull (US30.f, DJ30.f, WALLST30.f), XM (US30-, US30-DEC26), Generic (YM_F, YM.F, DOW.F, US30ft, etc.)
+  if ((clean.includes('US30') || clean.includes('USA30') || clean.includes('DJ30') || clean.includes('DOW') || clean.includes('WS30') || clean.includes('WALLST')) && hasFuturesTag(upper, clean)) {
+    return true;
+  }
   return false;
 }
 
@@ -5848,7 +5913,14 @@ function isDowSpot(sym: string): boolean {
   if (isDowFutures(sym)) return false;
   const upper = sym.toUpperCase().trim();
   const clean = upper.replace(/[^A-Z0-9]/g, '');
-  return clean.includes('US30') || clean.includes('DJ30') || clean.includes('DOW') || clean.includes('WS30');
+  return (
+    clean.includes('US30') ||
+    clean.includes('USA30') ||
+    clean.includes('DJ30') ||
+    clean.includes('DOW') ||
+    clean.includes('WS30') ||
+    clean.includes('WALLST')
+  );
 }
 
 function symbolsMatch(instrumentId: string, signalSymbol: string, brokerSymbol: string): boolean {
@@ -5857,7 +5929,7 @@ function symbolsMatch(instrumentId: string, signalSymbol: string, brokerSymbol: 
   const i = (instrumentId || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
   const s = (signalSymbol || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 
-  // 1. STRICT SEPARATION: Gold Spot (XAUUSD) vs Gold Futures (GC.F / XAUUSDft)
+  // 1. STRICT SEPARATION: Gold Spot (XAUUSD) vs Gold Futures (GC.F / XAUUSD.f / GC)
   const sigIsGcFutures = isGoldFutures(instrumentId) || isGoldFutures(signalSymbol);
   const sigIsGcSpot = isGoldSpot(instrumentId) || isGoldSpot(signalSymbol);
   const brokerIsGcFutures = isGoldFutures(brokerSymbol);
@@ -5866,7 +5938,7 @@ function symbolsMatch(instrumentId: string, signalSymbol: string, brokerSymbol: 
   if (sigIsGcFutures) return brokerIsGcFutures;
   if (sigIsGcSpot) return brokerIsGcSpot;
 
-  // 2. STRICT SEPARATION: Nasdaq Spot (NAS100) vs Nasdaq Futures (NQ.F / ENQ / NAS100ft)
+  // 2. STRICT SEPARATION: Nasdaq Spot (NAS100) vs Nasdaq Futures (NQ.F / USTEC.f / NQ / MNQ / ENQ)
   const sigIsNasFutures = isNasdaqFutures(instrumentId) || isNasdaqFutures(signalSymbol);
   const sigIsNasSpot = isNasdaqSpot(instrumentId) || isNasdaqSpot(signalSymbol);
   const brokerIsNasFutures = isNasdaqFutures(brokerSymbol);
@@ -5875,7 +5947,7 @@ function symbolsMatch(instrumentId: string, signalSymbol: string, brokerSymbol: 
   if (sigIsNasFutures) return brokerIsNasFutures;
   if (sigIsNasSpot) return brokerIsNasSpot;
 
-  // 3. STRICT SEPARATION: S&P 500 Spot (SPX500) vs S&P 500 Futures (ES.F / EP / US500ft)
+  // 3. STRICT SEPARATION: S&P 500 Spot (SPX500) vs S&P 500 Futures (ES.F / US500.f / ES / MES / EP)
   const sigIsSpxFutures = isSpxFutures(instrumentId) || isSpxFutures(signalSymbol);
   const sigIsSpxSpot = isSpxSpot(instrumentId) || isSpxSpot(signalSymbol);
   const brokerIsSpxFutures = isSpxFutures(brokerSymbol);
@@ -5884,7 +5956,7 @@ function symbolsMatch(instrumentId: string, signalSymbol: string, brokerSymbol: 
   if (sigIsSpxFutures) return brokerIsSpxFutures;
   if (sigIsSpxSpot) return brokerIsSpxSpot;
 
-  // 4. STRICT SEPARATION: Dow Jones Spot (US30/DJ30) vs Dow Jones Futures (YM / DJ30ft)
+  // 4. STRICT SEPARATION: Dow Jones Spot (US30/DJ30) vs Dow Jones Futures (YM / US30.f / MYM)
   const sigIsDowFutures = isDowFutures(instrumentId) || isDowFutures(signalSymbol);
   const sigIsDowSpot = isDowSpot(instrumentId) || isDowSpot(signalSymbol);
   const brokerIsDowFutures = isDowFutures(brokerSymbol);
@@ -5904,10 +5976,10 @@ function symbolsMatch(instrumentId: string, signalSymbol: string, brokerSymbol: 
     return true;
   }
   
-  // Forex Specific matching (e.g. EURUSD, EURUSD.pro, EURUSDm, EURUSD_i, EURUSD+, CME EU6, 6E, BP6, 6B, JY6, 6J)
-  if ((i.includes('EURUSD') || s.includes('EURUSD')) && (b.includes('EURUSD') || b.startsWith('EU6') || b.startsWith('6E'))) return true;
-  if ((i.includes('GBPUSD') || s.includes('GBPUSD')) && (b.includes('GBPUSD') || b.startsWith('BP6') || b.startsWith('6B'))) return true;
-  if ((i.includes('USDJPY') || s.includes('USDJPY')) && (b.includes('USDJPY') || b.startsWith('JY6') || b.startsWith('6J'))) return true;
+  // Forex Specific matching (e.g. EURUSD, EURUSD.pro, EURUSDmicro, EURUSD#, EURUSD_i, CME EU6, 6E, BP6, 6B, JY6, 6J)
+  if ((i.includes('EURUSD') || s.includes('EURUSD')) && (b.includes('EURUSD') || b.startsWith('EU6') || b.startsWith('6E') || b.includes('6E'))) return true;
+  if ((i.includes('GBPUSD') || s.includes('GBPUSD')) && (b.includes('GBPUSD') || b.startsWith('BP6') || b.startsWith('6B') || b.includes('6B'))) return true;
+  if ((i.includes('USDJPY') || s.includes('USDJPY')) && (b.includes('USDJPY') || b.startsWith('JY6') || b.startsWith('6J') || b.includes('6J'))) return true;
 
   return false;
 }
