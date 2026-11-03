@@ -216,7 +216,7 @@ function readLocalUsersFile(): Record<string, StoredUser> {
 
 function writeAtomicJsonFile(filePath: string, backupPath: string, data: any): void {
   try {
-    const jsonStr = JSON.stringify(data, null, 2);
+    const jsonStr = JSON.stringify(data);
     const tmpPath = `${filePath}.${Date.now()}.${Math.random().toString(36).substring(2, 6)}.tmp`;
 
     // Write to unique temporary file first
@@ -236,6 +236,48 @@ function writeAtomicJsonFile(filePath: string, backupPath: string, data: any): v
   } catch (e) {
     console.error(`❌ Atomic write failed for ${filePath}:`, e);
   }
+}
+
+// Non-blocking async variant used by the hot write path (debounced flush).
+// Compact JSON + fs.promises keeps the Node event loop free so MT5 WebRequest
+// polls are answered quickly (prevents WinINet read timeouts -> MT5 code 1003).
+let asyncWriteInFlight: Promise<void> | null = null;
+let asyncWriteQueued = false;
+
+async function writeAtomicJsonFileAsync(filePath: string, backupPath: string, data: any): Promise<void> {
+  const jsonStr = JSON.stringify(data);
+  const tmpPath = `${filePath}.${Date.now()}.${Math.random().toString(36).substring(2, 6)}.tmp`;
+  try {
+    await fs.promises.writeFile(tmpPath, jsonStr, 'utf-8');
+    try {
+      await fs.promises.copyFile(filePath, backupPath);
+    } catch (_) {
+      // primary may not exist yet; backup is best-effort
+    }
+    await fs.promises.rename(tmpPath, filePath);
+  } catch (e) {
+    console.error(`❌ Async atomic write failed for ${filePath}:`, e);
+    fs.promises.unlink(tmpPath).catch(() => {});
+  }
+}
+
+async function writeLocalUsersFileAsync(): Promise<void> {
+  // Serialize writes: if one is running, mark a follow-up and let it pick up the latest cache
+  if (asyncWriteInFlight) {
+    asyncWriteQueued = true;
+    return asyncWriteInFlight;
+  }
+  asyncWriteInFlight = (async () => {
+    do {
+      asyncWriteQueued = false;
+      const users = usersCache;
+      if (!users || Object.keys(users).length === 0) break;
+      await writeAtomicJsonFileAsync(DB_FILE, DB_BACKUP_FILE, users);
+    } while (asyncWriteQueued);
+  })().finally(() => {
+    asyncWriteInFlight = null;
+  });
+  return asyncWriteInFlight;
 }
 
 function writeLocalUsersFile(users: Record<string, StoredUser>): void {
@@ -418,8 +460,8 @@ async function flushPendingUsers() {
   const toSave = Array.from(pendingPersistUsers.values());
   pendingPersistUsers.clear();
 
-  // 1. Single disk write for all batched users
-  writeLocalUsersFile(usersCache);
+  // 1. Single non-blocking disk write for all batched users
+  await writeLocalUsersFileAsync();
 
   // 2. Persist each user in background to Supabase without blocking web requests
   for (const user of toSave) {

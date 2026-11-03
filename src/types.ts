@@ -83,6 +83,7 @@ export interface CustomSignalRule {
 
 export interface TradingSignal {
   id: string;
+  signal_id?: string; // Legacy / MT5 bridge alias of id
   instrumentId: InstrumentId;
   instrumentName: string;
   symbol: string;

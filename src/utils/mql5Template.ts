@@ -1,4 +1,4 @@
-export const MT5_EA_VERSION = '4.86';
+export const MT5_EA_VERSION = '4.87';
 
 export function getMql5EaCode(
   mt5Endpoint: string,
@@ -1087,7 +1087,7 @@ void SendAccountSync()
    ResetLastError();
    
    string origin = ForceHttps("${currentOrigin}");
-   string accountURL = origin + "/api/mt5/account?apiKey=" + cleanKey;
+   string accountURL = origin + "/api/mt5/account"; // API key sent only via Authorization header
    int res = WebRequest("POST", accountURL, headers, 6000, data, result, result_headers);
    if(res == -1)
    {
@@ -1097,9 +1097,37 @@ void SendAccountSync()
       {
          if(err == 4014 || err == 4060)
             Print("[MarketAI EROARE ", err, "] URL-ul '", origin, "' NU este autorizat in MT5! Adaugati '", origin, "' in Tools -> Options -> Expert Advisors -> Allow WebRequest for listed URL.");
+         else
+            Print("[MarketAI EROARE WebRequest ", err, "] Sincronizarea contului a esuat (retea/firewall). Se reincearca automat.");
          lastAccErr = TimeCurrent();
       }
    }
+   else if(res != 200)
+   {
+      int errCode = GetLastError();
+      static datetime lastAccHttpErr = 0;
+      if(TimeCurrent() - lastAccHttpErr > 60)
+      {
+         if(res >= 1000)
+            Print("[MarketAI MT5 ", res, " / err ", errCode, "] Sincronizare cont: raspunsul serverului nu a sosit la timp (", DescribeWebRequestError(errCode), "). Se reincearca automat.");
+         else
+            Print("[MarketAI HTTP ", res, "] Sincronizare cont respinsa de server.");
+         lastAccHttpErr = TimeCurrent();
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Human-readable description of MQL5 WebRequest error codes        |
+//+------------------------------------------------------------------+
+string DescribeWebRequestError(int err)
+{
+   if(err == 5200) return "URL invalid";
+   if(err == 5201) return "conectare esuata la server";
+   if(err == 5202) return "timeout - serverul nu a raspuns la timp";
+   if(err == 5203) return "cerere esuata - retea, antivirus, proxy sau VPN";
+   if(err == 4014 || err == 4060) return "URL neautorizat in Tools -> Options -> Expert Advisors";
+   return "eroare interna WinINet";
 }
 
 //+------------------------------------------------------------------+
@@ -1111,7 +1139,8 @@ double GetRealizedProfitForPosition(ulong posId, double &lastExitPrice)
    double totalProfit = 0.0;
    lastExitPrice = 0.0;
    
-   if(HistorySelect(0, TimeCurrent() + 86400))
+   // HistorySelectByPosition loads only this position's deals (much faster than full history)
+   if(HistorySelectByPosition((long)posId))
    {
       int dealsTotal = HistoryDealsTotal();
       for(int i = 0; i < dealsTotal; i++)
@@ -1146,9 +1175,9 @@ double GetRealizedProfitForPosition(ulong posId, double &lastExitPrice)
 //+------------------------------------------------------------------+
 //| Send trade execution, update & realized P&L to MarketAI Web API  |
 //+------------------------------------------------------------------+
-void SendTradeUpdate(string signalId, string status, string outcome, string milestone, double pnl = 0.0, double exitPrice = 0.0)
+bool SendTradeUpdate(string signalId, string status, string outcome, string milestone, double pnl = 0.0, double exitPrice = 0.0)
 {
-   if(signalId == "") return;
+   if(signalId == "") return true;
    
    char data[];
    char result[];
@@ -1192,20 +1221,25 @@ void SendTradeUpdate(string signalId, string status, string outcome, string mile
    
    string updateURL = (InpUpdateURL != "") ? InpUpdateURL : "${mt5UpdateEndpoint}";
    updateURL = ForceHttps(updateURL);
-   if(StringFind(updateURL, "?") < 0) updateURL = updateURL + "?apiKey=" + cleanKey;
-   else updateURL = updateURL + "&apiKey=" + cleanKey;
+   // API key is sent only via Authorization header (never in URL / logs)
 
    int res = WebRequest("POST", updateURL, headers, 6000, data, result, result_headers);
    if(res == 200)
    {
       Print("[MarketAI] Status & Realized PnL updated for signal ", signalId, " -> ", milestone, " | PnL: $", DoubleToString(pnl, 2), (exitPrice > 0 ? (" @ " + DoubleToString(exitPrice, 2)) : ""));
+      return true;
    }
-   else if(res == -1)
-   {
-      int err = GetLastError();
-      if(err == 4014 || err == 4060)
-         Print("[MarketAI EROARE ", err, "] URL-ul '", "${currentOrigin}", "' NU este autorizat in MT5! Adaugati '", "${currentOrigin}", "' in Tools -> Options -> Expert Advisors -> Allow WebRequest for listed URL.");
-   }
+
+   int err = GetLastError();
+   string updOrigin = ForceHttps("${currentOrigin}");
+   if(res == -1 && (err == 4014 || err == 4060))
+      Print("[MarketAI EROARE ", err, "] URL-ul '", updOrigin, "' NU este autorizat in MT5! Adaugati '", updOrigin, "' in Tools -> Options -> Expert Advisors -> Allow WebRequest for listed URL.");
+   else if(res == -1 || res >= 1000)
+      Print("[MarketAI MT5 ", res, " / err ", err, "] Update pentru semnalul ", signalId, " (", milestone, ") nu a ajuns la server (", DescribeWebRequestError(err), "). Se reincearca automat.");
+   else
+      Print("[MarketAI HTTP ", res, "] Update pentru semnalul ", signalId, " (", milestone, ") respins de server.");
+   // 4xx = definitive rejection (do not retry forever); network / 5xx / 1003 = retry
+   return (res >= 400 && res < 500);
 }
 
 // Backward compatibility wrapper
@@ -1312,14 +1346,16 @@ void CheckAndReportTrackedTrades()
          // Position is closed in MT5!
          double exitPrice = 0.0;
          double realPnl = GetRealizedProfitForPosition(posId, exitPrice);
-         trackedTrades[i].isClosed = true;
          trackedTrades[i].finalPnl = realPnl;
          
          string outcome = (realPnl > 0.01) ? "TP1_HIT" : ((realPnl < -0.01) ? "SL_HIT" : "BREAKEVEN");
          if(trackedTrades[i].tp2Hit && realPnl > 0.01) outcome = "TP2_HIT";
          
+         // Mark closed only after the server confirmed; on HTTP 1003 / network error retry on next timer tick
+         if(!SendTradeUpdate(trackedTrades[i].signalId, "CLOSED", outcome, "POSITION_CLOSED", realPnl, exitPrice))
+            continue;
+         trackedTrades[i].isClosed = true;
          Print("[MarketAI] Trade closed in MT5 for Signal ", trackedTrades[i].signalId, " (Pos #", posId, ")! Realized PnL: $", DoubleToString(realPnl, 2), " Exit Price: ", exitPrice);
-         SendTradeUpdate(trackedTrades[i].signalId, "CLOSED", outcome, "POSITION_CLOSED", realPnl, exitPrice);
          
          if(activeSignalId == trackedTrades[i].signalId)
          {
@@ -1334,70 +1370,80 @@ void CheckAndReportTrackedTrades()
 //+------------------------------------------------------------------+
 void SyncClosedHistoricalTrades()
 {
-   // Select past 30 days of trade history
+   static long g_syncedClosedPosIds[];
+
+   // Phase 1: collect candidate (signalId, positionId) pairs from the last 30 days.
+   // We must NOT call GetRealizedProfitForPosition() inside this loop, because it
+   // changes the history selection and would corrupt the deal indexes being iterated.
+   string candSig[];
+   long   candPos[];
    datetime fromTime = TimeCurrent() - (30 * 86400);
-   if(HistorySelect(fromTime, TimeCurrent() + 86400))
+   if(!HistorySelect(fromTime, TimeCurrent() + 86400)) return;
+
+   int dealsTotal = HistoryDealsTotal();
+   for(int i = dealsTotal - 1; i >= 0; i--)
    {
-      int dealsTotal = HistoryDealsTotal();
-      static long g_syncedClosedPosIds[];
-      
-      for(int i = dealsTotal - 1; i >= 0; i--)
+      ulong dealTicket = HistoryDealGetTicket(i);
+      if(dealTicket == 0) continue;
+
+      long magic = HistoryDealGetInteger(dealTicket, DEAL_MAGIC);
+      if(!(magic == InpMagicNumber || InpMagicNumber == 0)) continue;
+
+      string sigId = ExtractSignalIdFromText(HistoryDealGetString(dealTicket, DEAL_COMMENT));
+      if(sigId == "")
       {
-         ulong dealTicket = HistoryDealGetTicket(i);
-         if(dealTicket > 0)
+         ulong ordTicket = (ulong)HistoryDealGetInteger(dealTicket, DEAL_ORDER);
+         if(HistoryOrderSelect(ordTicket))
+            sigId = ExtractSignalIdFromText(HistoryOrderGetString(ordTicket, ORDER_COMMENT));
+      }
+
+      long posId = HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
+      if(sigId == "" || posId <= 0) continue;
+
+      bool known = false;
+      for(int k = 0; k < ArraySize(g_syncedClosedPosIds); k++)
+         if(g_syncedClosedPosIds[k] == posId) { known = true; break; }
+      for(int c = 0; !known && c < ArraySize(candPos); c++)
+         if(candPos[c] == posId) known = true;
+      if(known) continue;
+
+      int n = ArraySize(candPos);
+      ArrayResize(candPos, n + 1);
+      ArrayResize(candSig, n + 1);
+      candPos[n] = posId;
+      candSig[n] = sigId;
+   }
+
+   // Phase 2: report each closed position; remember it only after the server confirmed
+   for(int c = 0; c < ArraySize(candPos); c++)
+   {
+      long posId = candPos[c];
+
+      bool isOpen = false;
+      for(int p = PositionsTotal() - 1; p >= 0; p--)
+      {
+         ulong pTicket = PositionGetTicket(p);
+         if(pTicket > 0 && (long)PositionGetInteger(POSITION_IDENTIFIER) == posId)
          {
-            long magic = HistoryDealGetInteger(dealTicket, DEAL_MAGIC);
-            if(magic == InpMagicNumber || InpMagicNumber == 0)
-            {
-               string comment = HistoryDealGetString(dealTicket, DEAL_COMMENT);
-               string sigId = ExtractSignalIdFromText(comment);
-               
-               if(sigId == "")
-               {
-                  ulong ordTicket = (ulong)HistoryDealGetInteger(dealTicket, DEAL_ORDER);
-                  if(HistoryOrderSelect(ordTicket))
-                  {
-                     sigId = ExtractSignalIdFromText(HistoryOrderGetString(ordTicket, ORDER_COMMENT));
-                  }
-               }
-               
-               long posId = HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
-               if(sigId != "" && posId > 0)
-               {
-                  bool already = false;
-                  for(int k = 0; k < ArraySize(g_syncedClosedPosIds); k++)
-                  {
-                     if(g_syncedClosedPosIds[k] == posId) { already = true; break; }
-                  }
-                  if(already) continue;
-                  
-                  int sz = ArraySize(g_syncedClosedPosIds);
-                  ArrayResize(g_syncedClosedPosIds, sz + 1);
-                  g_syncedClosedPosIds[sz] = posId;
-                  
-                  // Verify if currently open
-                  bool isOpen = false;
-                  for(int p = PositionsTotal() - 1; p >= 0; p--)
-                  {
-                     ulong pTicket = PositionGetTicket(p);
-                     if(pTicket > 0 && (ulong)PositionGetInteger(POSITION_IDENTIFIER) == (ulong)posId)
-                     {
-                        isOpen = true;
-                        break;
-                     }
-                  }
-                  
-                  if(!isOpen)
-                  {
-                     double exitPrice = 0.0;
-                     double realPnl = GetRealizedProfitForPosition((ulong)posId, exitPrice);
-                     string outcome = (realPnl > 0.01) ? "TP1_HIT" : ((realPnl < -0.01) ? "SL_HIT" : "BREAKEVEN");
-                     
-                     SendTradeUpdate(sigId, "CLOSED", outcome, "HISTORICAL_SYNC", realPnl, exitPrice);
-                  }
-               }
-            }
+            isOpen = true;
+            break;
          }
+      }
+
+      bool done = true;
+      if(!isOpen)
+      {
+         double exitPrice = 0.0;
+         double realPnl = GetRealizedProfitForPosition((ulong)posId, exitPrice);
+         string outcome = (realPnl > 0.01) ? "TP1_HIT" : ((realPnl < -0.01) ? "SL_HIT" : "BREAKEVEN");
+         done = SendTradeUpdate(candSig[c], "CLOSED", outcome, "HISTORICAL_SYNC", realPnl, exitPrice);
+      }
+
+      if(done)
+      {
+         int sz = ArraySize(g_syncedClosedPosIds);
+         ArrayResize(g_syncedClosedPosIds, sz + 1);
+         g_syncedClosedPosIds[sz] = posId;
       }
    }
 }
@@ -1481,7 +1527,7 @@ void FetchAndExecuteSignals()
    }
 
    string origin = ForceHttps("${currentOrigin}");
-   string signalsUrl = origin + "/api/mt5/signals?apiKey=" + cleanKey + "&symbol=" + safeSymbol +
+   string signalsUrl = origin + "/api/mt5/signals?symbol=" + safeSymbol +
                        "&bid=" + DoubleToString(curBid, symDigits) +
                        "&ask=" + DoubleToString(curAsk, symDigits) +
                        "&price=" + DoubleToString(curPrice, symDigits) +
@@ -1531,7 +1577,7 @@ void FetchAndExecuteSignals()
             if(err == 4060 || err == 4014)
                Print("[MarketAI EROARE ", err, "] URL-ul '", origin, "' NU este autorizat in MT5! Adaugati obligatoriu '", origin, "' in Tools -> Options -> Expert Advisors -> Allow WebRequest for listed URL.");
             else
-               Print("[MarketAI EROARE WebRequest ", err, "] Conexiunea la server a esuat (eroare retea/firewall). URL: ", signalsUrl);
+               Print("[MarketAI EROARE WebRequest ", err, "] Conexiunea la server a esuat (", DescribeWebRequestError(err), "). Server: '", origin, "'");
             lastWebErr = TimeCurrent();
          }
       }
@@ -1551,8 +1597,8 @@ void FetchAndExecuteSignals()
             string errBody = (ArraySize(result) > 0) ? CharArrayToString(result) : "";
             if(res == 401)
                Print("[MarketAI HTTP 401] Cheia API este invalida sau a expirat! Verificati InpApiKey: '", cleanKey, "'");
-            else if(res == 1003)
-               Print("[MarketAI HTTP 1003] Server ocupat sau restart temporar (WinINet). Se reincearca automat la urmatorul tick... (Server: '", origin, "')");
+            else if(res >= 1000)
+               Print("[MarketAI MT5 ", res, " / err ", lastErr, "] Raspunsul serverului nu a sosit la timp (", DescribeWebRequestError(lastErr), "). Nu este o eroare HTTP a serverului; se reincearca automat. (Server: '", origin, "')");
             else
                Print("[MarketAI HTTP ", res, "] Serverul a raspuns: ", errBody);
             lastHttpErr = TimeCurrent();
