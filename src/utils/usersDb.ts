@@ -215,9 +215,9 @@ function readLocalUsersFile(): Record<string, StoredUser> {
 }
 
 function writeAtomicJsonFile(filePath: string, backupPath: string, data: any): void {
+  const tmpPath = `${filePath}.${Date.now()}.${Math.random().toString(36).substring(2, 6)}.tmp`;
   try {
     const jsonStr = JSON.stringify(data);
-    const tmpPath = `${filePath}.${Date.now()}.${Math.random().toString(36).substring(2, 6)}.tmp`;
 
     // Write to unique temporary file first
     fs.writeFileSync(tmpPath, jsonStr, 'utf-8');
@@ -232,9 +232,20 @@ function writeAtomicJsonFile(filePath: string, backupPath: string, data: any): v
     }
 
     // Atomic rename replaces the target file in one POSIX operation
-    fs.renameSync(tmpPath, filePath);
+    try {
+      fs.renameSync(tmpPath, filePath);
+    } catch (renameErr: any) {
+      if (renameErr && (renameErr.code === 'EBUSY' || renameErr.code === 'EXDEV' || renameErr.code === 'EPERM')) {
+        // Fallback for mounted files / docker volume mounts: copy directly over the mount point
+        fs.copyFileSync(tmpPath, filePath);
+        try { fs.unlinkSync(tmpPath); } catch (_) {}
+      } else {
+        throw renameErr;
+      }
+    }
   } catch (e) {
     console.error(`❌ Atomic write failed for ${filePath}:`, e);
+    try { fs.unlinkSync(tmpPath); } catch (_) {}
   }
 }
 
@@ -254,7 +265,16 @@ async function writeAtomicJsonFileAsync(filePath: string, backupPath: string, da
     } catch (_) {
       // primary may not exist yet; backup is best-effort
     }
-    await fs.promises.rename(tmpPath, filePath);
+    try {
+      await fs.promises.rename(tmpPath, filePath);
+    } catch (renameErr: any) {
+      if (renameErr && (renameErr.code === 'EBUSY' || renameErr.code === 'EXDEV' || renameErr.code === 'EPERM')) {
+        await fs.promises.copyFile(tmpPath, filePath);
+        await fs.promises.unlink(tmpPath).catch(() => {});
+      } else {
+        throw renameErr;
+      }
+    }
   } catch (e) {
     console.error(`❌ Async atomic write failed for ${filePath}:`, e);
     fs.promises.unlink(tmpPath).catch(() => {});
