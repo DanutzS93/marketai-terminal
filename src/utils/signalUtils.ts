@@ -1420,7 +1420,9 @@ export function calculateTradePnLMetrics(
   let statusLabel = 'În Așteptare';
   let hasPrice = true;
 
-  if (signal.pnl !== undefined && typeof signal.pnl === 'number') {
+  const isClosed = signal.status === 'CLOSED' || ['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT'].includes(status);
+
+  if (isClosed && signal.pnl !== undefined && typeof signal.pnl === 'number') {
     pnl = Math.round(signal.pnl * 100) / 100;
     rr = dollarRisk > 0 ? Math.round((pnl / dollarRisk) * 100) / 100 : 0;
     if (accountSource === 'MT5') {
@@ -1430,11 +1432,7 @@ export function calculateTradePnLMetrics(
       accountBadge = user?.ninjaTraderAccountNumber ? `NT8 #${user.ninjaTraderAccountNumber} [REALIZAT]` : 'NT8 REALIZAT';
       accountBadgeStyle = 'liquid-amber text-orange-300 border-orange-500/60 shadow-[0_0_10px_rgba(249,115,22,0.25)] font-bold';
     }
-    if (signal.status === 'CLOSED' || ['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT'].includes(status)) {
-      statusLabel = pnl > 0 ? (status === 'TP1_HIT' ? 'TP1 Realizat (Broker)' : 'Profit Realizat') : pnl < 0 ? 'SL Realizat (Broker)' : 'BE Realizat';
-    } else {
-      statusLabel = pnl > 0 ? 'Profit Parțial' : 'Activ Broker';
-    }
+    statusLabel = pnl > 0 ? (status === 'TP1_HIT' ? 'TP1 Realizat (Broker)' : 'Profit Realizat') : pnl < 0 ? 'SL Realizat (Broker)' : 'BE Realizat';
   } else if (status === 'SL_HIT') {
     rr = -1.0;
     pnl = -dollarRisk;
@@ -1471,8 +1469,26 @@ export function calculateTradePnLMetrics(
     rr = rawTp3Rr;
     pnl = Math.round(dollarRisk * rr * 100) / 100;
     statusLabel = 'TP3 MAX Atins';
-  } else if (status === 'RUNNING' || status === 'ACTIVE') {
-    if (currentPrice <= 0) {
+  } else if (status === 'RUNNING' || status === 'ACTIVE' || (signal.liveProfit !== undefined && !isClosed)) {
+    // 1. Direct MT5 broker floating profit if reported live
+    let liveProf = signal.liveProfit;
+    if (liveProf === undefined && !isClosed && Array.isArray(user?.mt5OpenPositions)) {
+      const p = user.mt5OpenPositions.find((pos: any) =>
+        pos && (
+          (pos.signalId && (String(pos.signalId) === String(signal.id) || String(pos.signalId) === String(signal.signal_id))) ||
+          (pos.symbol && signal.symbol && pos.symbol.toUpperCase().replace(/[^A-Z0-9]/g, '').includes(signal.symbol.toUpperCase().replace(/[^A-Z0-9]/g, '')))
+        )
+      );
+      if (p && typeof p.profit === 'number') {
+        liveProf = p.profit;
+      }
+    }
+
+    if (liveProf !== undefined && typeof liveProf === 'number') {
+      pnl = Math.round(liveProf * 100) / 100;
+      rr = dollarRisk > 0 ? Math.round((pnl / dollarRisk) * 100) / 100 : 0;
+      statusLabel = pnl > 0 ? 'Profit Live (MT5)' : pnl < 0 ? 'Minus Live (MT5)' : 'Trade Activ (MT5)';
+    } else if (currentPrice <= 0) {
       rr = 0;
       pnl = 0;
       hasPrice = false;

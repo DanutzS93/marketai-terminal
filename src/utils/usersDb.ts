@@ -73,6 +73,7 @@ export interface StoredUser {
   ninjaTraderLastConnectedAt?: string;
   ninjaTraderApiKey?: string;
   riskSettings?: any;
+  mt5OpenPositions?: any[];
   apiKeys?: {
     geminiApiKey?: string;
     lseKey?: string;

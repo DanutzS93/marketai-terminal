@@ -111,6 +111,7 @@ export interface TradingSignal {
   ninjaTraderPlacedAt?: string;
   pnl?: number;
   realizedProfit?: number;
+  liveProfit?: number;
   exitPrice?: number;
   closedAt?: string;
   accountSource?: 'MT5' | 'NINJATRADER' | 'SIM' | 'AUTO';
@@ -225,6 +226,7 @@ export interface UserProfile {
   };
   signals?: TradingSignal[];
   tradeJournal?: TradeJournalEntry[];
+  mt5OpenPositions?: any[];
 }
 
 export interface TradeJournalEntry {

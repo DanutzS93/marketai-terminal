@@ -353,6 +353,8 @@ function formatUserForClient(u: StoredUser) {
       isCustomized: false,
     },
     tradeJournal: (u.tradeJournal || []).filter((t: any) => !isDemoOrSampleTrade(t)),
+    mt5OpenPositions: u.mt5OpenPositions || [],
+    signals: u.signals || [],
   };
 }
 
@@ -6823,6 +6825,38 @@ app.all(['/api/mt5/signals', '/api/mt5/signals/poll'], (req, res) => {
   const numLow = typeof rawLow === 'number' ? rawLow : parseFloat(rawLow);
   const numPrevClose = typeof rawPrevClose === 'number' ? rawPrevClose : parseFloat(rawPrevClose);
 
+  const rawPosProfit = b?.positionProfit ?? req.query?.positionProfit;
+  const rawSigId = b?.signalId ?? req.query?.signalId;
+
+  if (rawPosProfit !== undefined && rawPosProfit !== null && !isNaN(Number(rawPosProfit))) {
+    const numProfit = Number(rawPosProfit);
+    if (Array.isArray(matchedUser.signals)) {
+      let matchedSig: any = null;
+      if (rawSigId) {
+        matchedSig = matchedUser.signals.find((s: any) =>
+          String(s.id) === String(rawSigId) || String(s.signal_id) === String(rawSigId)
+        );
+      }
+      if (!matchedSig && symbolParam) {
+        matchedSig = matchedUser.signals.find((s: any) =>
+          (s.status === 'RUNNING' || s.status === 'ACTIVE' || !s.status) &&
+          symbolsMatch(s.instrumentId, s.symbol, symbolParam)
+        );
+      }
+      if (matchedSig) {
+        matchedSig.liveProfit = numProfit;
+        if (!isNaN(numPrice) && numPrice > 0) {
+          matchedSig.currentMarketPrice = numPrice;
+        }
+        if (matchedSig.status !== 'RUNNING' && matchedSig.status !== 'CLOSED' && matchedSig.outcomeStatus !== 'SL_HIT' && matchedSig.outcomeStatus !== 'TP3_HIT') {
+          matchedSig.status = 'RUNNING';
+          matchedSig.outcomeStatus = 'RUNNING';
+          matchedSig.isEntryTriggered = true;
+        }
+      }
+    }
+  }
+
   if (symbolParam && !isNaN(numPrice) && numPrice > 0) {
     const pClose = (!isNaN(numPrevClose) && numPrevClose > 0) ? numPrevClose : numPrice;
     const change = numPrice - pClose;
@@ -7105,20 +7139,59 @@ app.post('/api/mt5/account', async (req, res) => {
   if (!body || typeof body !== 'object') body = {};
 
   const nowMs = Date.now();
-  const { accountBalance, equity, accountNumber, accountServer, accountCurrency, accountCompany } = body;
+  const { accountBalance, equity, accountNumber, accountServer, accountCurrency, accountCompany, positions } = body;
 
   // Throttle stdout log to once every 30s per account
   const lastAccLog = accLogMap.get(token) || 0;
   if (nowMs - lastAccLog > 30000) {
     accLogMap.set(token, nowMs);
     pruneMapIfLarge(accLogMap);
-    console.log(`[MT5 EA Account Sync] Token: ${token.substring(0, 10)}... balance: ${accountBalance}, equity: ${equity}, accNum: ${accountNumber}, server: ${accountServer}, user: ${matchedUser ? matchedUser.username : 'none'}`);
+    console.log(`[MT5 EA Account Sync] Token: ${token.substring(0, 10)}... balance: ${accountBalance}, equity: ${equity}, accNum: ${accountNumber}, server: ${accountServer}, positions: ${Array.isArray(positions) ? positions.length : 0}, user: ${matchedUser ? matchedUser.username : 'none'}`);
   }
 
   if (matchedUser) {
     let didChange = false;
     let didBalanceChange = false;
     let didMetaChange = false;
+
+    if (Array.isArray(positions)) {
+      matchedUser.mt5OpenPositions = positions;
+      didChange = true;
+
+      if (Array.isArray(matchedUser.signals)) {
+        for (const pos of positions) {
+          if (!pos) continue;
+          let sig: any = null;
+          if (pos.signalId) {
+            sig = matchedUser.signals.find((s: any) => 
+              String(s.id) === String(pos.signalId) || 
+              String(s.signal_id) === String(pos.signalId)
+            );
+          }
+          if (!sig && pos.symbol) {
+            sig = matchedUser.signals.find((s: any) => 
+              (s.status === 'RUNNING' || s.status === 'ACTIVE' || !s.status) &&
+              symbolsMatch(s.instrumentId, s.symbol, pos.symbol)
+            );
+          }
+          if (sig) {
+            const pProfit = Number(pos.profit);
+            if (!isNaN(pProfit)) {
+              sig.liveProfit = pProfit;
+            }
+            if (pos.currentPrice && Number(pos.currentPrice) > 0) {
+              sig.currentMarketPrice = Number(pos.currentPrice);
+            }
+            if (sig.status !== 'RUNNING' && sig.status !== 'CLOSED' && sig.outcomeStatus !== 'SL_HIT' && sig.outcomeStatus !== 'TP3_HIT') {
+              sig.status = 'RUNNING';
+              sig.outcomeStatus = 'RUNNING';
+              sig.isEntryTriggered = true;
+            }
+            didChange = true;
+          }
+        }
+      }
+    }
 
     if (accountBalance !== undefined && accountBalance !== null && !isNaN(Number(accountBalance))) {
       const bNum = Number(accountBalance);

@@ -975,61 +975,6 @@ string ForceHttps(string rawUrl)
 }
 
 //+------------------------------------------------------------------+
-//| Send account balance, equity & login info to MarketAI            |
-//+------------------------------------------------------------------+
-void SendAccountSync()
-{
-   char data[];
-   char result[];
-   string result_headers;
-   string cleanKey = GetCleanApiKey();
-   string headers = "Authorization: Bearer " + cleanKey + "\\r\\n" +
-                    "Content-Type: application/json\\r\\n" +
-                    "User-Agent: Mozilla/5.0 MarketAI-Bridge/${MT5_EA_VERSION}\\r\\n" +
-                    "Connection: close\\r\\n";
-   
-   long login = AccountInfoInteger(ACCOUNT_LOGIN);
-   string serverName = AccountInfoString(ACCOUNT_SERVER);
-   string currency = AccountInfoString(ACCOUNT_CURRENCY);
-   string company = AccountInfoString(ACCOUNT_COMPANY);
-   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
-   
-   // Smart throttle: if balance & equity haven't changed, sync at most once every 12 seconds per chart
-   static datetime lastAccSyncTime = 0;
-   static double lastSyncedBalance = 0;
-   static double lastSyncedEquity = 0;
-   if(TimeCurrent() - lastAccSyncTime < 12 && MathAbs(balance - lastSyncedBalance) < 0.01 && MathAbs(equity - lastSyncedEquity) < 0.01)
-   {
-      return;
-   }
-   lastAccSyncTime = TimeCurrent();
-   lastSyncedBalance = balance;
-   lastSyncedEquity = equity;
-   
-   string payload = "{\\"accountNumber\\":\\"" + IntegerToString(login) + "\\",\\"accountServer\\":\\"" + serverName + "\\",\\"accountCurrency\\":\\"" + currency + "\\",\\"accountCompany\\":\\"" + company + "\\",\\"accountBalance\\":" + DoubleToString(balance, 2) + ",\\"equity\\":" + DoubleToString(equity, 2) + "}";
-   int copied = StringToCharArray(payload, data, 0, WHOLE_ARRAY, CP_UTF8);
-   if(copied > 0 && data[copied - 1] == 0) ArrayResize(data, copied - 1);
-   ArrayResize(result, 0);
-   ResetLastError();
-   
-   string origin = ForceHttps("${currentOrigin}");
-   string accountURL = origin + "/api/mt5/account?apiKey=" + cleanKey;
-   int res = WebRequest("POST", accountURL, headers, 6000, data, result, result_headers);
-   if(res == -1)
-   {
-      int err = GetLastError();
-      static datetime lastAccErr = 0;
-      if(TimeCurrent() - lastAccErr > 60)
-      {
-         if(err == 4014 || err == 4060)
-            Print("[MarketAI EROARE ", err, "] URL-ul '", origin, "' NU este autorizat in MT5! Adaugati '", origin, "' in Tools -> Options -> Expert Advisors -> Allow WebRequest for listed URL.");
-         lastAccErr = TimeCurrent();
-      }
-   }
-}
-
-//+------------------------------------------------------------------+
 //| Extract signal ID from order or deal comment                     |
 //+------------------------------------------------------------------+
 string ExtractSignalIdFromText(string text)
@@ -1060,6 +1005,101 @@ string ExtractSignalIdFromText(string text)
       return StringSubstr(text, 9);
    }
    return "";
+}
+
+//+------------------------------------------------------------------+
+//| Send account balance, equity & login info to MarketAI            |
+//+------------------------------------------------------------------+
+void SendAccountSync()
+{
+   char data[];
+   char result[];
+   string result_headers;
+   string cleanKey = GetCleanApiKey();
+   string headers = "Authorization: Bearer " + cleanKey + "\\r\\n" +
+                    "Content-Type: application/json\\r\\n" +
+                    "User-Agent: Mozilla/5.0 MarketAI-Bridge/${MT5_EA_VERSION}\\r\\n" +
+                    "Connection: close\\r\\n";
+   
+   long login = AccountInfoInteger(ACCOUNT_LOGIN);
+   string serverName = AccountInfoString(ACCOUNT_SERVER);
+   string currency = AccountInfoString(ACCOUNT_CURRENCY);
+   string company = AccountInfoString(ACCOUNT_COMPANY);
+   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   
+   // Smart throttle: if balance & equity haven't changed, sync at most once every 12 seconds per chart
+   // If equity changed (open positions moving), throttle to at most once every 3 seconds
+   static datetime lastAccSyncTime = 0;
+   static double lastSyncedBalance = 0;
+   static double lastSyncedEquity = 0;
+   if(TimeCurrent() - lastAccSyncTime < 3)
+   {
+      return;
+   }
+   if(TimeCurrent() - lastAccSyncTime < 12 && MathAbs(balance - lastSyncedBalance) < 0.01 && MathAbs(equity - lastSyncedEquity) < 0.01)
+   {
+      return;
+   }
+   lastAccSyncTime = TimeCurrent();
+   lastSyncedBalance = balance;
+   lastSyncedEquity = equity;
+   
+   // Build JSON array of all open positions in MT5
+   string posJson = "[";
+   int posCount = 0;
+   for(int p = PositionsTotal() - 1; p >= 0; p--)
+   {
+      ulong t = PositionGetTicket(p);
+      if(t > 0)
+      {
+         string comm = PositionGetString(POSITION_COMMENT);
+         string sigId = ExtractSignalIdFromText(comm);
+         string sym = PositionGetString(POSITION_SYMBOL);
+         long pType = PositionGetInteger(POSITION_TYPE);
+         double oPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+         double cPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
+         double vol = PositionGetDouble(POSITION_VOLUME);
+         double pProf = PositionGetDouble(POSITION_PROFIT);
+         double pSwap = PositionGetDouble(POSITION_SWAP);
+         double netProfit = pProf + pSwap;
+         int digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
+         if(digits <= 0) digits = 2;
+
+         if(posCount > 0) posJson += ",";
+         posJson += "{\\"ticket\\":" + IntegerToString(t) +
+                    ",\\"symbol\\":\\"" + sym + "\\"" +
+                    ",\\"type\\":\\"" + (pType == POSITION_TYPE_BUY ? "BUY" : "SELL") + "\\"" +
+                    ",\\"volume\\":" + DoubleToString(vol, 2) +
+                    ",\\"openPrice\\":" + DoubleToString(oPrice, digits) +
+                    ",\\"currentPrice\\":" + DoubleToString(cPrice, digits) +
+                    ",\\"profit\\":" + DoubleToString(netProfit, 2) +
+                    ",\\"signalId\\":\\"" + sigId + "\\"}";
+         posCount++;
+      }
+   }
+   posJson += "]";
+
+   string payload = "{\\"accountNumber\\":\\"" + IntegerToString(login) + "\\",\\"accountServer\\":\\"" + serverName + "\\",\\"accountCurrency\\":\\"" + currency + "\\",\\"accountCompany\\":\\"" + company + "\\",\\"accountBalance\\":" + DoubleToString(balance, 2) + ",\\"equity\\":" + DoubleToString(equity, 2) + ",\\"positions\\":" + posJson + "}";
+   int copied = StringToCharArray(payload, data, 0, WHOLE_ARRAY, CP_UTF8);
+   if(copied > 0 && data[copied - 1] == 0) ArrayResize(data, copied - 1);
+   ArrayResize(result, 0);
+   ResetLastError();
+   
+   string origin = ForceHttps("${currentOrigin}");
+   string accountURL = origin + "/api/mt5/account?apiKey=" + cleanKey;
+   int res = WebRequest("POST", accountURL, headers, 6000, data, result, result_headers);
+   if(res == -1)
+   {
+      int err = GetLastError();
+      static datetime lastAccErr = 0;
+      if(TimeCurrent() - lastAccErr > 60)
+      {
+         if(err == 4014 || err == 4060)
+            Print("[MarketAI EROARE ", err, "] URL-ul '", origin, "' NU este autorizat in MT5! Adaugati '", origin, "' in Tools -> Options -> Expert Advisors -> Allow WebRequest for listed URL.");
+         lastAccErr = TimeCurrent();
+      }
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -1422,11 +1462,32 @@ void FetchAndExecuteSignals()
    if(dLow <= 0.0)  dLow  = curPrice;
    if(dPrevClose <= 0.0) dPrevClose = curPrice;
 
+   // Calculate live floating profit for any position on targetSymbol
+   double symFloatingProfit = 0.0;
+   bool hasSymPosition = false;
+   string matchedSigId = "";
+   for(int p = PositionsTotal() - 1; p >= 0; p--)
+   {
+      ulong t = PositionGetTicket(p);
+      if(t > 0 && PositionGetString(POSITION_SYMBOL) == targetSymbol)
+      {
+         hasSymPosition = true;
+         symFloatingProfit += (PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP));
+         if(matchedSigId == "")
+         {
+            matchedSigId = ExtractSignalIdFromText(PositionGetString(POSITION_COMMENT));
+         }
+      }
+   }
+
    string origin = ForceHttps("${currentOrigin}");
    string signalsUrl = origin + "/api/mt5/signals?apiKey=" + cleanKey + "&symbol=" + safeSymbol +
                        "&bid=" + DoubleToString(curBid, symDigits) +
                        "&ask=" + DoubleToString(curAsk, symDigits) +
-                       "&price=" + DoubleToString(curPrice, symDigits);
+                       "&price=" + DoubleToString(curPrice, symDigits) +
+                       "&positionProfit=" + DoubleToString(symFloatingProfit, 2) +
+                       "&hasPosition=" + (hasSymPosition ? "1" : "0") +
+                       "&signalId=" + matchedSigId;
    
    // Direct JSON POST request with User-Agent and Connection: close
    string postHeaders = "Authorization: Bearer " + cleanKey + "\\r\\n" +
@@ -1443,6 +1504,9 @@ void FetchAndExecuteSignals()
                         ",\\\"low\\\":" + DoubleToString(dLow, symDigits) +
                         ",\\\"prevClose\\\":" + DoubleToString(dPrevClose, symDigits) +
                         ",\\\"time\\\":" + IntegerToString((long)TimeCurrent()) +
+                        ",\\\"positionProfit\\\":" + DoubleToString(symFloatingProfit, 2) +
+                        ",\\\"hasPosition\\\":" + (hasSymPosition ? "true" : "false") +
+                        ",\\\"signalId\\\":\\\"" + matchedSigId + "\\\"" +
                         "}";
    int copied = StringToCharArray(postPayload, data, 0, WHOLE_ARRAY, CP_UTF8);
    if(copied > 0 && data[copied - 1] == 0) ArrayResize(data, copied - 1);

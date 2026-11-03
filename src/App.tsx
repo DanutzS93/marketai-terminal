@@ -250,7 +250,8 @@ export default function App() {
                 prevUser.ninjaTraderLastConnectedAt !== data.user.ninjaTraderLastConnectedAt ||
                 prevUser.ninjaTraderApiKey !== data.user.ninjaTraderApiKey ||
                 prevUser.status !== data.user.status ||
-                prevUser.subscriptionDaysLeft !== data.user.subscriptionDaysLeft
+                prevUser.subscriptionDaysLeft !== data.user.subscriptionDaysLeft ||
+                JSON.stringify(prevUser.mt5OpenPositions) !== JSON.stringify(data.user.mt5OpenPositions)
               ) {
                 return {
                   ...prevUser,
@@ -259,6 +260,44 @@ export default function App() {
               }
               return prevUser;
             });
+
+            // Synchronize live profit, PnL, and status into local signals state
+            if (Array.isArray(data.user.signals) && data.user.signals.length > 0) {
+              setSignals((prevSignals) => {
+                let hasChanges = false;
+                const updated = prevSignals.map((s) => {
+                  const srv = data.user.signals.find((sig: any) => String(sig.id) === String(s.id));
+                  if (!srv) return s;
+                  const newLiveProfit = srv.liveProfit;
+                  const newPnl = srv.pnl;
+                  const newStatus = srv.status;
+                  const newOutcome = srv.outcomeStatus;
+                  const newCurrentPrice = srv.currentMarketPrice;
+
+                  if (
+                    (newLiveProfit !== undefined && s.liveProfit !== newLiveProfit) ||
+                    (newPnl !== undefined && s.pnl !== newPnl) ||
+                    (newStatus && s.status !== newStatus) ||
+                    (newOutcome && s.outcomeStatus !== newOutcome) ||
+                    (newCurrentPrice && s.currentMarketPrice !== newCurrentPrice)
+                  ) {
+                    hasChanges = true;
+                    return {
+                      ...s,
+                      liveProfit: newLiveProfit !== undefined ? newLiveProfit : s.liveProfit,
+                      pnl: newPnl !== undefined ? newPnl : s.pnl,
+                      status: newStatus || s.status,
+                      outcomeStatus: newOutcome || s.outcomeStatus,
+                      currentMarketPrice: newCurrentPrice || s.currentMarketPrice,
+                      exitPrice: srv.exitPrice ?? s.exitPrice,
+                      realizedProfit: srv.realizedProfit ?? s.realizedProfit,
+                    };
+                  }
+                  return s;
+                });
+                return hasChanges ? updated : prevSignals;
+              });
+            }
           }
         }
       } catch (e) {
