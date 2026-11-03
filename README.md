@@ -18,3 +18,6 @@ View your app in AI Studio: https://ai.studio/apps/8b46de28-0307-4373-89aa-d1bca
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+
+## Deployment
+MarketAI is deployed and auto-synchronized via Coolify on Contabo VPS.
