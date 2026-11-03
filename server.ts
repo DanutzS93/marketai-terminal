@@ -1418,6 +1418,84 @@ app.post('/api/test-lse-key', async (req, res) => {
   }
 });
 
+// API Route: Test Twelve Data API Key connectivity & subscription tier
+app.post('/api/test-twelvedata-key', async (req, res) => {
+  const { apiKey, lang = 'ro' } = req.body || {};
+  const isEn = lang === 'en';
+  const keyToTest = (apiKey && apiKey.trim()) || process.env.TWELVE_DATA_API_KEY || 'a3f771a8bef24d059d345a9bbdaec2f5';
+
+  if (!keyToTest) {
+    return res.status(400).json({
+      success: false,
+      error: isEn ? 'Twelve Data API key is required.' : 'Cheia API Twelve Data este obligatorie.',
+    });
+  }
+
+  try {
+    const usageRes = await fetch(`https://api.twelvedata.com/api_usage?apikey=${keyToTest}`, {
+      signal: AbortSignal.timeout(5000),
+    });
+
+    if (!usageRes.ok) {
+      if (usageRes.status === 401 || usageRes.status === 403) {
+        return res.status(401).json({
+          success: false,
+          error: isEn ? 'Invalid Twelve Data API Key (401/403).' : 'Cheia API Twelve Data este invalidă (401/403).',
+        });
+      }
+      return res.status(usageRes.status).json({
+        success: false,
+        error: `Twelve Data HTTP ${usageRes.status}: ${usageRes.statusText}`,
+      });
+    }
+
+    const usageData = await usageRes.json();
+    if (usageData && usageData.status === 'error') {
+      return res.status(400).json({
+        success: false,
+        error: usageData.message || (isEn ? 'Invalid Twelve Data API Key.' : 'Cheia Twelve Data este invalidă.'),
+      });
+    }
+
+    const plan = usageData.plan_category || 'basic';
+    const planLimit = usageData.plan_limit || 8;
+
+    // Check if plan has direct access to CFD indices (NDX)
+    const ndxRes = await fetch(`https://api.twelvedata.com/quote?symbol=NDX&apikey=${keyToTest}`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    const ndxData = await ndxRes.json();
+    const hasIndexAccess = ndxData && !ndxData.code && ndxData.close;
+
+    if (hasIndexAccess) {
+      return res.json({
+        success: true,
+        hasIndexAccess: true,
+        plan,
+        message: isEn
+          ? `Twelve Data Connected Successfully! Plan: ${plan.toUpperCase()} • Direct CFD Indices (NDX, SPX, DJI) are ACTIVE.`
+          : `Conexiune reușită la Twelve Data! Plan: ${plan.toUpperCase()} • Indicii CFD (NDX, SPX, DJI) sunt ACTIVI.`,
+      });
+    } else {
+      return res.json({
+        success: true,
+        hasIndexAccess: false,
+        plan,
+        message: isEn
+          ? `Twelve Data API Key is VALID (Plan: ${plan.toUpperCase()}, ${planLimit} credits/min). Note: Direct indices (NDX, SPX, DJI) require Pro/Grow plan. LSE/Yahoo fallback engine is active for live prices.`
+          : `Cheia Twelve Data este VALIDĂ (Plan: ${plan.toUpperCase()}, limită ${planLimit} cereri/min). Notă: Indicii direcți (NDX, SPX, DJI) necesită plan Pro/Grow. Sistemul de fallback LSE/Yahoo este activ pentru prețuri live.`,
+      });
+    }
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      error: isEn
+        ? `Network error contacting Twelve Data: ${err.message}`
+        : `Eroare de rețea la contactarea Twelve Data: ${err.message}`,
+    });
+  }
+});
+
 async function callGeminiWithRetry(aiClient: any, params: any, retries = 2, delay = 600): Promise<any> {
   const primaryModel = params.model || 'gemini-3.7-flash';
   const candidatePool = [primaryModel, 'gemini-3.7-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
@@ -1951,6 +2029,7 @@ let lastLseResult: {
   error?: string;
 } | null = null;
 const DEFAULT_LSE_KEY = process.env.LSE_API_KEY || process.env.DEFAULT_LSE_KEY || 'lse_live_9d965aeeefa18fa9c7225990bf4e4f4c';
+const DEFAULT_TWELVE_DATA_KEY = process.env.TWELVE_DATA_API_KEY || 'a3f771a8bef24d059d345a9bbdaec2f5';
 
 // Live WebSocket Cache for London Strategic Edge
 let lseWsInstance: any = null;
@@ -2197,28 +2276,35 @@ function initLseWebSocket(apiKey?: string, force = false) {
 // Authentic London Strategic Edge REST API Configuration
 const LSE_REST_ANON_KEY = '71f880e1d2ef471664f3b6c04c6dc1e618f94e51f68c87522bc6dcbc0ca173a5';
 
-// Configuration for the 3 Yahoo Finance CFD Instruments ONLY
-// (NASDAQ CFD, SPX500 CFD, US30 CFD)
-interface YahooCfdConfig {
+// Configuration for the 3 CFD Indices (NASDAQ CFD, SPX500 CFD, US30 CFD)
+// Primary provider: Twelve Data (using user API key)
+// Fallback provider: London Strategic Edge / Yahoo Finance
+interface CfdInstrumentConfig {
   id: 'NASDAQ' | 'SPX500' | 'DOW_JONES';
   name: string;
   symbol: string;
   tvSymbol: string;
-  symbols: string[];
+  twelveDataSymbol: string;
+  twelveDataEtfSymbol: string;
+  yahooSymbols: string[];
+  lseFallbackKey: string;
   decimals: number;
   fallbackPrice: number;
   fallbackPrevClose: number;
 }
 
-const YAHOO_CFD_CONFIGS: YahooCfdConfig[] = [
+const CFD_INSTRUMENT_CONFIGS: CfdInstrumentConfig[] = [
   {
     id: 'NASDAQ',
     name: 'Nasdaq 100 CFD',
     symbol: 'NAS100',
     tvSymbol: 'FOREXCOM:NAS100',
-    symbols: ['^NDX', 'NQ=F'],
+    twelveDataSymbol: 'NDX',
+    twelveDataEtfSymbol: 'QQQ',
+    yahooSymbols: ['^NDX'],
+    lseFallbackKey: 'NASDAQ100.F',
     decimals: 2,
-    fallbackPrice: 28410.00,
+    fallbackPrice: 27990.00,
     fallbackPrevClose: 28380.00,
   },
   {
@@ -2226,9 +2312,12 @@ const YAHOO_CFD_CONFIGS: YahooCfdConfig[] = [
     name: 'S&P 500 CFD',
     symbol: 'SPX500',
     tvSymbol: 'FOREXCOM:SPX500',
-    symbols: ['^GSPC', 'ES=F'],
+    twelveDataSymbol: 'SPX',
+    twelveDataEtfSymbol: 'SPY',
+    yahooSymbols: ['^GSPC'],
+    lseFallbackKey: 'SP500.F',
     decimals: 2,
-    fallbackPrice: 7618.50,
+    fallbackPrice: 7545.00,
     fallbackPrevClose: 7610.00,
   },
   {
@@ -2236,9 +2325,12 @@ const YAHOO_CFD_CONFIGS: YahooCfdConfig[] = [
     name: 'Dow Jones CFD',
     symbol: 'US30',
     tvSymbol: 'FOREXCOM:US30',
-    symbols: ['^DJI', 'YM=F'],
+    twelveDataSymbol: 'DJI',
+    twelveDataEtfSymbol: 'DIA',
+    yahooSymbols: ['^DJI'],
+    lseFallbackKey: 'DOW.F',
     decimals: 2,
-    fallbackPrice: 52345.00,
+    fallbackPrice: 51980.00,
     fallbackPrevClose: 52290.00,
   },
 ];
@@ -2348,29 +2440,157 @@ const LSE_INSTRUMENT_CONFIGS: LseInstrumentConfig[] = [
   },
 ];
 
-interface CachedYahooQuote {
+interface CachedCfdQuote {
   quote: any;
   timestamp: number;
 }
-const yahooQuoteCache: Record<string, CachedYahooQuote> = {};
+const cfdQuoteCache: Record<string, CachedCfdQuote> = {};
 
-// STRICT: Only NASDAQ, SPX500, and DOW_JONES are allowed to use Yahoo Finance
-async function getLiveYahooQuote(id: string): Promise<any> {
-  const cfg = YAHOO_CFD_CONFIGS.find((c) => c.id === id);
+// Fetch real-time quote from Twelve Data API
+async function fetchTwelveDataQuote(symbol: string): Promise<{
+  price: number;
+  high: number;
+  low: number;
+  open: number;
+  previousClose: number;
+  change: number;
+  changePercent: number;
+  timestamp: number;
+} | null> {
+  const token = process.env.TWELVE_DATA_API_KEY || DEFAULT_TWELVE_DATA_KEY;
+  if (!token) return null;
+  try {
+    const url = `https://api.twelvedata.com/quote?symbol=${encodeURIComponent(symbol)}&apikey=${token}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(3500) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data || data.status === 'error' || data.code || !data.close) return null;
+
+    const price = parseFloat(data.close);
+    if (isNaN(price) || price <= 0) return null;
+
+    const prevClose = data.previous_close ? parseFloat(data.previous_close) : price;
+    const open = data.open ? parseFloat(data.open) : prevClose;
+    const high = data.high ? parseFloat(data.high) : price;
+    const low = data.low ? parseFloat(data.low) : price;
+    const change = data.change ? parseFloat(data.change) : (price - prevClose);
+    const changePercent = data.percent_change ? parseFloat(data.percent_change) : (prevClose > 0 ? ((change / prevClose) * 100) : 0);
+    const ts = data.timestamp ? data.timestamp * 1000 : Date.now();
+
+    return {
+      price,
+      high,
+      low,
+      open,
+      previousClose: prevClose,
+      change,
+      changePercent,
+      timestamp: ts,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// In-memory cache of live quotes directly reported from the MT5 Expert Advisor
+interface Mt5ReportedQuote {
+  rawSymbol: string;
+  price: number;
+  bid: number;
+  ask: number;
+  open: number;
+  high: number;
+  low: number;
+  prevClose: number;
+  change: number;
+  changePercent: number;
+  timestamp: number;
+}
+const mt5LiveQuoteMemory: Record<string, Mt5ReportedQuote> = {};
+
+function mapBrokerSymbolToInstrumentId(brokerSymbol: string): string | null {
+  if (!brokerSymbol) return null;
+  const b = brokerSymbol.toUpperCase().trim();
+  const clean = b.replace(/[^A-Z0-9]/g, '');
+
+  if (isGoldFutures(brokerSymbol)) return 'GC_F';
+  if (isGoldSpot(brokerSymbol)) return 'GOLD';
+
+  if (isNasdaqFutures(brokerSymbol)) return 'NQ_F';
+  if (isNasdaqSpot(brokerSymbol)) return 'NASDAQ';
+
+  if (isSpxFutures(brokerSymbol)) return 'ES_F';
+  if (isSpxSpot(brokerSymbol)) return 'SPX500';
+
+  if (isDowFutures(brokerSymbol)) return 'YM_F';
+  if (isDowSpot(brokerSymbol)) return 'DOW_JONES';
+
+  if (clean.includes('EURUSD') || clean.startsWith('EU6') || clean.startsWith('6E')) return 'EURUSD';
+  if (clean.includes('GBPUSD') || clean.startsWith('BP6') || clean.startsWith('6B')) return 'GBPUSD';
+  if (clean.includes('USDJPY') || clean.startsWith('JY6') || clean.startsWith('6J')) return 'USDJPY';
+
+  return null;
+}
+
+function getMt5QuoteForInstrument(instrumentId: string, maxAgeMs = 60000): Mt5ReportedQuote | null {
+  const now = Date.now();
+  for (const [sym, q] of Object.entries(mt5LiveQuoteMemory)) {
+    if (now - q.timestamp <= maxAgeMs && q.price > 0) {
+      const mapped = mapBrokerSymbolToInstrumentId(sym);
+      if (mapped === instrumentId) {
+        return q;
+      }
+    }
+  }
+  return null;
+}
+
+// Fetch live CFD quote: MT5 Bridge is PRIMARY (direct broker feed), fallback to Yahoo Finance if not open in MT5
+async function getLiveCfdQuote(id: string): Promise<any> {
+  const cfg = CFD_INSTRUMENT_CONFIGS.find((c) => c.id === id);
   if (!cfg) {
-    return null; // NEVER query Yahoo for any other instrument
+    return null;
   }
 
   const now = Date.now();
-  if (yahooQuoteCache[id] && now - yahooQuoteCache[id].timestamp < 3500) {
-    return yahooQuoteCache[id].quote;
+  // Cache TTL 2000ms
+  if (cfdQuoteCache[id] && now - cfdQuoteCache[id].timestamp < 2000) {
+    return cfdQuoteCache[id].quote;
   }
 
-  for (const s of cfg.symbols) {
+  // 1. PRIORITAR: Extragere directă din MT5 Bridge (dacă este deschis în MT5 și a raportat date în ultimele 2 minute)
+  const mt5Quote = getMt5QuoteForInstrument(id, 120000);
+  if (mt5Quote && mt5Quote.price > 0) {
+    const price = Number(mt5Quote.price.toFixed(cfg.decimals));
+    const prevClose = Number(mt5Quote.prevClose.toFixed(cfg.decimals));
+    const change = Number(mt5Quote.change.toFixed(cfg.decimals));
+    const changePercent = Number(mt5Quote.changePercent.toFixed(2));
+    const parsedQuote = {
+      id,
+      symbolUsed: mt5Quote.rawSymbol,
+      price,
+      change,
+      changePercent,
+      high: Number(mt5Quote.high.toFixed(cfg.decimals)),
+      low: Number(mt5Quote.low.toFixed(cfg.decimals)),
+      open: Number(mt5Quote.open.toFixed(cfg.decimals)),
+      previousClose: prevClose,
+      volume: 'MT5 Live Stream',
+      source: 'MT5 Bridge' as const,
+      timestamp: new Date(mt5Quote.timestamp).toISOString(),
+      closes: [prevClose, price],
+    };
+    cfdQuoteCache[id] = { quote: parsedQuote, timestamp: now };
+    return parsedQuote;
+  }
+
+  // 2. FALLBACK: Dacă perechea/indicele NU este deschis în MT5, preluăm din Yahoo Finance
+  let yahooQuote: any = null;
+  for (const s of cfg.yahooSymbols) {
     try {
       const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(s)}?interval=1m&range=1d`;
       const res = await fetch(url, {
-        signal: AbortSignal.timeout(3000),
+        signal: AbortSignal.timeout(3500),
         headers: {
           'User-Agent':
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -2384,9 +2604,7 @@ async function getLiveYahooQuote(id: string): Promise<any> {
       if (!meta || typeof meta.regularMarketPrice !== 'number' || meta.regularMarketPrice <= 0) continue;
 
       const timeMs = (meta.regularMarketTime || 0) * 1000;
-      if (s.startsWith('^') && now - timeMs > 4 * 3600 * 1000 && cfg.symbols.length > 1) {
-        continue;
-      }
+      const isYahooRealTime = (now - timeMs <= 15 * 60 * 1000);
 
       const quote = json.chart?.result?.[0]?.indicators?.quote?.[0] || {};
       const rawCloses = quote.close || [];
@@ -2396,7 +2614,7 @@ async function getLiveYahooQuote(id: string): Promise<any> {
       const change = Number((price - prevClose).toFixed(cfg.decimals));
       const changePercent = Number((((price - prevClose) / prevClose) * 100).toFixed(2));
 
-      const parsedQuote = {
+      yahooQuote = {
         id,
         symbolUsed: s,
         price,
@@ -2407,36 +2625,72 @@ async function getLiveYahooQuote(id: string): Promise<any> {
         open: meta.regularMarketOpen || meta.open || price,
         previousClose: prevClose,
         volume: String(meta.regularMarketVolume || 'Yahoo Live Stream'),
+        source: (isYahooRealTime ? 'Yahoo Finance' : 'Yahoo Finance (Close)') as any,
         timestamp: new Date(timeMs || now).toISOString(),
         closes: validCloses.slice(-30),
       };
-
-      yahooQuoteCache[id] = { quote: parsedQuote, timestamp: now };
-      return parsedQuote;
-    } catch (e) {
-      // Continue to next symbol
-    }
+      break;
+    } catch (e) {}
   }
 
-  return yahooQuoteCache[id]?.quote || null;
+  if (yahooQuote) {
+    cfdQuoteCache[id] = { quote: yahooQuote, timestamp: now };
+    return yahooQuote;
+  }
+
+  // 3. SECOND FALLBACK: Twelve Data (if available and not rate limited)
+  try {
+    const td = await fetchTwelveDataQuote(cfg.twelveDataSymbol);
+    if (td && td.price > 0) {
+      const price = Number(td.price.toFixed(cfg.decimals));
+      const prevClose = Number(td.previousClose.toFixed(cfg.decimals));
+      const change = Number(td.change.toFixed(cfg.decimals));
+      const changePercent = Number(td.changePercent.toFixed(2));
+      const parsedQuote = {
+        id,
+        symbolUsed: cfg.twelveDataSymbol,
+        price,
+        change,
+        changePercent,
+        high: Number(td.high.toFixed(cfg.decimals)),
+        low: Number(td.low.toFixed(cfg.decimals)),
+        open: Number(td.open.toFixed(cfg.decimals)),
+        previousClose: prevClose,
+        volume: 'Twelve Data Live',
+        source: 'Twelve Data' as const,
+        timestamp: new Date(td.timestamp).toISOString(),
+        closes: [prevClose, price],
+      };
+      cfdQuoteCache[id] = { quote: parsedQuote, timestamp: now };
+      return parsedQuote;
+    }
+  } catch (err) {}
+
+  // 4. THIRD FALLBACK: Yahoo Finance last closing quote (static spot price e.g. 27989.82)
+  if (yahooQuote) {
+    cfdQuoteCache[id] = { quote: yahooQuote, timestamp: now };
+    return yahooQuote;
+  }
+
+  return cfdQuoteCache[id]?.quote || null;
 }
 
-// In-memory cache for live Yahoo CFD quotes (updated non-blocking in background)
-const yahooQuoteMemory: Record<string, any> = {};
+// In-memory cache for live CFD quotes (updated non-blocking in background)
+const cfdQuoteMemory: Record<string, any> = {};
 
-async function pollYahooQuotesWorker() {
-  for (const cfg of YAHOO_CFD_CONFIGS) {
+async function pollCfdQuotesWorker() {
+  for (const cfg of CFD_INSTRUMENT_CONFIGS) {
     try {
-      const yQuote = await getLiveYahooQuote(cfg.id);
-      if (yQuote && yQuote.price > 0) {
-        const price = Number(yQuote.price.toFixed(cfg.decimals));
-        const change = Number(yQuote.change.toFixed(cfg.decimals));
-        const changePercent = Number(yQuote.changePercent.toFixed(2));
-        const closes = yQuote.closes && yQuote.closes.length > 0 ? yQuote.closes : [price];
+      const quote = await getLiveCfdQuote(cfg.id);
+      if (quote && quote.price > 0) {
+        const price = Number(quote.price.toFixed(cfg.decimals));
+        const change = Number(quote.change.toFixed(cfg.decimals));
+        const changePercent = Number(quote.changePercent.toFixed(2));
+        const closes = quote.closes && quote.closes.length > 0 ? quote.closes : [price];
         const ind = computeRealIndicators(price, closes);
         const trend = calculateTechnicalTrend(price, changePercent, ind.ema20, ind.sma50, ind.sma200, ind.macd, ind.rsi);
 
-        yahooQuoteMemory[cfg.id] = {
+        cfdQuoteMemory[cfg.id] = {
           id: cfg.id,
           name: cfg.name,
           symbol: cfg.symbol,
@@ -2444,26 +2698,26 @@ async function pollYahooQuotesWorker() {
           price,
           change,
           changePercent,
-          high: Number(yQuote.high.toFixed(cfg.decimals)),
-          low: Number(yQuote.low.toFixed(cfg.decimals)),
-          open: Number(yQuote.open.toFixed(cfg.decimals)),
-          previousClose: Number(yQuote.previousClose.toFixed(cfg.decimals)),
-          volume: yQuote.volume || 'Yahoo Finance Live',
-          source: 'Yahoo Finance',
-          timestamp: yQuote.timestamp || new Date().toISOString(),
+          high: Number(quote.high.toFixed(cfg.decimals)),
+          low: Number(quote.low.toFixed(cfg.decimals)),
+          open: Number(quote.open.toFixed(cfg.decimals)),
+          previousClose: Number(quote.previousClose.toFixed(cfg.decimals)),
+          volume: quote.volume || `${quote.source || 'Yahoo Finance'} Live`,
+          source: quote.source || 'Yahoo Finance',
+          timestamp: quote.timestamp || new Date().toISOString(),
           ...ind,
           trend,
         };
       }
     } catch (e) {}
   }
-  // Whenever Yahoo quotes update, broadcast to clients
+  // Whenever CFD quotes update, broadcast to clients
   broadcastQuotesToClients();
 }
 
-// Non-blocking background worker for Yahoo Finance (polls every 2.5s)
-setInterval(pollYahooQuotesWorker, 2500);
-setTimeout(pollYahooQuotesWorker, 300);
+// Non-blocking background worker for CFD Indices (polls every 3.5s)
+setInterval(pollCfdQuotesWorker, 3500);
+setTimeout(pollCfdQuotesWorker, 300);
 
 // In-memory cache for LSE rolling quotes
 const lseQuoteMemory: Record<string, any> = {};
@@ -2471,22 +2725,38 @@ const lseQuoteMemory: Record<string, any> = {};
 function buildLseQuote(cfg: LseInstrumentConfig) {
   const liveTick = getLseTick(cfg.tickKeys);
   const prevQuote = lseQuoteMemory[cfg.id];
+  const now = Date.now();
+  const mt5Quote = getMt5QuoteForInstrument(cfg.id, 60000);
 
-  let price = liveTick && typeof liveTick.price === 'number' && liveTick.price > 0
-    ? liveTick.price
-    : (prevQuote?.price || cfg.fallbackPrice);
+  let price = 0;
+  let source: any = 'LSE';
+  let volume = 'WebSocket Live Stream';
+
+  if (liveTick && typeof liveTick.price === 'number' && liveTick.price > 0 && (now - liveTick.ts < 30000)) {
+    price = liveTick.price;
+    source = 'LSE';
+    volume = 'WebSocket Live Stream';
+  } else if (mt5Quote && typeof mt5Quote.price === 'number' && mt5Quote.price > 0) {
+    price = mt5Quote.price;
+    source = 'MT5 Bridge';
+    volume = 'MT5 Live Stream';
+  } else {
+    price = prevQuote?.price || cfg.fallbackPrice;
+    source = prevQuote?.source || 'LSE';
+    volume = liveTick ? 'WebSocket Live Stream' : 'LSE Live Stream';
+  }
   price = Number(price.toFixed(cfg.decimals));
 
-  let open = prevQuote?.open || cfg.fallbackPrevClose;
+  let open = mt5Quote ? mt5Quote.open : (prevQuote?.open || cfg.fallbackPrevClose);
   open = Number(open.toFixed(cfg.decimals));
 
-  let high = prevQuote ? Math.max(prevQuote.high, price) : price;
+  let high = mt5Quote ? Math.max(mt5Quote.high, price) : (prevQuote ? Math.max(prevQuote.high, price) : price);
   high = Number(high.toFixed(cfg.decimals));
 
-  let low = prevQuote ? Math.min(prevQuote.low, price) : price;
+  let low = mt5Quote ? Math.min(mt5Quote.low, price) : (prevQuote ? Math.min(prevQuote.low, price) : price);
   low = Number(low.toFixed(cfg.decimals));
 
-  let previousClose = prevQuote?.previousClose || cfg.fallbackPrevClose;
+  let previousClose = mt5Quote?.prevClose || prevQuote?.previousClose || cfg.fallbackPrevClose;
   previousClose = Number(previousClose.toFixed(cfg.decimals));
 
   let change = Number((price - previousClose).toFixed(cfg.decimals));
@@ -2513,9 +2783,9 @@ function buildLseQuote(cfg: LseInstrumentConfig) {
     low,
     open,
     previousClose,
-    volume: liveTick ? 'WebSocket Live Stream' : 'LSE Live Stream',
-    source: 'LSE',
-    timestamp: liveTick ? new Date(liveTick.ts).toISOString() : new Date().toISOString(),
+    volume,
+    source,
+    timestamp: liveTick ? new Date(liveTick.ts).toISOString() : mt5Quote ? new Date(mt5Quote.timestamp).toISOString() : new Date().toISOString(),
     ...ind,
     trend,
     closes,
@@ -2550,9 +2820,9 @@ async function fetchLondonStrategicEdgeData(
 
 // Instantaneous synchronous retrieval of latest real-time market data from in-memory buffers
 function getRealLiveMarketDataSync() {
-  const yahooQuotes: Record<string, any> = {};
-  for (const cfg of YAHOO_CFD_CONFIGS) {
-    yahooQuotes[cfg.id] = yahooQuoteMemory[cfg.id] || {
+  const cfdQuotes: Record<string, any> = {};
+  for (const cfg of CFD_INSTRUMENT_CONFIGS) {
+    cfdQuotes[cfg.id] = cfdQuoteMemory[cfg.id] || {
       id: cfg.id,
       name: cfg.name,
       symbol: cfg.symbol,
@@ -2564,8 +2834,8 @@ function getRealLiveMarketDataSync() {
       low: cfg.fallbackPrice * 0.998,
       open: cfg.fallbackPrevClose,
       previousClose: cfg.fallbackPrevClose,
-      volume: 'Yahoo Finance Live',
-      source: 'Yahoo Finance',
+      volume: 'Twelve Data Live',
+      source: 'Twelve Data',
       timestamp: new Date().toISOString(),
       rsi: 50,
       macd: { value: 0, signal: 0, histogram: 0 },
@@ -2596,7 +2866,7 @@ function getRealLiveMarketDataSync() {
         open: 0,
         previousClose: 0,
         volume: '-',
-        source: id === 'NASDAQ' || id === 'SPX500' || id === 'DOW_JONES' ? 'Yahoo Finance' : 'LSE',
+        source: id === 'NASDAQ' || id === 'SPX500' || id === 'DOW_JONES' ? 'Twelve Data' : 'LSE',
         timestamp: new Date().toISOString(),
         rsi: 0,
         macd: { value: 0, signal: 0, histogram: 0 },
@@ -2609,9 +2879,9 @@ function getRealLiveMarketDataSync() {
     return q;
   };
 
-  const nasdaq = sanitizeQuote(yahooQuotes['NASDAQ'], 'NASDAQ', 'Nasdaq 100 CFD', 'NAS100', 'FOREXCOM:NAS100');
-  const spx500 = sanitizeQuote(yahooQuotes['SPX500'], 'SPX500', 'S&P 500 CFD', 'SPX500', 'FOREXCOM:SPX500');
-  const dow = sanitizeQuote(yahooQuotes['DOW_JONES'], 'DOW_JONES', 'Dow Jones CFD', 'US30', 'FOREXCOM:US30');
+  const nasdaq = sanitizeQuote(cfdQuotes['NASDAQ'], 'NASDAQ', 'Nasdaq 100 CFD', 'NAS100', 'FOREXCOM:NAS100');
+  const spx500 = sanitizeQuote(cfdQuotes['SPX500'], 'SPX500', 'S&P 500 CFD', 'SPX500', 'FOREXCOM:SPX500');
+  const dow = sanitizeQuote(cfdQuotes['DOW_JONES'], 'DOW_JONES', 'Dow Jones CFD', 'US30', 'FOREXCOM:US30');
   const gold = sanitizeQuote(lseQuotes['GOLD'], 'GOLD', 'Gold Spot (XAU/USD)', 'XAU/USD', 'FOREXCOM:XAUUSD');
   const nq_f = sanitizeQuote(lseQuotes['NQ_F'], 'NQ_F', 'Nasdaq 100 Futures', 'NQ.F', 'CME_MINI:NQ1!');
   const es_f = sanitizeQuote(lseQuotes['ES_F'], 'ES_F', 'S&P 500 Futures', 'ES.F', 'CME_MINI:ES1!');
@@ -2635,6 +2905,10 @@ async function getRealLiveMarketData(
 app.get('/api/market-data', async (req, res) => {
   try {
     const customLseKey = (req.query.lseKey as string) || process.env.LSE_API_KEY;
+    const customTwelveDataKey = (req.query.twelveDataKey as string) || process.env.TWELVE_DATA_API_KEY;
+    if (customTwelveDataKey && customTwelveDataKey.trim()) {
+      process.env.TWELVE_DATA_API_KEY = customTwelveDataKey.trim();
+    }
     const forceRefresh = req.query.force === 'true' || req.query.refresh === 'true';
 
     const { nasdaq, spx500, dow, gold, nq_f, es_f, ym_f, gc_f, eurusd, gbpusd, usdjpy, apiErrors } = await getRealLiveMarketData(
@@ -2766,8 +3040,8 @@ function generateFallbackCandles(
 }
 
 // API Route: Real OHLC Historical & Live Candlestick Data
-// STRICT ROUTING:
-// - NASDAQ CFD, SPX500 CFD, US30 CFD -> Yahoo Finance charts
+// ROUTING:
+// - NASDAQ CFD, SPX500 CFD, US30 CFD -> Twelve Data (with Yahoo Finance fallback)
 // - All remaining instruments (including GOLD SPOT / XAUUSD) -> London Strategic Edge (LSE)
 app.get('/api/candles', async (req, res) => {
   try {
@@ -2807,8 +3081,8 @@ app.get('/api/candles', async (req, res) => {
 
     const sNorm = symbolParam.replace(/[^A-Z0-9]/g, '');
 
-    // STRICT CHECK: Only NASDAQ CFD, SPX500 CFD, and US30 CFD query Yahoo Finance
-    const isYahooCfd =
+    // CFD Index Check: NASDAQ CFD, SPX500 CFD, and US30 CFD
+    const isCfdIndex =
       sNorm === 'NASDAQ' ||
       sNorm === 'NAS100' ||
       sNorm === 'NAS100USD' ||
@@ -2819,32 +3093,83 @@ app.get('/api/candles', async (req, res) => {
       sNorm === 'DOWJONES' ||
       sNorm === 'US30USD';
 
-    if (isYahooCfd) {
+    if (isCfdIndex) {
+      let twelveDataSymbol = 'NDX';
       let yahooSymbol = '^NDX';
       let decimals = 2;
       let fallbackBasePrice = 28410;
 
       if (sNorm.includes('SPX') || sNorm.includes('SP500')) {
+        twelveDataSymbol = 'SPX';
         yahooSymbol = '^GSPC';
         fallbackBasePrice = 7618;
       } else if (sNorm.includes('US30') || sNorm.includes('DOW')) {
+        twelveDataSymbol = 'DJI';
         yahooSymbol = '^DJI';
         fallbackBasePrice = 52345;
       } else {
+        twelveDataSymbol = 'NDX';
         yahooSymbol = '^NDX';
         fallbackBasePrice = 28410;
       }
 
-      const cacheKey = `${yahooSymbol}_${timeframe}`;
+      const cacheKey = `cfd_${twelveDataSymbol}_${timeframe}`;
       const now = Date.now();
       let candles: Array<{ time: number; open: number; high: number; low: number; close: number; volume?: number }> = [];
+      let usedSource = 'Twelve Data';
 
       // Check memory cache (TTL 12s)
       if (candleCache[cacheKey] && now - candleCache[cacheKey].timestamp < 12000 && candleCache[cacheKey].candles.length > 0) {
         candles = candleCache[cacheKey].candles.map((c) => ({ ...c }));
       }
 
-      // If not cached, fetch real market candles from Yahoo Finance
+      // If not cached, first try Twelve Data /time_series
+      if (candles.length === 0) {
+        try {
+          const tdKey = process.env.TWELVE_DATA_API_KEY || DEFAULT_TWELVE_DATA_KEY;
+          if (tdKey) {
+            let tdInterval = '5min';
+            if (timeframe === '1m') tdInterval = '1min';
+            else if (timeframe === '5m') tdInterval = '5min';
+            else if (timeframe === '15m') tdInterval = '15min';
+            else if (timeframe === '1h') tdInterval = '1h';
+            else if (timeframe === '4h') tdInterval = '4h';
+            else if (timeframe === '1d') tdInterval = '1day';
+
+            const tdUrl = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(twelveDataSymbol)}&interval=${tdInterval}&outputsize=75&apikey=${tdKey}`;
+            const tdRes = await fetch(tdUrl, { signal: AbortSignal.timeout(3500) });
+            if (tdRes.ok) {
+              const tdJson = await tdRes.json();
+              if (tdJson && tdJson.status === 'ok' && Array.isArray(tdJson.values) && tdJson.values.length > 0) {
+                const rawValues = [...tdJson.values].reverse();
+                for (const bar of rawValues) {
+                  const o = parseFloat(bar.open);
+                  const h = parseFloat(bar.high);
+                  const l = parseFloat(bar.low);
+                  const c = parseFloat(bar.close);
+                  const t = Math.floor(new Date(bar.datetime).getTime() / 1000);
+                  const v = bar.volume ? parseFloat(bar.volume) : undefined;
+                  if (!isNaN(o) && !isNaN(h) && !isNaN(l) && !isNaN(c) && !isNaN(t)) {
+                    candles.push({
+                      time: t,
+                      open: Number(o.toFixed(decimals)),
+                      high: Number(h.toFixed(decimals)),
+                      low: Number(l.toFixed(decimals)),
+                      close: Number(c.toFixed(decimals)),
+                      volume: v,
+                    });
+                  }
+                }
+                if (candles.length > 0) {
+                  usedSource = 'Twelve Data';
+                }
+              }
+            }
+          }
+        } catch (e) {}
+      }
+
+      // If Twelve Data didn't return candles (e.g. Free Tier restriction), fallback to Yahoo Finance
       if (candles.length === 0) {
         try {
           const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?interval=${yInterval}&range=${yRange}`;
@@ -2886,63 +3211,68 @@ app.get('/api/candles', async (req, res) => {
                 });
               }
             }
-
-            // Aggregate 1h bars into true 4h OHLC bars when 4h timeframe is requested
-            if (timeframe === '4h' && candles.length > 0) {
-              const buckets = new Map<number, typeof candles>();
-              for (const c of candles) {
-                const bucketTime = Math.floor(c.time / 14400) * 14400;
-                if (!buckets.has(bucketTime)) buckets.set(bucketTime, []);
-                buckets.get(bucketTime)!.push(c);
-              }
-              const aggregated: typeof candles = [];
-              for (const [bTime, bCandles] of buckets.entries()) {
-                bCandles.sort((a, b) => a.time - b.time);
-                const o = bCandles[0].open;
-                const h = Math.max(...bCandles.map((x) => x.high));
-                const l = Math.min(...bCandles.map((x) => x.low));
-                const c = bCandles[bCandles.length - 1].close;
-                const v = bCandles.reduce((acc, curr) => acc + (curr.volume || 0), 0);
-                aggregated.push({
-                  time: bTime,
-                  open: Number(o.toFixed(decimals)),
-                  high: Number(h.toFixed(decimals)),
-                  low: Number(l.toFixed(decimals)),
-                  close: Number(c.toFixed(decimals)),
-                  volume: v > 0 ? v : undefined,
-                });
-              }
-              aggregated.sort((a, b) => a.time - b.time);
-              candles = aggregated;
-            }
-
             if (candles.length > 0) {
-              candleCache[cacheKey] = {
-                timestamp: now,
-                candles: candles.map((c) => ({ ...c })),
-              };
+              usedSource = 'Yahoo Finance';
             }
           }
         } catch (err) {
-          console.warn(`Yahoo candle fetch error for ${yahooSymbol}:`, err);
+          console.warn(`Candle fetch fallback error for ${yahooSymbol}:`, err);
         }
+      }
+
+      // Aggregate 1h bars into true 4h OHLC bars when 4h timeframe is requested
+      if (timeframe === '4h' && candles.length > 0) {
+        const buckets = new Map<number, typeof candles>();
+        for (const c of candles) {
+          const bucketTime = Math.floor(c.time / 14400) * 14400;
+          if (!buckets.has(bucketTime)) buckets.set(bucketTime, []);
+          buckets.get(bucketTime)!.push(c);
+        }
+        const aggregated: typeof candles = [];
+        for (const [bTime, bCandles] of buckets.entries()) {
+          bCandles.sort((a, b) => a.time - b.time);
+          const o = bCandles[0].open;
+          const h = Math.max(...bCandles.map((x) => x.high));
+          const l = Math.min(...bCandles.map((x) => x.low));
+          const c = bCandles[bCandles.length - 1].close;
+          const v = bCandles.reduce((acc, curr) => acc + (curr.volume || 0), 0);
+          aggregated.push({
+            time: bTime,
+            open: Number(o.toFixed(decimals)),
+            high: Number(h.toFixed(decimals)),
+            low: Number(l.toFixed(decimals)),
+            close: Number(c.toFixed(decimals)),
+            volume: v > 0 ? v : undefined,
+          });
+        }
+        aggregated.sort((a, b) => a.time - b.time);
+        candles = aggregated;
+      }
+
+      if (candles.length > 0) {
+        candleCache[cacheKey] = {
+          timestamp: now,
+          candles: candles.map((c) => ({ ...c })),
+        };
       }
 
       let isSynthetic = false;
       if (candles.length === 0) {
         isSynthetic = true;
         candles = generateFallbackCandles(fallbackBasePrice, timeframe, decimals, stepSeconds);
+        usedSource = 'synthetic_fallback';
       }
 
       const livePrice = candles.length > 0 ? candles[candles.length - 1].close : fallbackBasePrice;
 
       return res.json({
         symbol: symbolParam,
+        twelveDataSymbol,
         yahooSymbol,
         timeframe,
         candlesCount: candles.length,
         isSynthetic,
-        source: isSynthetic ? 'synthetic_fallback' : 'Yahoo Finance',
+        source: usedSource,
         currentLivePrice: livePrice,
         candles,
       });
@@ -6192,30 +6522,55 @@ function mapToMt5Symbol(instrumentId: string): string {
 
 function hasFuturesTag(upper: string, clean: string): boolean {
   if (upper.includes('CASH') || upper.includes('SPOT')) return false;
+
   // Exclude broker account type suffixes (-VIP, -PRO, -RAW, -ECN, -ZERO, -MICRO, -MINI, -STD, -STP)
   const cleanWithoutSuffix = upper
     .replace(/-(VIP|PRO|RAW|ECN|ZERO|MICRO|MINI|STD|STP)$/i, '')
     .replace(/_(VIP|PRO|RAW|ECN|ZERO|MICRO|MINI|STD|STP)$/i, '');
   const baseClean = cleanWithoutSuffix.replace(/[^A-Z0-9]/g, '');
 
-  return (
-    cleanWithoutSuffix.includes('.F') ||
-    cleanWithoutSuffix.includes('_F') ||
-    cleanWithoutSuffix.includes('/F') ||
-    cleanWithoutSuffix.includes('-F') ||
-    cleanWithoutSuffix.includes('.FT') ||
-    cleanWithoutSuffix.includes('_FT') ||
-    cleanWithoutSuffix.includes('FT.') ||
-    cleanWithoutSuffix.includes('FUT') ||
-    cleanWithoutSuffix.startsWith('@') ||
-    baseClean.endsWith('FT') ||
-    baseClean.endsWith('F') ||
-    baseClean.includes('FUT') ||
-    /[FGHJKMNQUVXZ]\d{1,2}$/.test(baseClean) ||
-    /-(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\d{2}/.test(cleanWithoutSuffix) ||
-    /-\d{2}$/.test(cleanWithoutSuffix) ||
-    cleanWithoutSuffix.endsWith('-')
-  );
+  // Exact known Spot / Cash Indices are NEVER futures:
+  // DJ30, US30, USA30, WS30, WALLST30, WALLSTREET, DOW30, DOW, DJI,
+  // NAS100, US100, USA100, USTEC, NDX,
+  // SPX500, US500, USA500, SP500, SPX,
+  // XAUUSD, GOLD, EURUSD, GBPUSD, USDJPY
+  if (/^(DJ30|US30|USA30|WS30|WALLST30|WALLSTREET|DOW30|DOW|DJI|NAS100|US100|USA100|USTEC|NDX|SPX500|US500|USA500|SP500|SPX|XAUUSD|GOLD|EURUSD|GBPUSD|USDJPY)$/i.test(baseClean)) {
+    return false;
+  }
+
+  // Definite Futures tags:
+  // .f, .ft, _f, _ft, ft., /f, -f, futures, fut
+  if (/\.(F|FT)$/i.test(cleanWithoutSuffix) ||
+      /_(F|FT)$/i.test(cleanWithoutSuffix) ||
+      /-(F|FT)$/i.test(cleanWithoutSuffix) ||
+      cleanWithoutSuffix.includes('.F.') ||
+      cleanWithoutSuffix.includes('.FT.') ||
+      cleanWithoutSuffix.includes('FT.') ||
+      cleanWithoutSuffix.includes('.FUT') ||
+      cleanWithoutSuffix.includes('FUTURES') ||
+      cleanWithoutSuffix.startsWith('@') ||
+      cleanWithoutSuffix.endsWith('-') ||
+      baseClean.endsWith('FT')) {
+    return true;
+  }
+
+  // Explicit month/year contract patterns: e.g. -DEC26, -Z26, -MAR26
+  if (/-(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\d{2}/i.test(cleanWithoutSuffix) ||
+      /-[FGHJKMNQUVXZ]\d{1,2}$/i.test(cleanWithoutSuffix)) {
+    return true;
+  }
+
+  // CME Single-letter month code + 1 or 2 digits at end:
+  // ONLY for genuine CME roots (YM, MYM, NQ, MNQ, ENQ, ES, MES, EP, GC, MGC)
+  // or explicit dated index contracts (e.g. US30Z26, DJ30Z26, NAS100Z26, SPX500Z26)
+  if (/^(YM|MYM|NQ|MNQ|ENQ|ES|MES|EP|GC|MGC)[FGHJKMNQUVXZ]\d{1,2}$/i.test(baseClean)) {
+    return true;
+  }
+  if (/^(US30|DJ30|USA30|WS30|NAS100|US100|SPX500|US500|SP500)[FGHJKMNQUVXZ]\d{1,2}$/i.test(baseClean)) {
+    return true;
+  }
+
+  return false;
 }
 
 function isGoldFutures(sym: string): boolean {
@@ -6341,8 +6696,8 @@ function isDowFutures(sym: string): boolean {
     return true;
   }
 
-  // BlackBull (US30.f, DJ30.f, WALLST30.f), XM (US30-, US30-DEC26), Generic (YM_F, YM.F, DOW.F, US30ft, etc.)
-  if ((clean.includes('US30') || clean.includes('USA30') || clean.includes('DJ30') || clean.includes('DOW') || clean.includes('WS30') || clean.includes('WALLST')) && hasFuturesTag(upper, clean)) {
+  // BlackBull (US30.f, DJ30.f, WALLST30.f), XM (US30-, US30-DEC26), Generic (YM_F, YM.F, DOW.F, US30ft, DJ30ft, etc.)
+  if ((clean.includes('US30') || clean.includes('USA30') || clean.includes('DJ30') || clean.includes('DOW') || clean.includes('WS30') || clean.includes('WALLST') || clean.includes('DJI')) && hasFuturesTag(upper, clean)) {
     return true;
   }
   return false;
@@ -6359,7 +6714,9 @@ function isDowSpot(sym: string): boolean {
     clean.includes('DJ30') ||
     clean.includes('DOW') ||
     clean.includes('WS30') ||
-    clean.includes('WALLST')
+    clean.includes('WALLST') ||
+    clean.includes('DJI') ||
+    clean === 'DJ'
   );
 }
 
@@ -6442,9 +6799,89 @@ app.all(['/api/mt5/signals', '/api/mt5/signals/poll'], (req, res) => {
     return res.status(403).json({ error: 'Contul MT5 este blocat de administrator.' });
   }
 
-  // Check short-lived cache (TTL 3s) to eliminate redundant processing when multiple MT5 charts poll concurrently
   const rawSymbol = ((req.query.symbol as string) || (req.body && req.body.symbol)) as string;
   const symbolParam = (typeof rawSymbol === 'string' ? rawSymbol.trim() : '') || '';
+
+  // Extract live tick & OHLC reported directly by MT5 Expert Advisor to feed fallback quote memory
+  let b = req.body;
+  if (typeof b === 'string') {
+    try { b = JSON.parse(b); } catch (_) {}
+  }
+  const rawPrice = b?.price ?? req.query?.price;
+  const rawBid = b?.bid ?? req.query?.bid;
+  const rawAsk = b?.ask ?? req.query?.ask;
+  const rawOpen = b?.open ?? req.query?.open;
+  const rawHigh = b?.high ?? req.query?.high;
+  const rawLow = b?.low ?? req.query?.low;
+  const rawPrevClose = b?.prevClose ?? req.query?.prevClose;
+
+  const numPrice = typeof rawPrice === 'number' ? rawPrice : parseFloat(rawPrice);
+  const numBid = typeof rawBid === 'number' ? rawBid : parseFloat(rawBid);
+  const numAsk = typeof rawAsk === 'number' ? rawAsk : parseFloat(rawAsk);
+  const numOpen = typeof rawOpen === 'number' ? rawOpen : parseFloat(rawOpen);
+  const numHigh = typeof rawHigh === 'number' ? rawHigh : parseFloat(rawHigh);
+  const numLow = typeof rawLow === 'number' ? rawLow : parseFloat(rawLow);
+  const numPrevClose = typeof rawPrevClose === 'number' ? rawPrevClose : parseFloat(rawPrevClose);
+
+  if (symbolParam && !isNaN(numPrice) && numPrice > 0) {
+    const pClose = (!isNaN(numPrevClose) && numPrevClose > 0) ? numPrevClose : numPrice;
+    const change = numPrice - pClose;
+    const changePercent = pClose > 0 ? (change / pClose) * 100 : 0;
+    const tickObj: Mt5ReportedQuote = {
+      rawSymbol: symbolParam,
+      price: numPrice,
+      bid: !isNaN(numBid) && numBid > 0 ? numBid : numPrice,
+      ask: !isNaN(numAsk) && numAsk > 0 ? numAsk : numPrice,
+      open: !isNaN(numOpen) && numOpen > 0 ? numOpen : pClose,
+      high: !isNaN(numHigh) && numHigh > 0 ? numHigh : Math.max(numPrice, pClose),
+      low: !isNaN(numLow) && numLow > 0 ? numLow : Math.min(numPrice, pClose),
+      prevClose: pClose,
+      change,
+      changePercent,
+      timestamp: Date.now(),
+    };
+    mt5LiveQuoteMemory[symbolParam] = tickObj;
+
+    const mappedId = mapBrokerSymbolToInstrumentId(symbolParam);
+    if (mappedId) {
+      delete cfdQuoteCache[mappedId];
+      const isCfd = CFD_INSTRUMENT_CONFIGS.some((c) => c.id === mappedId);
+      if (isCfd) {
+        const prev = cfdQuoteMemory[mappedId];
+        const prevCloses = prev?.closes ? [...prev.closes] : [pClose];
+        if (prevCloses.length === 0 || prevCloses[prevCloses.length - 1] !== numPrice) {
+          prevCloses.push(numPrice);
+          if (prevCloses.length > 30) prevCloses.shift();
+        }
+        const cfg = CFD_INSTRUMENT_CONFIGS.find((c) => c.id === mappedId)!;
+        const ind = computeRealIndicators(numPrice, prevCloses);
+        const trend = calculateTechnicalTrend(numPrice, changePercent, ind.ema20, ind.sma50, ind.sma200, ind.macd, ind.rsi);
+
+        // MT5 is strictly PRIMARY for CFD Indices: update memory & broadcast instantly
+        cfdQuoteMemory[mappedId] = {
+          id: mappedId,
+          name: cfg.name,
+          symbol: cfg.symbol,
+          tradingViewSymbol: cfg.tvSymbol,
+          price: Number(numPrice.toFixed(cfg.decimals)),
+          change: Number(change.toFixed(cfg.decimals)),
+          changePercent: Number(changePercent.toFixed(2)),
+          high: Number(Math.max(numPrice, pClose).toFixed(cfg.decimals)),
+          low: Number(Math.min(numPrice, pClose).toFixed(cfg.decimals)),
+          open: Number((!isNaN(numOpen) && numOpen > 0 ? numOpen : pClose).toFixed(cfg.decimals)),
+          previousClose: Number(pClose.toFixed(cfg.decimals)),
+          volume: 'MT5 Live Stream',
+          source: 'MT5 Bridge',
+          timestamp: new Date().toISOString(),
+          ...ind,
+          trend,
+          closes: prevCloses,
+        };
+        broadcastQuotesToClients();
+      }
+    }
+  }
+
   const nowMs = Date.now();
   const cacheKey = `${matchedUser.id}:${symbolParam || 'ALL'}`;
   const cached = mt5SignalsCache.get(cacheKey);

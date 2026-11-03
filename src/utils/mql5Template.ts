@@ -1,4 +1,4 @@
-export const MT5_EA_VERSION = '4.83';
+export const MT5_EA_VERSION = '4.86';
 
 export function getMql5EaCode(
   mt5Endpoint: string,
@@ -176,6 +176,34 @@ bool HasFuturesTagMql(string sym)
       }
    }
 
+   // Strip trailing dots, hashes, pluses (e.g. NAS100., DJ30., US30., EURUSD.)
+   while(StringLen(baseSym) > 0)
+   {
+      string lastCharStr = StringSubstr(baseSym, StringLen(baseSym) - 1);
+      if(lastCharStr == "." || lastCharStr == "#" || lastCharStr == "+")
+      {
+         baseSym = StringSubstr(baseSym, 0, StringLen(baseSym) - 1);
+      }
+      else
+      {
+         break;
+      }
+   }
+
+   string upperClean = baseSym;
+   StringToUpper(upperClean);
+
+   // Exact known Cash / Spot Indices are NEVER futures:
+   if(upperClean == "DJ30" || upperClean == "US30" || upperClean == "USA30" || upperClean == "WS30" ||
+      upperClean == "WALLST30" || upperClean == "WALLSTREET" || upperClean == "DOW" || upperClean == "DOW30" || upperClean == "DJI" ||
+      upperClean == "NAS100" || upperClean == "US100" || upperClean == "USA100" || upperClean == "USTEC" || upperClean == "NDX" ||
+      upperClean == "SPX500" || upperClean == "SP500" || upperClean == "US500" || upperClean == "USA500" || upperClean == "SPX" ||
+      upperClean == "XAUUSD" || upperClean == "GOLD" ||
+      upperClean == "EURUSD" || upperClean == "GBPUSD" || upperClean == "USDJPY")
+   {
+      return false;
+   }
+
    if(StringFind(baseSym, ".F") != -1 || StringFind(baseSym, "_F") != -1 || StringFind(baseSym, "-F") != -1 || StringFind(baseSym, "/F") != -1) return true;
    if(StringFind(baseSym, ".FT") != -1 || StringFind(baseSym, "_FT") != -1 || StringFind(baseSym, "FT.") != -1 || StringFind(baseSym, "FUT") != -1) return true;
    if(StringSubstr(baseSym, StringLen(baseSym) - 1) == "-") return true; // XM Global futures: US100-, US500-, US30-, GOLD-
@@ -199,6 +227,7 @@ bool HasFuturesTagMql(string sym)
    }
 
    // CME Single-letter month code + 1 or 2 digits at end (e.g. Z26, H27, M6)
+   // NOT applicable to base spot indices whose names end in numbers (e.g. DJ30, US30, NAS100)
    if(len >= 3)
    {
       ushort lastChar = StringGetCharacter(baseSym, len - 1);
@@ -212,12 +241,18 @@ bool HasFuturesTagMql(string sym)
          }
          if(monthPos >= 0)
          {
-            ushort mCode = StringGetCharacter(baseSym, monthPos);
-            if(mCode == 'F' || mCode == 'G' || mCode == 'H' || mCode == 'J' || mCode == 'K' ||
-               mCode == 'M' || mCode == 'N' || mCode == 'Q' || mCode == 'U' || mCode == 'V' ||
-               mCode == 'X' || mCode == 'Z')
+            string rootBeforeMonth = StringSubstr(baseSym, 0, monthPos);
+            StringToUpper(rootBeforeMonth);
+            // Protect indices like DJ30 (root DJ + J30), US30, etc.
+            if(rootBeforeMonth != "DJ" && rootBeforeMonth != "US" && rootBeforeMonth != "USA" && rootBeforeMonth != "WS")
             {
-               return true;
+               ushort mCode = StringGetCharacter(baseSym, monthPos);
+               if(mCode == 'F' || mCode == 'G' || mCode == 'H' || mCode == 'J' || mCode == 'K' ||
+                  mCode == 'M' || mCode == 'N' || mCode == 'Q' || mCode == 'U' || mCode == 'V' ||
+                  mCode == 'X' || mCode == 'Z')
+               {
+                  return true;
+               }
             }
          }
       }
@@ -291,15 +326,15 @@ bool IsDowFuturesMql(string sym)
    if(StringFind(sym, "CASH") != -1 || StringFind(sym, "SPOT") != -1) return false;
    // AMP CME Futures: YM, MYM (e.g. YM, YMZ26, @YM, YM#, YM.F, MYM, MYMZ26)
    if(StringFind(sym, "YM") != -1 || StringFind(sym, "MYM") != -1) return true;
-   // BlackBull (US30.f, DJ30.f, WALLST30.f), XM (US30-, US30-DEC26), Generic (YM.F, US30ft, etc.)
-   if((StringFind(sym, "US30") != -1 || StringFind(sym, "USA30") != -1 || StringFind(sym, "DJ30") != -1 || StringFind(sym, "DOW") != -1 || StringFind(sym, "WS30") != -1 || StringFind(sym, "WALLST") != -1) && HasFuturesTagMql(sym)) return true;
+   // BlackBull (US30.f, DJ30.f, WALLST30.f), XM (US30-, US30-DEC26), Generic (YM.F, US30ft, DJ30ft, etc.)
+   if((StringFind(sym, "US30") != -1 || StringFind(sym, "USA30") != -1 || StringFind(sym, "DJ30") != -1 || StringFind(sym, "DOW") != -1 || StringFind(sym, "WS30") != -1 || StringFind(sym, "WALLST") != -1 || StringFind(sym, "DJI") != -1) && HasFuturesTagMql(sym)) return true;
    return false;
 }
 
 bool IsDowSpotMql(string sym)
 {
    if(IsDowFuturesMql(sym)) return false;
-   return (StringFind(sym, "US30") != -1 || StringFind(sym, "USA30") != -1 || StringFind(sym, "DJ30") != -1 || StringFind(sym, "DOW") != -1 || StringFind(sym, "WS30") != -1 || StringFind(sym, "WALLST") != -1);
+   return (StringFind(sym, "US30") != -1 || StringFind(sym, "USA30") != -1 || StringFind(sym, "DJ30") != -1 || StringFind(sym, "DOW") != -1 || StringFind(sym, "WS30") != -1 || StringFind(sym, "WALLST") != -1 || StringFind(sym, "DJI") != -1 || sym == "DJ");
 }
 
 //+------------------------------------------------------------------+
@@ -1362,15 +1397,53 @@ void FetchAndExecuteSignals()
    string cleanKey = GetCleanApiKey();
    string safeSymbol = UrlEncodeParam(targetSymbol);
    
+   // Capture live broker prices from current chart/symbol to synchronize directly with MarketAI
+   MqlTick currentTick;
+   double curBid = 0.0, curAsk = 0.0, curPrice = 0.0;
+   if(SymbolInfoTick(targetSymbol, currentTick))
+   {
+      curBid = currentTick.bid;
+      curAsk = currentTick.ask;
+      curPrice = (currentTick.last > 0.0) ? currentTick.last : ((currentTick.bid > 0.0 && currentTick.ask > 0.0) ? (currentTick.bid + currentTick.ask) * 0.5 : currentTick.bid);
+   }
+   if(curBid <= 0.0) curBid = SymbolInfoDouble(targetSymbol, SYMBOL_BID);
+   if(curAsk <= 0.0) curAsk = SymbolInfoDouble(targetSymbol, SYMBOL_ASK);
+   if(curPrice <= 0.0) curPrice = (curBid > 0.0 && curAsk > 0.0) ? (curBid + curAsk) * 0.5 : (curBid > 0.0 ? curBid : curAsk);
+
+   int symDigits = (int)SymbolInfoInteger(targetSymbol, SYMBOL_DIGITS);
+   if(symDigits <= 0) symDigits = _Digits;
+
+   double dOpen = iOpen(targetSymbol, PERIOD_D1, 0);
+   double dHigh = iHigh(targetSymbol, PERIOD_D1, 0);
+   double dLow  = iLow(targetSymbol, PERIOD_D1, 0);
+   double dPrevClose = iClose(targetSymbol, PERIOD_D1, 1);
+   if(dOpen <= 0.0) dOpen = curPrice;
+   if(dHigh <= 0.0) dHigh = curPrice;
+   if(dLow <= 0.0)  dLow  = curPrice;
+   if(dPrevClose <= 0.0) dPrevClose = curPrice;
+
    string origin = ForceHttps("${currentOrigin}");
-   string signalsUrl = origin + "/api/mt5/signals?apiKey=" + cleanKey + "&symbol=" + safeSymbol;
+   string signalsUrl = origin + "/api/mt5/signals?apiKey=" + cleanKey + "&symbol=" + safeSymbol +
+                       "&bid=" + DoubleToString(curBid, symDigits) +
+                       "&ask=" + DoubleToString(curAsk, symDigits) +
+                       "&price=" + DoubleToString(curPrice, symDigits);
    
    // Direct JSON POST request with User-Agent and Connection: close
    string postHeaders = "Authorization: Bearer " + cleanKey + "\\r\\n" +
                         "Content-Type: application/json\\r\\n" +
                         "User-Agent: Mozilla/5.0 MarketAI-Bridge/${MT5_EA_VERSION}\\r\\n" +
                         "Connection: close\\r\\n";
-   string postPayload = "{\\\"apiKey\\\":\\\"" + cleanKey + "\\\",\\\"symbol\\\":\\\"" + targetSymbol + "\\\"}";
+   string postPayload = "{\\\"apiKey\\\":\\\"" + cleanKey + "\\\"" +
+                        ",\\\"symbol\\\":\\\"" + targetSymbol + "\\\"" +
+                        ",\\\"bid\\\":" + DoubleToString(curBid, symDigits) +
+                        ",\\\"ask\\\":" + DoubleToString(curAsk, symDigits) +
+                        ",\\\"price\\\":" + DoubleToString(curPrice, symDigits) +
+                        ",\\\"open\\\":" + DoubleToString(dOpen, symDigits) +
+                        ",\\\"high\\\":" + DoubleToString(dHigh, symDigits) +
+                        ",\\\"low\\\":" + DoubleToString(dLow, symDigits) +
+                        ",\\\"prevClose\\\":" + DoubleToString(dPrevClose, symDigits) +
+                        ",\\\"time\\\":" + IntegerToString((long)TimeCurrent()) +
+                        "}";
    int copied = StringToCharArray(postPayload, data, 0, WHOLE_ARRAY, CP_UTF8);
    if(copied > 0 && data[copied - 1] == 0) ArrayResize(data, copied - 1);
    ArrayResize(result, 0);

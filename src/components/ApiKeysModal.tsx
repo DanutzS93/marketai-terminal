@@ -34,13 +34,17 @@ export const ApiKeysModal: React.FC<ApiKeysModalProps> = ({
 
   const isAdmin = user?.role === 'admin' || user?.username.toLowerCase() === 'admin';
   const defaultLse = (import.meta as any).env?.VITE_LSE_API_KEY || '';
+  const defaultTwelveData = (import.meta as any).env?.VITE_TWELVE_DATA_API_KEY || 'a3f771a8bef24d059d345a9bbdaec2f5';
   const [geminiApiKey, setGeminiApiKey] = useState(apiKeys.geminiApiKey || '');
   const [lseKey, setLseKey] = useState(apiKeys.lseKey || defaultLse);
+  const [twelveDataKey, setTwelveDataKey] = useState(apiKeys.twelveDataKey || defaultTwelveData);
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [isTestingLse, setIsTestingLse] = useState(false);
   const [lseTestResult, setLseTestResult] = useState<{ success: boolean; message: string; usage?: any } | null>(null);
+  const [isTestingTwelveData, setIsTestingTwelveData] = useState(false);
+  const [twelveDataTestResult, setTwelveDataTestResult] = useState<{ success: boolean; message: string; hasIndexAccess?: boolean; plan?: string } | null>(null);
 
   const handleTestConnection = async () => {
     if (!geminiApiKey.trim() && !isAdmin) {
@@ -138,12 +142,54 @@ export const ApiKeysModal: React.FC<ApiKeysModalProps> = ({
     }
   };
 
+  const handleTestTwelveDataConnection = async () => {
+    setIsTestingTwelveData(true);
+    setTwelveDataTestResult(null);
+
+    try {
+      const res = await fetch('/api/test-twelvedata-key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          apiKey: twelveDataKey.trim(),
+          lang,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setTwelveDataTestResult({
+          success: true,
+          hasIndexAccess: data.hasIndexAccess,
+          plan: data.plan,
+          message: data.message,
+        });
+      } else {
+        setTwelveDataTestResult({
+          success: false,
+          message: data.error || (lang === 'ro' ? 'Conexiunea la Twelve Data a eșuat.' : 'Twelve Data connection failed.'),
+        });
+      }
+    } catch (err: any) {
+      setTwelveDataTestResult({
+        success: false,
+        message:
+          lang === 'ro'
+            ? 'Eroare de rețea la contactarea Twelve Data.'
+            : 'Network error connecting to Twelve Data.',
+      });
+    } finally {
+      setIsTestingTwelveData(false);
+    }
+  };
+
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     onSaveKeys({
       ...apiKeys,
       geminiApiKey: geminiApiKey.trim(),
       lseKey: lseKey.trim(),
+      twelveDataKey: twelveDataKey.trim(),
     });
     setSavedSuccess(true);
     setTimeout(() => {
@@ -176,8 +222,8 @@ export const ApiKeysModal: React.FC<ApiKeysModalProps> = ({
               </h3>
               <p className="text-[11px] sm:text-xs text-slate-400 font-mono">
                 {lang === 'ro'
-                  ? 'Gemini AI (Inteligență Artificială) • LSE (Cotații Live)'
-                  : 'Gemini AI (Personal Key) • LSE (Live Quotes Feed)'}
+                  ? 'Gemini AI • LSE Live Feed • Twelve Data (Indici CFD)'
+                  : 'Gemini AI • LSE Live Feed • Twelve Data (CFD Indices)'}
               </p>
             </div>
           </div>
@@ -482,6 +528,113 @@ export const ApiKeysModal: React.FC<ApiKeysModalProps> = ({
             )}
           </div>
 
+          {/* Twelve Data Live Market Data Configuration (CFD Indices) */}
+          <div className="bg-[#080E1E]/80 border border-white/10 p-4 rounded-xl space-y-3 backdrop-blur-md">
+            <div className="flex items-center justify-between">
+              <label className="text-cyan-300 font-semibold flex items-center gap-1.5 text-sm">
+                <ShieldCheck className="w-4 h-4 text-cyan-400" />
+                <span>
+                  {lang === 'ro'
+                    ? 'Cheie API Twelve Data (Indici CFD):'
+                    : 'Twelve Data API Key (CFD Indices):'}
+                </span>
+              </label>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-bold font-mono uppercase tracking-wider text-cyan-400 bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/30 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                  <span>NAS100 • SPX500 • US30</span>
+                </span>
+                <a
+                  href="https://twelvedata.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[10px] font-bold text-cyan-300 hover:text-white flex items-center gap-1 bg-cyan-500/10 hover:bg-cyan-500/20 px-2 py-0.5 rounded border border-cyan-500/30 transition"
+                  title="Twelve Data Dashboard"
+                >
+                  <span>twelvedata.com</span>
+                  <ExternalLink className="w-2.5 h-2.5" />
+                </a>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="a3f77..."
+                  value={twelveDataKey}
+                  onChange={(e) => {
+                    setTwelveDataKey(e.target.value);
+                    setTwelveDataTestResult(null);
+                  }}
+                  className="w-full bg-[#040813] border border-white/10 rounded-xl py-2.5 px-3 text-cyan-300 font-mono text-xs sm:text-sm focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/30 transition placeholder:text-slate-600 shadow-inner pr-20"
+                />
+                <button
+                  type="button"
+                  onClick={() => setTwelveDataKey('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 text-[11px] font-mono text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 rounded border border-white/5 transition"
+                >
+                  {lang === 'ro' ? 'Șterge' : 'Clear'}
+                </button>
+              </div>
+
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1">
+                <p className="text-[11px] text-slate-400 leading-relaxed font-mono">
+                  {lang === 'ro'
+                    ? 'Folosită pentru cotațiile live ale indicilor CFD (NAS100, SPX500, US30) în locul Yahoo Finance.'
+                    : 'Used for live CFD indices quotes (NAS100, SPX500, US30) replacing Yahoo Finance.'}
+                </p>
+                <button
+                  type="button"
+                  onClick={handleTestTwelveDataConnection}
+                  disabled={isTestingTwelveData}
+                  className="px-3 py-1.5 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 hover:text-white border border-cyan-400/30 text-xs font-bold font-mono transition flex items-center gap-1.5 shrink-0 cursor-pointer disabled:opacity-50 shadow-sm self-start sm:self-auto"
+                >
+                  {isTestingTwelveData ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-cyan-300" />
+                      <span>{lang === 'ro' ? 'Se verifică...' : 'Testing...'}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Activity className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>{lang === 'ro' ? 'Testează Conexiunea Twelve Data' : 'Test Twelve Data Connection'}</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Twelve Data Test Connection Alert Box */}
+            {twelveDataTestResult && (
+              <div
+                className={`p-3 rounded-xl border text-xs flex items-start gap-2.5 transition backdrop-blur-md animate-in fade-in ${
+                  twelveDataTestResult.success
+                    ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-200'
+                    : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                }`}
+              >
+                {twelveDataTestResult.success ? (
+                  <CheckCircle className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                )}
+                <div className="space-y-0.5">
+                  <div className="font-bold">
+                    {twelveDataTestResult.success
+                      ? lang === 'ro'
+                        ? '✓ Conexiune Reușită la Twelve Data!'
+                        : '✓ Twelve Data Connection Successful!'
+                      : lang === 'ro'
+                      ? '✕ Eroare Comunicare Twelve Data:'
+                      : '✕ Twelve Data Communication Error:'}
+                  </div>
+                  <p className="text-[11px] opacity-90 leading-relaxed font-mono">{twelveDataTestResult.message}</p>
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Save & Close Action Buttons */}
           <div className="pt-2 flex items-center gap-3">
             <button
@@ -501,7 +654,7 @@ export const ApiKeysModal: React.FC<ApiKeysModalProps> = ({
                   <span>{lang === 'ro' ? 'Chei Salvate cu Succes!' : 'Keys Saved Successfully!'}</span>
                 </>
               ) : (
-                <span>{lang === 'ro' ? 'Salvează Cheile API (Gemini & LSE)' : 'Save API Keys (Gemini & LSE)'}</span>
+                <span>{lang === 'ro' ? 'Salvează Cheile API' : 'Save API Keys'}</span>
               )}
             </button>
           </div>

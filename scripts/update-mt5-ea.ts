@@ -159,6 +159,40 @@ export function updateMt5Ea(): void {
     }
   }
 
+  // Sincronizare .ex5 intre directoare daca unele au fost compilate de MetaEditor
+  const compiledFiles = [
+    'MarketAI_Bridge.ex5',
+    'MarketAI-Bridge.ex5',
+    'MT5.ex5',
+    'MarketAi.ex5'
+  ];
+
+  for (const f of compiledFiles) {
+    let sourcePath: string | null = null;
+    let sourceTime = 0;
+    for (const d of expertsDirs) {
+      const p = path.join(d, f);
+      if (fs.existsSync(p)) {
+        const mtime = fs.statSync(p).mtimeMs;
+        if (mtime > sourceTime) {
+          sourceTime = mtime;
+          sourcePath = p;
+        }
+      }
+    }
+
+    if (sourcePath && sourceTime > 0) {
+      for (const d of expertsDirs) {
+        const dest = path.join(d, f);
+        if (dest !== sourcePath) {
+          try {
+            fs.copyFileSync(sourcePath, dest);
+          } catch (_) {}
+        }
+      }
+    }
+  }
+
   console.log('✅ Toate fisierele EA din MT5 au fost actualizate si recompilate cu succes!');
 }
 

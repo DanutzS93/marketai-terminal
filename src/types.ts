@@ -52,7 +52,7 @@ export interface MarketQuote {
   open: number;
   previousClose: number;
   volume: string;
-  source: 'LSE' | 'WebSocket Live Stream' | 'Yahoo Finance' | 'Live Market Feed';
+  source: 'LSE' | 'WebSocket Live Stream' | 'Twelve Data' | 'Yahoo Finance' | 'Live Market Feed' | 'MT5 Bridge' | 'Yahoo Finance (Close)';
   timestamp: string;
   rsi: number;
   macd: {
@@ -171,6 +171,7 @@ export interface AIAnalysisResponse {
 export interface UserApiKeys {
   geminiApiKey?: string;
   lseKey?: string;
+  twelveDataKey?: string;
 }
 
 export interface UserProfile {
@@ -202,6 +203,7 @@ export interface UserProfile {
     ninjaTraderApiKey?: string;
     geminiApiKey?: string;
     lseKey?: string;
+    twelveDataKey?: string;
   };
   riskSettings?: {
     riskPerTrade?: number;

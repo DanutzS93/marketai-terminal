@@ -1414,8 +1414,10 @@ export default function App() {
       setIsRefreshing(true);
       try {
         const defaultLse = (import.meta as any).env?.VITE_LSE_API_KEY || '';
+        const defaultTwelveData = (import.meta as any).env?.VITE_TWELVE_DATA_API_KEY || '';
         const queryParams = new URLSearchParams({
           lseKey: apiKeys.lseKey || defaultLse,
+          twelveDataKey: apiKeys.twelveDataKey || defaultTwelveData,
         });
         if (force) {
           queryParams.append('force', 'true');
@@ -1464,8 +1466,10 @@ export default function App() {
       if (eventSource || isDisposed || wsConnected) return;
       try {
         const defaultLse = (import.meta as any).env?.VITE_LSE_API_KEY || '';
+        const defaultTwelveData = (import.meta as any).env?.VITE_TWELVE_DATA_API_KEY || '';
         const queryParams = new URLSearchParams({
           lseKey: apiKeys.lseKey || defaultLse,
+          twelveDataKey: apiKeys.twelveDataKey || defaultTwelveData,
         });
         eventSource = new EventSource(`/api/market-stream?${queryParams.toString()}`);
 
