@@ -99,18 +99,14 @@ export function updateMt5Ea(): void {
       } catch (_) {}
     }
     if (!apiKey) apiKey = 'mt5_live_YOUR_API_KEY';
-    let endpoint = 'https://marketai-terminal.fly.dev/api/mt5/signals';
-    let updateUrl = 'https://marketai-terminal.fly.dev/api/mt5/update';
+    const endpoint = 'https://marketaitrader.eu/api/mt5/signals';
+    const updateUrl = 'https://marketaitrader.eu/api/mt5/update';
 
-    // Daca exista deja un fisier, pastram parametrii de conectare existenti
+    // Daca exista deja un fisier, pastram cheia API configurata
     if (fs.existsSync(bridgeFile)) {
       const existing = fs.readFileSync(bridgeFile, 'utf8');
       const keyMatch = existing.match(/InpApiKey\s*=\s*"([^"]+)"/);
       if (keyMatch && keyMatch[1]) apiKey = keyMatch[1];
-      const epMatch = existing.match(/InpEndpointURL\s*=\s*"([^"]+)"/);
-      if (epMatch && epMatch[1]) endpoint = epMatch[1];
-      const upMatch = existing.match(/InpUpdateURL\s*=\s*"([^"]+)"/);
-      if (upMatch && upMatch[1]) updateUrl = upMatch[1];
     }
 
     const mqlCode = getMql5EaCode(

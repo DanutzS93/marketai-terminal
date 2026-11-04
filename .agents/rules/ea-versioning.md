@@ -10,4 +10,4 @@
    - Niciun număr de versiune nu se va hardcoda ca șir fix în componentele UI.
 
 3. **Deployment**:
-   - La fiecare bump de versiune sau modificare în logica EA/Bridge, se rulează `bun run lint`, `bun run build`, se face commit & push pe GitHub (`main`) și deployment imediat pe Fly.io (`flyctl deploy --remote-only`).
+   - La fiecare bump de versiune sau modificare în logica EA/Bridge, se rulează `bun run lint`, `bun run build`, se face commit & push pe GitHub (`main`), iar deployment-ul se realizează automat prin webhook pe serverul Contabo (Coolify).
