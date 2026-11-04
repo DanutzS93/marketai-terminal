@@ -1220,9 +1220,9 @@ function formatFullDateTimeServer(d: Date = new Date(), isEn = false) {
   const time = d.toLocaleTimeString(isEn ? 'en-US' : 'ro-RO', { hour: '2-digit', minute: '2-digit' });
   return `${day} ${month} ${year}, ${time}`;
 }
-// Rate limiting for AI endpoints: max 15 requests per minute per IP / User
+// Rate limiting for AI endpoints: max 30 requests per minute per IP / User
 const aiRateLimitMap = new Map<string, { count: number; windowStart: number }>();
-function checkAiRateLimit(key: string, maxRequests = 15, windowMs = 60000): boolean {
+function checkAiRateLimit(key: string, maxRequests = 30, windowMs = 60000): boolean {
   const now = Date.now();
   const record = aiRateLimitMap.get(key) || { count: 0, windowStart: now };
   if (now - record.windowStart > windowMs) {
@@ -1327,9 +1327,9 @@ app.post('/api/test-gemini-key', async (req, res) => {
       });
     }
 
-    // Ping test with lightweight generateContent call and resilient fallback
+    // Ping test with ultra-fast lightweight generateContent call
     const response = await callGeminiWithRetry(clientToTest, {
-      model: 'gemini-3.7-flash',
+      model: 'gemini-flash-lite-latest',
       contents: 'Ping test connection. Respond ONLY with OK.',
     });
 
@@ -1498,9 +1498,16 @@ app.post('/api/test-twelvedata-key', async (req, res) => {
   }
 });
 
-async function callGeminiWithRetry(aiClient: any, params: any, retries = 2, delay = 600): Promise<any> {
-  const primaryModel = params.model || 'gemini-3.7-flash';
-  const candidatePool = [primaryModel, 'gemini-3.7-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
+async function callGeminiWithRetry(aiClient: any, params: any, retries = 1, delay = 400, timeoutMs = 6500): Promise<any> {
+  const primaryModel = params.model || 'gemini-flash-lite-latest';
+  // Prioritize Google's ultra-fast, high-quota lightweight models first
+  const candidatePool = [
+    'gemini-flash-lite-latest',
+    'gemini-3.5-flash-lite',
+    primaryModel,
+    'gemini-3.7-flash',
+    'gemini-flash-latest',
+  ];
   const modelsToTry = candidatePool.filter((v, i, a) => a.indexOf(v) === i);
   let lastError: any = null;
 
@@ -1508,14 +1515,19 @@ async function callGeminiWithRetry(aiClient: any, params: any, retries = 2, dela
     let currentDelay = delay;
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        return await aiClient.models.generateContent({
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`Timeout after ${timeoutMs}ms on ${modelName}`)), timeoutMs)
+        );
+        const apiPromise = aiClient.models.generateContent({
           ...params,
           model: modelName,
         });
+        return await Promise.race([apiPromise, timeoutPromise]);
       } catch (err: any) {
         lastError = err;
         const status = err?.status || err?.code;
         const msg = typeof err?.message === 'string' ? err.message : JSON.stringify(err || '');
+        const isTimeout = msg.includes('Timeout after');
         const isNotFoundOrUnsupported =
           status === 404 ||
           msg.includes('404') ||
@@ -1534,8 +1546,8 @@ async function callGeminiWithRetry(aiClient: any, params: any, retries = 2, dela
           msg.includes('quota') ||
           msg.includes('UNAVAILABLE');
 
-        if (isNotFoundOrUnsupported || isHighDemandOrQuota) {
-          console.warn(`Gemini model ${modelName} returned unavailable / rate limit (${status || msg.slice(0, 50)}). Switching to next candidate model...`);
+        if (isNotFoundOrUnsupported || isHighDemandOrQuota || isTimeout) {
+          console.warn(`Gemini model ${modelName} returned unavailable / rate limit / timeout (${status || msg.slice(0, 60)}). Switching to next candidate model...`);
           break; // immediately switch to next model candidate in pool
         } else if (attempt < retries) {
           console.warn(`Gemini API call (${modelName}) attempt ${attempt + 1} failed (${msg.slice(0, 100)}). Retrying in ${currentDelay}ms...`);
@@ -3866,10 +3878,12 @@ Respond STRICTLY in valid JSON format without markdown code tags:
 }`;
 
     const response = await callGeminiWithRetry(geminiClient, {
-      model: 'gemini-3.7-flash',
+      model: 'gemini-flash-lite-latest',
       contents: prompt,
       config: {
         responseMimeType: 'application/json',
+        temperature: 0.2,
+        maxOutputTokens: 1024,
       },
     });
 
@@ -5641,7 +5655,8 @@ The user selected strategy is: "${strategy}".
 - If "Auto Smart Structure": Evaluate whether a pending Limit order at a key discount/premium zone offers a superior Risk/Reward ratio compared to entering at market price. If price is far from key support/resistance, preferred institutional entry is a Limit order!
 
 ANALYSIS STRUCTURE REQUIREMENT:
-The "rationaleRo" and "rationaleEn" fields MUST strictly follow this exact 3-step structured format (rationaleRo in Romanian, rationaleEn in English):
+CRITICAL FOR ULTRA-FAST EXECUTION: Output dense, punchy, professional sentences. Avoid essay filler.
+The "rationaleRo" and "rationaleEn" fields MUST follow this exact 3-step structured format (rationaleRo in Romanian, rationaleEn in English, exactly 1-2 punchy sentences per step):
 
 1. 📡 LSE (Tick-by-Tick Feed):
 [Describe tick momentum, bid/ask spread, and live streaming market context at $${quote.price}]
@@ -5667,10 +5682,10 @@ Generate valid JSON output:
   "targetPrice3": number,
   "riskRewardRatio": "1:2.5",
   "confidencePercent": number between 66 and 96 calculated dynamically based on RSI, MACD, and EMA alignment,
-  "summaryRo": "Rezumat executiv în limba română de 2 propoziții precizând prețul de piață ($${quote.price}) și tipul de ordin.",
-  "summaryEn": "2-sentence executive summary in English with live market price ($${quote.price}) and execution type.",
-  "rationaleRo": "Analiză completă structurată în 3 pași în limba română conform șablonului.",
-  "rationaleEn": "Full 3-step structured analysis in English following the template.",
+  "summaryRo": "Rezumat executiv în limba română de 1-2 propoziții concise precizând prețul de piață ($${quote.price}) și tipul de ordin.",
+  "summaryEn": "1-2 sentence concise executive summary in English with live market price ($${quote.price}) and execution type.",
+  "rationaleRo": "Analiză completă structurată în 3 pași în limba română conform șablonului (1-2 propoziții per pas).",
+  "rationaleEn": "Full 3-step structured analysis in English following the template (1-2 sentences per step).",
   "keyLevels": {
     "resistance": [number, number],
     "support": [number, number]
@@ -5685,11 +5700,12 @@ Generate valid JSON output:
 }`;
 
         const response = await callGeminiWithRetry(geminiClient, {
-          model: 'gemini-3.7-flash',
+          model: 'gemini-flash-lite-latest',
           contents: prompt,
           config: {
             responseMimeType: 'application/json',
-            temperature: 0.4,
+            temperature: 0.2,
+            maxOutputTokens: 1200,
           },
         });
 
@@ -5957,7 +5973,8 @@ Analyze market structure vs trader rules to output the optimal execution type:
 - "Market Execution" -> High tick momentum impulse active at this exact second ($${quote.price}).
 
 ANALYSIS STRUCTURE REQUIREMENT:
-The "rationale" field MUST strictly follow this exact 3-step structured format (written in ${isEn ? 'English' : 'Romanian'}):
+CRITICAL FOR ULTRA-FAST EXECUTION: Output dense, punchy, professional sentences. Avoid essay filler.
+The "rationale" field MUST follow this exact 3-step structured format (written in ${isEn ? 'English' : 'Romanian'}, exactly 1-2 punchy sentences per step):
 
 1. 📡 LSE (Tick-by-Tick Feed):
 [Describe tick stream context and live price behavior at $${quote.price}]
@@ -5983,10 +6000,10 @@ Generate valid JSON output:
   "targetPrice3": number,
   "riskRewardRatio": "${rrTarget}",
   "confidencePercent": number between 66 and 96 based on technical rule confluence and indicator alignment,
-  "summaryRo": "Rezumat explicând potrivirea regulilor cu prețul curent de $${quote.price} în română",
-  "summaryEn": "Summary explaining custom rules match with live price $${quote.price} in English",
-  "rationaleRo": "Analiză structurată în 3 pași în limba română.",
-  "rationaleEn": "Full 3-step structured rationale in English.",
+  "summaryRo": "Rezumat concis explicând potrivirea regulilor cu prețul curent de $${quote.price} în română (1-2 propoziții)",
+  "summaryEn": "Concise summary explaining custom rules match with live price $${quote.price} in English (1-2 sentences)",
+  "rationaleRo": "Analiză structurată în 3 pași în limba română (1-2 propoziții per pas).",
+  "rationaleEn": "Full 3-step structured rationale in English (1-2 sentences per step).",
   "keyLevels": {
     "resistance": [number, number],
     "support": [number, number]
@@ -6001,11 +6018,12 @@ Generate valid JSON output:
 }`;
 
         const response = await callGeminiWithRetry(geminiClient, {
-          model: 'gemini-3.7-flash',
+          model: 'gemini-flash-lite-latest',
           contents: prompt,
           config: {
             responseMimeType: 'application/json',
-            temperature: 0.4,
+            temperature: 0.2,
+            maxOutputTokens: 1200,
           },
         });
 
