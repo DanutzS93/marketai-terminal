@@ -117,7 +117,7 @@ export function updateMt5Ea(): void {
       endpoint,
       updateUrl,
       apiKey,
-      'https://marketai-terminal.fly.dev'
+      'https://marketaitrader.eu'
     );
 
     // Salvam toate variantele de denumire folosite in MT5
