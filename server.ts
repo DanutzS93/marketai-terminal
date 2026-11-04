@@ -6845,8 +6845,11 @@ app.all(['/api/mt5/signals', '/api/mt5/signals/poll'], (req, res) => {
 
   const rawPosProfit = b?.positionProfit ?? req.query?.positionProfit;
   const rawSigId = b?.signalId ?? req.query?.signalId;
+  const rawHasPosition = b?.hasPosition ?? req.query?.hasPosition;
+  const hasPos = rawHasPosition === true || rawHasPosition === 'true' || rawHasPosition === 1 || rawHasPosition === '1';
 
-  if (rawPosProfit !== undefined && rawPosProfit !== null && !isNaN(Number(rawPosProfit))) {
+  // Only update live position profit & active running status if MT5 actually has an open market position
+  if (hasPos && rawPosProfit !== undefined && rawPosProfit !== null && !isNaN(Number(rawPosProfit))) {
     const numProfit = Number(rawPosProfit);
     if (Array.isArray(matchedUser.signals)) {
       let matchedSig: any = null;
@@ -6856,7 +6859,9 @@ app.all(['/api/mt5/signals', '/api/mt5/signals/poll'], (req, res) => {
         );
       }
       if (!matchedSig && symbolParam) {
+        // Only match signals that are already confirmed entered or market orders (NEVER falsely trigger a pending limit order!)
         matchedSig = matchedUser.signals.find((s: any) =>
+          (s.isEntryTriggered || (s.executionType && s.executionType.toUpperCase().includes('MARKET'))) &&
           (s.status === 'RUNNING' || s.status === 'ACTIVE' || !s.status) &&
           symbolsMatch(s.instrumentId, s.symbol, symbolParam)
         );
@@ -7188,6 +7193,7 @@ app.post('/api/mt5/account', async (req, res) => {
           }
           if (!sig && pos.symbol) {
             sig = matchedUser.signals.find((s: any) => 
+              (s.isEntryTriggered || (s.executionType && s.executionType.toUpperCase().includes('MARKET'))) &&
               (s.status === 'RUNNING' || s.status === 'ACTIVE' || !s.status) &&
               symbolsMatch(s.instrumentId, s.symbol, pos.symbol)
             );

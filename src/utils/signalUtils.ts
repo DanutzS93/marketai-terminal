@@ -704,8 +704,6 @@ export function evaluateSignalOutcome(
   // Check if entry has been filled/triggered for pending limit/stop orders
   let isTriggered =
     isMarket ||
-    sig.isEntryTriggered === true ||
-    sig.firstHitMilestone === 'ENTRY' ||
     sig.firstHitMilestone === 'TP1' ||
     sig.firstHitMilestone === 'TP2' ||
     sig.firstHitMilestone === 'TP3';
@@ -715,6 +713,7 @@ export function evaluateSignalOutcome(
     else if (isBuyStop && livePrice >= sig.entryPrice) isTriggered = true;
     else if (isSellLimit && livePrice >= sig.entryPrice) isTriggered = true;
     else if (isSellStop && livePrice <= sig.entryPrice) isTriggered = true;
+    else if (sig.isEntryTriggered === true && sig.firstHitMilestone === 'ENTRY') isTriggered = true;
   }
 
   // 2. If order is a PENDING limit/stop order and was NOT yet triggered:

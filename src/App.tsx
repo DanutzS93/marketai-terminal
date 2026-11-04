@@ -261,7 +261,7 @@ export default function App() {
               return prevUser;
             });
 
-            // Synchronize live profit, PnL, and status into local signals state
+            // Synchronize live MT5 floating profit & confirmed closure status into local signals state
             if (Array.isArray(data.user.signals) && data.user.signals.length > 0) {
               setSignals((prevSignals) => {
                 let hasChanges = false;
@@ -272,23 +272,38 @@ export default function App() {
                   const newPnl = srv.pnl;
                   const newStatus = srv.status;
                   const newOutcome = srv.outcomeStatus;
-                  const newCurrentPrice = srv.currentMarketPrice;
+
+                  // Never overwrite live streaming prices with stale server snapshots
+                  // Never overwrite unactivated pending limit orders with stale server RUNNING status
+                  const isPendingOrder = (!s.outcomeStatus || s.outcomeStatus === 'PENDING') && !s.isEntryTriggered;
+                  const canAcceptOutcome =
+                    newOutcome &&
+                    s.outcomeStatus !== newOutcome &&
+                    !(isPendingOrder && newOutcome === 'RUNNING') &&
+                    s.outcomeStatus !== 'SL_HIT' &&
+                    s.outcomeStatus !== 'TP3_HIT' &&
+                    s.outcomeStatus !== 'CANCELLED';
+
+                  const canAcceptStatus =
+                    newStatus &&
+                    s.status !== newStatus &&
+                    !(isPendingOrder && newStatus === 'RUNNING');
 
                   if (
                     (newLiveProfit !== undefined && s.liveProfit !== newLiveProfit) ||
                     (newPnl !== undefined && s.pnl !== newPnl) ||
-                    (newStatus && s.status !== newStatus) ||
-                    (newOutcome && s.outcomeStatus !== newOutcome) ||
-                    (newCurrentPrice && s.currentMarketPrice !== newCurrentPrice)
+                    canAcceptStatus ||
+                    canAcceptOutcome ||
+                    (srv.exitPrice !== undefined && s.exitPrice !== srv.exitPrice) ||
+                    (srv.realizedProfit !== undefined && s.realizedProfit !== srv.realizedProfit)
                   ) {
                     hasChanges = true;
                     return {
                       ...s,
                       liveProfit: newLiveProfit !== undefined ? newLiveProfit : s.liveProfit,
                       pnl: newPnl !== undefined ? newPnl : s.pnl,
-                      status: newStatus || s.status,
-                      outcomeStatus: newOutcome || s.outcomeStatus,
-                      currentMarketPrice: newCurrentPrice || s.currentMarketPrice,
+                      status: canAcceptStatus ? newStatus : s.status,
+                      outcomeStatus: canAcceptOutcome ? newOutcome : s.outcomeStatus,
                       exitPrice: srv.exitPrice ?? s.exitPrice,
                       realizedProfit: srv.realizedProfit ?? s.realizedProfit,
                     };
@@ -1452,8 +1467,8 @@ export default function App() {
 
   // Fetch quotes from server
   const fetchMarketQuotes = useCallback(
-    async (force = false) => {
-      setIsRefreshing(true);
+    async (force = false, isUserInitiated = false) => {
+      if (isUserInitiated) setIsRefreshing(true);
       try {
         const defaultLse = (import.meta as any).env?.VITE_LSE_API_KEY || '';
         const defaultTwelveData = (import.meta as any).env?.VITE_TWELVE_DATA_API_KEY || '';
@@ -1478,7 +1493,7 @@ export default function App() {
       } catch (err) {
         console.warn('Market fetch notification:', err);
       } finally {
-        setIsRefreshing(false);
+        if (isUserInitiated) setIsRefreshing(false);
       }
     },
     [apiKeys]
@@ -1745,7 +1760,7 @@ export default function App() {
         quotes={quotes}
         selectedInstrument={selectedInstrument}
         onSelectInstrument={setSelectedInstrument}
-        onRefresh={() => fetchMarketQuotes(true)}
+        onRefresh={() => fetchMarketQuotes(true, true)}
         isRefreshing={isRefreshing}
         onOpenKeysModal={() => setIsKeysModalOpen(true)}
         onOpenCalcModal={() => setIsCalcModalOpen(true)}
