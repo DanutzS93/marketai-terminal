@@ -7395,7 +7395,9 @@ app.post('/api/mt5/update', async (req, res) => {
             target.status = status;
             didChange = true;
           }
-          const effOutcome = outcomeStatus || target.outcomeStatus || (target.pnl !== undefined && target.pnl > 0 ? 'TP1_HIT' : target.pnl !== undefined && target.pnl < 0 ? 'SL_HIT' : 'RUNNING');
+          const isMarket = target.executionType && target.executionType.toUpperCase().includes('MARKET');
+          const fallbackOutcome = (isMarket || target.isEntryTriggered) ? 'RUNNING' : 'PENDING';
+          const effOutcome = outcomeStatus || target.outcomeStatus || (target.pnl !== undefined && target.pnl > 0 ? 'TP1_HIT' : target.pnl !== undefined && target.pnl < 0 ? 'SL_HIT' : fallbackOutcome);
           if (target.outcomeStatus !== effOutcome) {
             target.outcomeStatus = effOutcome;
             didChange = true;
@@ -7503,7 +7505,9 @@ app.post('/api/mt5/update', async (req, res) => {
         } else if (status) {
           serverTarget.status = status;
         }
-        serverTarget.outcomeStatus = outcomeStatus || serverTarget.outcomeStatus || (serverTarget.pnl !== undefined && serverTarget.pnl > 0 ? 'TP1_HIT' : serverTarget.pnl !== undefined && serverTarget.pnl < 0 ? 'SL_HIT' : 'RUNNING');
+        const isMarket = serverTarget.executionType && serverTarget.executionType.toUpperCase().includes('MARKET');
+        const fallbackOutcome = (isMarket || serverTarget.isEntryTriggered) ? 'RUNNING' : 'PENDING';
+        serverTarget.outcomeStatus = outcomeStatus || serverTarget.outcomeStatus || (serverTarget.pnl !== undefined && serverTarget.pnl > 0 ? 'TP1_HIT' : serverTarget.pnl !== undefined && serverTarget.pnl < 0 ? 'SL_HIT' : fallbackOutcome);
         if (milestone === 'ENTRY') {
           serverTarget.isEntryTriggered = true;
           serverTarget.firstHitMilestone = 'ENTRY';
@@ -7907,7 +7911,9 @@ app.post(['/api/ninjatrader/update', '/api/nt8/update'], async (req, res) => {
           } else if (status) {
             target.status = status;
           }
-          target.outcomeStatus = outcomeStatus || target.outcomeStatus || (target.pnl !== undefined && target.pnl > 0 ? 'TP1_HIT' : target.pnl !== undefined && target.pnl < 0 ? 'SL_HIT' : 'RUNNING');
+          const isMarket = target.executionType && target.executionType.toUpperCase().includes('MARKET');
+          const fallbackOutcome = (isMarket || target.isEntryTriggered) ? 'RUNNING' : 'PENDING';
+          target.outcomeStatus = outcomeStatus || target.outcomeStatus || (target.pnl !== undefined && target.pnl > 0 ? 'TP1_HIT' : target.pnl !== undefined && target.pnl < 0 ? 'SL_HIT' : fallbackOutcome);
           if (milestone === 'ENTRY') {
             target.isEntryTriggered = true;
             target.firstHitMilestone = 'ENTRY';
