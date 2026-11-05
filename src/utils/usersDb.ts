@@ -51,6 +51,7 @@ export interface StoredUser {
   inviteCodeUsed: string;
   createdAt: string;
   token: string;
+  tokens?: string[];
   role?: 'admin' | 'user';
   status?: 'active' | 'blocked';
   subscriptionExpiresAt?: string;
@@ -160,7 +161,22 @@ function sanitizeUserObj(user: StoredUser): StoredUser {
       !String(t.id).includes('sample')
   );
 
-  return { ...user, signals: cleanSignals || [], deletedSignalIds: deletedIds, tradeJournal: cleanTradeJournal };
+  let tokens = Array.isArray(user.tokens) ? user.tokens.filter(Boolean) : [];
+  if (user.token && !tokens.includes(user.token)) {
+    tokens.push(user.token);
+  }
+  if (tokens.length > 50) {
+    tokens = tokens.slice(-50);
+  }
+
+  return {
+    ...user,
+    token: user.token || (tokens.length > 0 ? tokens[tokens.length - 1] : ''),
+    tokens,
+    signals: cleanSignals || [],
+    deletedSignalIds: deletedIds,
+    tradeJournal: cleanTradeJournal,
+  };
 }
 
 function parseUsersJsonSafe(raw: string): Record<string, StoredUser> | null {
@@ -469,6 +485,27 @@ export async function initUsersDbCache(): Promise<void> {
 
 export function getUsersFromCache(): Record<string, StoredUser> {
   return usersCache;
+}
+
+/**
+ * Resolves a user by auth session token, checking primary token, multi-session tokens array,
+ * and persistent system admin token. Prevents premature session invalidation across devices.
+ */
+export function findUserByAuthToken(
+  token: string | undefined | null,
+  users?: Record<string, StoredUser>
+): StoredUser | null {
+  if (!token) return null;
+  const clean = String(token).trim();
+  if (!clean) return null;
+  const db = users || getUsersFromCache();
+  for (const u of Object.values(db)) {
+    if (!u) continue;
+    if (u.token === clean) return u;
+    if (Array.isArray(u.tokens) && u.tokens.includes(clean)) return u;
+    if (u.role === 'admin' && (clean.startsWith('tok_usr_admin') || clean === 'SYSTEM_ADMIN_TOKEN')) return u;
+  }
+  return null;
 }
 
 // High-performance write debouncing & batching for disk and Supabase

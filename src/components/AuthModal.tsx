@@ -80,8 +80,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       if (res.ok && data.success && data.user && data.token) {
         try {
           localStorage.setItem('market_ai_auth_token', data.token);
+          localStorage.setItem('market_ai_user_profile', JSON.stringify(data.user));
         } catch (e) {
-          console.warn('Could not save auth token to localStorage:', e);
+          console.warn('Could not save auth session to localStorage:', e);
         }
         setSuccessMsg(
           mode === 'register'

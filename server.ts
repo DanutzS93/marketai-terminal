@@ -18,6 +18,7 @@ import {
   deleteInviteCodeFromDb,
   hashPassword,
   verifyPassword,
+  findUserByAuthToken,
   StoredUser,
   StoredInviteCode,
 } from './src/utils/usersDb';
@@ -446,6 +447,7 @@ app.post('/api/auth/register', async (req, res) => {
     inviteCodeUsed: cleanCode,
     createdAt: new Date().toISOString(),
     token: token,
+    tokens: [token],
     role: isUserAdmin ? 'admin' : 'user',
     status: 'active',
     subscriptionExpiresAt: expiresAt,
@@ -543,8 +545,18 @@ app.post('/api/auth/login', async (req, res) => {
     });
   }
 
-  // Cryptographically secure session token
-  user.token = `tok_${crypto.randomBytes(32).toString('hex')}`;
+  // Cryptographically secure session token that persists across tabs and devices
+  const newToken = `tok_${crypto.randomBytes(32).toString('hex')}`;
+  user.token = newToken;
+  if (!Array.isArray(user.tokens)) {
+    user.tokens = [];
+  }
+  if (!user.tokens.includes(newToken)) {
+    user.tokens.push(newToken);
+  }
+  if (user.tokens.length > 50) {
+    user.tokens = user.tokens.slice(-50);
+  }
   saveUsersDb(users, user.id).catch((err) => console.warn('Background save user token error:', err));
 
   return res.json({
@@ -560,26 +572,48 @@ app.get('/api/auth/me', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Neautorizat' });
 
   const users = loadUsersDb();
-  const user = Object.values(users).find((u) => u.token === token);
+  const user = findUserByAuthToken(token, users);
   if (!user) return res.status(401).json({ error: 'Sesiune expirată sau nevalidă.' });
 
   if (user.status === 'blocked') {
     return res.status(403).json({
       error: 'Accesul tău a fost blocat de administrator! Contactează echipa de suport pentru deblocare (posibilă neplată abonament).',
+      isBlocked: true,
     });
   }
 
-  if (!isSubscriptionActive(user)) {
-    return res.status(403).json({
-      error: 'Abonamentul tău a expirat! Te rugăm să reînnoiești abonamentul.',
-      isExpired: true,
-      user: formatUserForClient(user),
-    });
+  // Ensure active token is retained in user.tokens
+  if (!Array.isArray(user.tokens)) {
+    user.tokens = [user.token || token];
+  } else if (!user.tokens.includes(token)) {
+    user.tokens.push(token);
+    if (user.tokens.length > 50) user.tokens = user.tokens.slice(-50);
+    saveUsersDb(users, user.id).catch(() => {});
   }
 
   return res.json({
     user: formatUserForClient(user),
+    isExpired: !isSubscriptionActive(user),
   });
+});
+
+app.post('/api/auth/logout', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.replace('Bearer ', '').trim();
+  if (token) {
+    const users = loadUsersDb();
+    const user = findUserByAuthToken(token, users);
+    if (user) {
+      if (Array.isArray(user.tokens)) {
+        user.tokens = user.tokens.filter((t) => t !== token);
+      }
+      if (user.token === token) {
+        user.token = user.tokens && user.tokens.length > 0 ? user.tokens[user.tokens.length - 1] : '';
+      }
+      await saveUsersDb(users, user.id);
+    }
+  }
+  return res.json({ success: true });
 });
 
 app.get('/api/user/sync-data', (req, res) => {
@@ -588,7 +622,7 @@ app.get('/api/user/sync-data', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Neautorizat' });
 
   const users = loadUsersDb();
-  const user = Object.values(users).find((u) => u.token === token);
+  const user = findUserByAuthToken(token, users);
   if (!user) return res.status(401).json({ error: 'Sesiune nevalidă.' });
 
   if (user.status === 'blocked') {
@@ -636,7 +670,7 @@ app.post('/api/user/sync-data', async (req, res) => {
 
   const { signals, customRules, apiKeys, deletedSignalIds, riskSettings, leverage, accountBalance, tradeJournal } = req.body;
   const users = loadUsersDb();
-  const user = Object.values(users).find((u) => u.token === token);
+  const user = findUserByAuthToken(token, users);
   if (!user) return res.status(401).json({ error: 'Sesiune nevalidă.' });
 
   if (!user.deletedSignalIds) user.deletedSignalIds = [];
@@ -701,7 +735,7 @@ app.post('/api/user/delete-signal', async (req, res) => {
   if (!signalId) return res.status(400).json({ error: 'ID semnal lipsă.' });
 
   const users = loadUsersDb();
-  const user = Object.values(users).find((u) => u.token === token);
+  const user = findUserByAuthToken(token, users);
   if (!user) return res.status(401).json({ error: 'Sesiune nevalidă.' });
 
   if (!user.deletedSignalIds) user.deletedSignalIds = [];
@@ -725,7 +759,7 @@ app.post('/api/user/close-trade', async (req, res) => {
   if (!signalId) return res.status(400).json({ error: 'ID semnal lipsă.' });
 
   const users = loadUsersDb();
-  const user = Object.values(users).find((u) => u.token === token);
+  const user = findUserByAuthToken(token, users);
   if (!user) return res.status(401).json({ error: 'Sesiune nevalidă.' });
 
   if (!user.deletedSignalIds) user.deletedSignalIds = [];
@@ -843,7 +877,7 @@ app.post('/api/user/close-all-trades', async (req, res) => {
 
   const { signalIds, journalEntries } = req.body;
   const users = loadUsersDb();
-  const user = Object.values(users).find((u) => u.token === token);
+  const user = findUserByAuthToken(token, users);
   if (!user) return res.status(401).json({ error: 'Sesiune nevalidă.' });
 
   if (!user.deletedSignalIds) user.deletedSignalIds = [];
@@ -917,7 +951,7 @@ function verifyAdminToken(req: express.Request): StoredUser | null {
   if (!token) return null;
 
   const users = loadUsersDb();
-  const user = Object.values(users).find((u) => u.token === token);
+  const user = findUserByAuthToken(token, users);
   if (user && (user.role === 'admin' || user.username.toLowerCase() === 'admin')) {
     return user;
   }
@@ -1253,7 +1287,7 @@ function getGeminiClient(req?: express.Request) {
   const token = authHeader?.replace('Bearer ', '').trim();
   if (token) {
     const users = loadUsersDb();
-    const user = Object.values(users).find((u) => u.token === token);
+    const user = findUserByAuthToken(token, users);
     if (user && isSubscriptionActive(user)) {
       // User's own stored custom key
       if (user.apiKeys?.geminiApiKey && typeof user.apiKeys.geminiApiKey === 'string' && user.apiKeys.geminiApiKey.trim().length > 0) {
@@ -5493,7 +5527,7 @@ app.post('/api/generate-ai-signal', async (req, res) => {
     let requestingUser: StoredUser | null = null;
     if (token) {
       const users = loadUsersDb();
-      requestingUser = Object.values(users).find((u) => u.token === token) || null;
+      requestingUser = findUserByAuthToken(token, users);
     }
 
     if (!requestingUser && !customKey) {
@@ -5584,7 +5618,7 @@ app.post('/api/generate-ai-signal', async (req, res) => {
       let isAdmin = false;
       if (token) {
         const users = loadUsersDb();
-        const user = Object.values(users).find((u) => u.token === token || (u.role === 'admin' && token.startsWith('tok_usr_admin')));
+        const user = findUserByAuthToken(token, users);
         isAdmin = user?.role === 'admin' || user?.username?.toLowerCase() === 'admin' || token.startsWith('tok_usr_admin');
       }
 
@@ -5822,7 +5856,7 @@ async function attachSignalToUser(req: express.Request, signal: any) {
     const token = authHeader?.replace(/^Bearer\s+/i, '').trim();
     if (token) {
       const users = loadUsersDb();
-      const user = Object.values(users).find((u) => u.token === token);
+      const user = findUserByAuthToken(token, users);
       if (user) {
         signal.userId = user.id;
         if (!Array.isArray(user.signals)) user.signals = [];
@@ -5852,7 +5886,7 @@ app.post('/api/generate-custom-rule-signal', async (req, res) => {
     let requestingUser: StoredUser | null = null;
     if (token) {
       const users = loadUsersDb();
-      requestingUser = Object.values(users).find((u) => u.token === token) || null;
+      requestingUser = findUserByAuthToken(token, users);
     }
 
     if (!requestingUser && !customKey) {
@@ -6422,7 +6456,7 @@ app.post('/api/user/regenerate-mt5-key', async (req, res) => {
   if (!token) return res.status(401).json({ error: 'Neautorizat' });
 
   const users = loadUsersDb();
-  const user = Object.values(users).find((u) => u.token === token);
+  const user = findUserByAuthToken(token, users);
   if (!user) return res.status(401).json({ error: 'Sesiune nevalidă.' });
 
   if (!user.apiKeys) user.apiKeys = {};
@@ -6443,7 +6477,7 @@ app.post('/api/user/regenerate-ninjatrader-key', async (req, res) => {
   if (!token) return res.status(401).json({ error: 'Neautorizat' });
 
   const users = loadUsersDb();
-  const user = Object.values(users).find((u) => u.token === token);
+  const user = findUserByAuthToken(token, users);
   if (!user) return res.status(401).json({ error: 'Sesiune nevalidă.' });
 
   if (!user.apiKeys) user.apiKeys = {};
@@ -7118,7 +7152,7 @@ app.post('/api/mt5/signals/sync', async (req, res) => {
   let targetUser: StoredUser | null = null;
 
   if (token) {
-    targetUser = Object.values(users).find((u) => u.token === token) || null;
+    targetUser = findUserByAuthToken(token, users);
   }
   if (!targetUser && apiKey) {
     targetUser = Object.values(users).find(
@@ -7626,7 +7660,7 @@ app.post(['/api/ninjatrader/signals/sync', '/api/nt8/signals/sync'], async (req,
   let targetUser: StoredUser | null = null;
 
   if (token) {
-    targetUser = Object.values(users).find((u) => u.token === token) || null;
+    targetUser = findUserByAuthToken(token, users);
   }
   if (!targetUser && apiKey) {
     targetUser = Object.values(users).find(
@@ -8005,7 +8039,7 @@ app.post('/api/signals/update-pnl', async (req, res) => {
 
   const users = loadUsersDb();
   let targetUser: StoredUser | null = null;
-  if (token) targetUser = Object.values(users).find((u) => u.token === token) || null;
+  if (token) targetUser = findUserByAuthToken(token, users);
   if (!targetUser && apiKey) {
     targetUser = Object.values(users).find((u) => u.mt5ApiKey === apiKey || u.apiKeys?.mt5ApiKey === apiKey || u.ninjaTraderApiKey === apiKey) || null;
   }

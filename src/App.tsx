@@ -57,12 +57,23 @@ export default function App() {
   }, [lang]);
   const [activeTab, setActiveTab] = useState<ActiveTab>('signals');
 
-  // User Auth & Cloud State
-  const [user, setUser] = useState<UserProfile | null>(null);
+  // User Auth & Cloud State (Persistent across sessions and inactivity)
+  const [user, setUser] = useState<UserProfile | null>(() => {
+    try {
+      const saved = localStorage.getItem('market_ai_user_profile');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {
+      console.warn('Could not read user profile from localStorage:', e);
+    }
+    return null;
+  });
   const [authToken, setAuthToken] = useState<string | null>(() => {
     return localStorage.getItem('market_ai_auth_token');
   });
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(() => {
+    // Only open login modal if user has never logged in (no token and no cached profile)
+    return !localStorage.getItem('market_ai_auth_token');
+  });
   const [isAdminCrmModalOpen, setIsAdminCrmModalOpen] = useState(false);
   const [isMarketClosedModalOpen, setIsMarketClosedModalOpen] = useState(false);
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
@@ -158,6 +169,9 @@ export default function App() {
             setUser(data.user);
             setAuthToken(token);
             setIsAuthModalOpen(false);
+            try {
+              localStorage.setItem('market_ai_user_profile', JSON.stringify(data.user));
+            } catch (e) {}
 
             // Fetch Cloud Synced Data (Signals & Keys) for this user
             const syncRes = await fetch('/api/user/sync-data', {
@@ -189,25 +203,19 @@ export default function App() {
                 setApiKeys(syncData.apiKeys);
               }
             }
-          } else {
-            const currentToken = localStorage.getItem('market_ai_auth_token');
-            if (currentToken === token) {
-              setIsAuthModalOpen(true);
-            }
           }
-        } else {
+        } else if (res.status === 401) {
+          // If server explicitly reports session invalid and user has no active cached profile, prompt login
           const currentToken = localStorage.getItem('market_ai_auth_token');
-          if (currentToken === token) {
-            localStorage.removeItem('market_ai_auth_token');
+          const cachedUser = localStorage.getItem('market_ai_user_profile');
+          if (currentToken === token && !cachedUser) {
             setIsAuthModalOpen(true);
           }
         }
       } catch (err) {
-        console.warn('Auth session check failed:', err);
-        const currentToken = localStorage.getItem('market_ai_auth_token');
-        if (currentToken === token && !isCancelled) {
-          setIsAuthModalOpen(true);
-        }
+        // Transient network error or browser tab waking up after inactivity:
+        // KEEP USER LOGGED IN! Preserves session without annoying login dialogs.
+        console.warn('Network issue during auth verification (session preserved):', err);
       } finally {
         if (!isCancelled) {
           setIsCloudSynced(true);
@@ -253,10 +261,14 @@ export default function App() {
                 prevUser.subscriptionDaysLeft !== data.user.subscriptionDaysLeft ||
                 JSON.stringify(prevUser.mt5OpenPositions) !== JSON.stringify(data.user.mt5OpenPositions)
               ) {
-                return {
+                const updatedUser = {
                   ...prevUser,
                   ...data.user,
                 };
+                try {
+                  localStorage.setItem('market_ai_user_profile', JSON.stringify(updatedUser));
+                } catch (e) {}
+                return updatedUser;
               }
               return prevUser;
             });
@@ -385,7 +397,12 @@ export default function App() {
   const handleAuthSuccess = async (newUser: UserProfile, newAuthToken: string) => {
     setUser(newUser);
     setAuthToken(newAuthToken);
-    localStorage.setItem('market_ai_auth_token', newAuthToken);
+    try {
+      localStorage.setItem('market_ai_auth_token', newAuthToken);
+      localStorage.setItem('market_ai_user_profile', JSON.stringify(newUser));
+    } catch (e) {
+      console.warn('Could not cache session to localStorage:', e);
+    }
     setIsAuthModalOpen(false);
 
     // Fetch user cloud data
@@ -426,7 +443,8 @@ export default function App() {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    const currentToken = authToken || localStorage.getItem('market_ai_auth_token');
     setUser(null);
     setAuthToken(null);
     setIsCloudSynced(false);
@@ -434,10 +452,22 @@ export default function App() {
     setDeletedSignalIds([]);
     setManualTrades([]);
     localStorage.removeItem('market_ai_auth_token');
+    localStorage.removeItem('market_ai_user_profile');
     localStorage.removeItem(LOCAL_STORAGE_SIGNALS_KEY);
     localStorage.removeItem(LOCAL_STORAGE_DELETED_SIGNALS_KEY);
     localStorage.removeItem(LOCAL_STORAGE_MANUAL_TRADES_KEY);
     setIsAuthModalOpen(true);
+
+    if (currentToken) {
+      try {
+        await fetch('/api/auth/logout', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${currentToken}` },
+        });
+      } catch (e) {
+        // silent
+      }
+    }
   };
 
   const handleCopyInviteLink = () => {
