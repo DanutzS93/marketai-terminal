@@ -204,11 +204,17 @@ export default function App() {
               }
             }
           }
-        } else if (res.status === 401) {
-          // If server explicitly reports session invalid and user has no active cached profile, prompt login
+        } else if (res.status === 401 || res.status === 403) {
+          // Server explicitly rejected the session (invalid token, blocked account or expired subscription):
+          // drop the cached profile so the user is not left in a "logged in" UI where every API call fails.
+          // Network errors (catch below) still preserve the session.
           const currentToken = localStorage.getItem('market_ai_auth_token');
-          const cachedUser = localStorage.getItem('market_ai_user_profile');
-          if (currentToken === token && !cachedUser) {
+          if (currentToken === token && !isCancelled) {
+            try {
+              localStorage.removeItem('market_ai_user_profile');
+              if (res.status === 401) localStorage.removeItem('market_ai_auth_token');
+            } catch (e) {}
+            setUser(null);
             setIsAuthModalOpen(true);
           }
         }

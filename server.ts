@@ -582,6 +582,14 @@ app.get('/api/auth/me', (req, res) => {
     });
   }
 
+  if (!isSubscriptionActive(user)) {
+    return res.status(403).json({
+      error: 'Abonamentul tău a expirat! Te rugăm să reînnoiești abonamentul.',
+      isExpired: true,
+      user: formatUserForClient(user),
+    });
+  }
+
   // Ensure active token is retained in user.tokens
   if (!Array.isArray(user.tokens)) {
     user.tokens = [user.token || token];
@@ -5619,7 +5627,7 @@ app.post('/api/generate-ai-signal', async (req, res) => {
       if (token) {
         const users = loadUsersDb();
         const user = findUserByAuthToken(token, users);
-        isAdmin = user?.role === 'admin' || user?.username?.toLowerCase() === 'admin' || token.startsWith('tok_usr_admin');
+        isAdmin = user?.role === 'admin' || user?.username?.toLowerCase() === 'admin';
       }
 
       if (isAdmin) {

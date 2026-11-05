@@ -503,7 +503,7 @@ export function findUserByAuthToken(
     if (!u) continue;
     if (u.token === clean) return u;
     if (Array.isArray(u.tokens) && u.tokens.includes(clean)) return u;
-    if (u.role === 'admin' && (clean.startsWith('tok_usr_admin') || clean === 'SYSTEM_ADMIN_TOKEN')) return u;
+    // SECURITY: never authenticate by token prefix or hard-coded value - only exact random session tokens
   }
   return null;
 }
