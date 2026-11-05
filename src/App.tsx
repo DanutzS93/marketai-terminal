@@ -27,6 +27,25 @@ const LOCAL_STORAGE_SIGNALS_KEY = 'market_ai_signals_v2';
 const LOCAL_STORAGE_DELETED_SIGNALS_KEY = 'market_ai_deleted_signal_ids_v1';
 const LOCAL_STORAGE_MANUAL_TRADES_KEY = 'market_ai_trade_journal_v1';
 
+/**
+ * Strict Environment Isolation:
+ * Scopes client-side localStorage keys per authenticated User ID.
+ * Prevents account cross-talk, data bleeding, or stale session contamination.
+ */
+export const getUserStorageKey = (base: string, userId?: string | null): string => {
+  let uid = userId;
+  if (!uid) {
+    try {
+      const saved = localStorage.getItem('market_ai_user_profile');
+      if (saved) {
+        const u = JSON.parse(saved);
+        if (u && u.id) uid = u.id;
+      }
+    } catch (_) {}
+  }
+  return uid ? `${base}_${uid}` : `${base}_guest`;
+};
+
 export default function App() {
   const [selectedInstrument, setSelectedInstrument] = useState<InstrumentId>('NASDAQ');
   const [lang, setLang] = useState<'ro' | 'en'>(() => {
@@ -98,7 +117,14 @@ export default function App() {
 
   const [deletedSignalIds, setDeletedSignalIds] = useState<string[]>(() => {
     try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_DELETED_SIGNALS_KEY);
+      const uid = (() => {
+        try {
+          const s = localStorage.getItem('market_ai_user_profile');
+          return s ? JSON.parse(s)?.id : null;
+        } catch (_) { return null; }
+      })();
+      if (!uid) return [];
+      const saved = localStorage.getItem(getUserStorageKey(LOCAL_STORAGE_DELETED_SIGNALS_KEY, uid));
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) return parsed;
@@ -111,13 +137,20 @@ export default function App() {
 
   const [signals, setSignals] = useState<TradingSignal[]>(() => {
     try {
-      const savedDeleted = localStorage.getItem(LOCAL_STORAGE_DELETED_SIGNALS_KEY);
+      const uid = (() => {
+        try {
+          const s = localStorage.getItem('market_ai_user_profile');
+          return s ? JSON.parse(s)?.id : null;
+        } catch (_) { return null; }
+      })();
+      if (!uid) return [];
+      const savedDeleted = localStorage.getItem(getUserStorageKey(LOCAL_STORAGE_DELETED_SIGNALS_KEY, uid));
       const delIds = savedDeleted ? JSON.parse(savedDeleted) : [];
-      const saved = localStorage.getItem(LOCAL_STORAGE_SIGNALS_KEY);
+      const saved = localStorage.getItem(getUserStorageKey(LOCAL_STORAGE_SIGNALS_KEY, uid));
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          return filter30DaySignals(parsed, delIds);
+          return filter30DaySignals(parsed, delIds).filter((s) => !s.userId || s.userId === uid);
         }
       }
     } catch (e) {
@@ -128,14 +161,18 @@ export default function App() {
 
   const [manualTrades, setManualTrades] = useState<TradeJournalEntry[]>(() => {
     try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_MANUAL_TRADES_KEY);
+      const uid = (() => {
+        try {
+          const s = localStorage.getItem('market_ai_user_profile');
+          return s ? JSON.parse(s)?.id : null;
+        } catch (_) { return null; }
+      })();
+      if (!uid) return [];
+      const saved = localStorage.getItem(getUserStorageKey(LOCAL_STORAGE_MANUAL_TRADES_KEY, uid));
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
           const clean = parsed.filter((t: any) => !isDemoOrSampleTrade(t));
-          if (clean.length !== parsed.length) {
-            localStorage.setItem(LOCAL_STORAGE_MANUAL_TRADES_KEY, JSON.stringify(clean));
-          }
           return clean;
         }
       }
@@ -182,21 +219,24 @@ export default function App() {
               const cloudDeleted = Array.isArray(syncData.deletedSignalIds) ? syncData.deletedSignalIds : [];
               setDeletedSignalIds(cloudDeleted);
               try {
-                localStorage.setItem(LOCAL_STORAGE_DELETED_SIGNALS_KEY, JSON.stringify(cloudDeleted));
+                localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_DELETED_SIGNALS_KEY, data.user.id), JSON.stringify(cloudDeleted));
               } catch (e) {}
 
               if (Array.isArray(syncData.signals)) {
-                const userFiltered = filter30DaySignals(syncData.signals, cloudDeleted);
+                // Strict isolation: only load signals matching this user's ID
+                const userFiltered = filter30DaySignals(syncData.signals, cloudDeleted)
+                  .filter((s) => !s.userId || s.userId === data.user.id)
+                  .map((s) => ({ ...s, userId: data.user.id }));
                 setSignals(userFiltered);
                 try {
-                  localStorage.setItem(LOCAL_STORAGE_SIGNALS_KEY, JSON.stringify(userFiltered));
+                  localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_SIGNALS_KEY, data.user.id), JSON.stringify(userFiltered));
                 } catch (e) {}
               }
               if (Array.isArray(syncData.tradeJournal)) {
                 const cleanCloud = syncData.tradeJournal.filter((t: any) => !isDemoOrSampleTrade(t));
                 setManualTrades(cleanCloud);
                 try {
-                  localStorage.setItem(LOCAL_STORAGE_MANUAL_TRADES_KEY, JSON.stringify(cleanCloud));
+                  localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_MANUAL_TRADES_KEY, data.user.id), JSON.stringify(cleanCloud));
                 } catch (e) {}
               }
               if (syncData.apiKeys && (syncData.apiKeys.geminiApiKey || syncData.apiKeys.lseKey)) {
@@ -346,7 +386,10 @@ export default function App() {
 
     const timer = setTimeout(async () => {
       try {
-        const clean = filter30DaySignals(signals, deletedSignalIds);
+        // Strict environment isolation: ensure only current user's signals are synced
+        const clean = filter30DaySignals(signals, deletedSignalIds)
+          .filter((s) => !s.userId || s.userId === user.id)
+          .map((s) => ({ ...s, userId: user.id }));
         await fetch('/api/user/sync-data', {
           method: 'POST',
           headers: {
@@ -370,10 +413,13 @@ export default function App() {
 
   // Sync active signals to MT5 & NinjaTrader bridge server endpoints (Debounced 1500ms)
   useEffect(() => {
-    if (!authToken || !isCloudSynced) return;
+    if (!user || !authToken || !isCloudSynced) return;
 
     const timer = setTimeout(async () => {
       try {
+        const cleanSignals = filter30DaySignals(signals, deletedSignalIds)
+          .filter((s) => !s.userId || s.userId === user.id)
+          .map((s) => ({ ...s, userId: user.id }));
         await Promise.all([
           fetch('/api/mt5/signals/sync', {
             method: 'POST',
@@ -381,7 +427,7 @@ export default function App() {
               'Content-Type': 'application/json',
               Authorization: `Bearer ${authToken}`,
             },
-            body: JSON.stringify({ signals }),
+            body: JSON.stringify({ signals: cleanSignals }),
           }),
           fetch('/api/ninjatrader/signals/sync', {
             method: 'POST',
@@ -389,7 +435,7 @@ export default function App() {
               'Content-Type': 'application/json',
               Authorization: `Bearer ${authToken}`,
             },
-            body: JSON.stringify({ signals }),
+            body: JSON.stringify({ signals: cleanSignals }),
           }),
         ]);
       } catch (e) {
@@ -398,7 +444,7 @@ export default function App() {
     }, 1500);
 
     return () => clearTimeout(timer);
-  }, [signals, authToken, isCloudSynced]);
+  }, [signals, deletedSignalIds, user, authToken, isCloudSynced]);
 
   const handleAuthSuccess = async (newUser: UserProfile, newAuthToken: string) => {
     setUser(newUser);
@@ -421,21 +467,23 @@ export default function App() {
         const cloudDeleted = Array.isArray(syncData.deletedSignalIds) ? syncData.deletedSignalIds : [];
         setDeletedSignalIds(cloudDeleted);
         try {
-          localStorage.setItem(LOCAL_STORAGE_DELETED_SIGNALS_KEY, JSON.stringify(cloudDeleted));
+          localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_DELETED_SIGNALS_KEY, newUser.id), JSON.stringify(cloudDeleted));
         } catch (e) {}
 
         if (Array.isArray(syncData.signals)) {
-          const userFiltered = filter30DaySignals(syncData.signals, cloudDeleted);
+          const userFiltered = filter30DaySignals(syncData.signals, cloudDeleted)
+            .filter((s) => !s.userId || s.userId === newUser.id)
+            .map((s) => ({ ...s, userId: newUser.id }));
           setSignals(userFiltered);
           try {
-            localStorage.setItem(LOCAL_STORAGE_SIGNALS_KEY, JSON.stringify(userFiltered));
+            localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_SIGNALS_KEY, newUser.id), JSON.stringify(userFiltered));
           } catch (e) {}
         }
         if (Array.isArray(syncData.tradeJournal)) {
           const cleanCloud = syncData.tradeJournal.filter((t: any) => !isDemoOrSampleTrade(t));
           setManualTrades(cleanCloud);
           try {
-            localStorage.setItem(LOCAL_STORAGE_MANUAL_TRADES_KEY, JSON.stringify(cleanCloud));
+            localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_MANUAL_TRADES_KEY, newUser.id), JSON.stringify(cleanCloud));
           } catch (e) {}
         }
         if (syncData.apiKeys && (syncData.apiKeys.geminiApiKey || syncData.apiKeys.lseKey)) {
@@ -451,6 +499,7 @@ export default function App() {
 
   const handleLogout = async () => {
     const currentToken = authToken || localStorage.getItem('market_ai_auth_token');
+    const oldUserId = user?.id;
     setUser(null);
     setAuthToken(null);
     setIsCloudSynced(false);
@@ -459,6 +508,11 @@ export default function App() {
     setManualTrades([]);
     localStorage.removeItem('market_ai_auth_token');
     localStorage.removeItem('market_ai_user_profile');
+    if (oldUserId) {
+      localStorage.removeItem(getUserStorageKey(LOCAL_STORAGE_SIGNALS_KEY, oldUserId));
+      localStorage.removeItem(getUserStorageKey(LOCAL_STORAGE_DELETED_SIGNALS_KEY, oldUserId));
+      localStorage.removeItem(getUserStorageKey(LOCAL_STORAGE_MANUAL_TRADES_KEY, oldUserId));
+    }
     localStorage.removeItem(LOCAL_STORAGE_SIGNALS_KEY);
     localStorage.removeItem(LOCAL_STORAGE_DELETED_SIGNALS_KEY);
     localStorage.removeItem(LOCAL_STORAGE_MANUAL_TRADES_KEY);
@@ -739,14 +793,17 @@ export default function App() {
 
   // Persist signals to localStorage whenever signals or deletedSignalIds state updates
   useEffect(() => {
+    if (!user?.id) return;
     try {
-      const clean = filter30DaySignals(signals, deletedSignalIds);
-      localStorage.setItem(LOCAL_STORAGE_SIGNALS_KEY, JSON.stringify(clean));
-      localStorage.setItem(LOCAL_STORAGE_DELETED_SIGNALS_KEY, JSON.stringify(deletedSignalIds));
+      const clean = filter30DaySignals(signals, deletedSignalIds)
+        .filter((s) => !s.userId || s.userId === user.id)
+        .map((s) => ({ ...s, userId: user.id }));
+      localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_SIGNALS_KEY, user.id), JSON.stringify(clean));
+      localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_DELETED_SIGNALS_KEY, user.id), JSON.stringify(deletedSignalIds));
     } catch (e) {
       console.warn('Could not save signals to localStorage:', e);
     }
-  }, [signals, deletedSignalIds]);
+  }, [signals, deletedSignalIds, user?.id]);
 
   const handleUpdateSignalOutcome = (signalId: string, outcome: 'ACTIVE' | 'TP1_HIT' | 'TP2_HIT' | 'TP3_HIT' | 'SL_HIT' | 'CANCELLED' | 'RUNNING' | 'PENDING') => {
     setSignals((prev) =>
@@ -790,7 +847,7 @@ export default function App() {
     const updatedDeleted = Array.from(new Set([...deletedSignalIds, signalId]));
     setDeletedSignalIds(updatedDeleted);
     try {
-      localStorage.setItem(LOCAL_STORAGE_DELETED_SIGNALS_KEY, JSON.stringify(updatedDeleted));
+      localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_DELETED_SIGNALS_KEY, user?.id), JSON.stringify(updatedDeleted));
     } catch (e) {
       console.warn('Could not save deletedSignalIds to localStorage:', e);
     }
@@ -892,7 +949,7 @@ export default function App() {
     const updatedDeleted = Array.from(new Set([...deletedSignalIds, signalId]));
     setDeletedSignalIds(updatedDeleted);
     try {
-      localStorage.setItem(LOCAL_STORAGE_DELETED_SIGNALS_KEY, JSON.stringify(updatedDeleted));
+      localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_DELETED_SIGNALS_KEY, user?.id), JSON.stringify(updatedDeleted));
     } catch (e) {
       console.warn('Could not save deletedSignalIds to localStorage:', e);
     }
@@ -1013,7 +1070,7 @@ export default function App() {
         }
         const updated = Array.from(existingMap.values()).filter((t) => !isDemoOrSampleTrade(t));
         try {
-          localStorage.setItem(LOCAL_STORAGE_MANUAL_TRADES_KEY, JSON.stringify(updated));
+          localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_MANUAL_TRADES_KEY, user?.id), JSON.stringify(updated));
         } catch (e) {}
         return updated;
       });
@@ -1022,7 +1079,7 @@ export default function App() {
     const updatedDeleted = Array.from(new Set([...deletedSignalIds, ...closingIds]));
     setDeletedSignalIds(updatedDeleted);
     try {
-      localStorage.setItem(LOCAL_STORAGE_DELETED_SIGNALS_KEY, JSON.stringify(updatedDeleted));
+      localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_DELETED_SIGNALS_KEY, user?.id), JSON.stringify(updatedDeleted));
     } catch (e) {
       console.warn('Could not save deletedSignalIds to localStorage:', e);
     }
@@ -1059,8 +1116,8 @@ export default function App() {
     setDeletedSignalIds(updatedDeleted);
 
     try {
-      localStorage.setItem(LOCAL_STORAGE_SIGNALS_KEY, JSON.stringify([]));
-      localStorage.setItem(LOCAL_STORAGE_DELETED_SIGNALS_KEY, JSON.stringify(updatedDeleted));
+      localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_SIGNALS_KEY, user?.id), JSON.stringify([]));
+      localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_DELETED_SIGNALS_KEY, user?.id), JSON.stringify(updatedDeleted));
     } catch (e) {
       console.warn('Could not save signals to localStorage:', e);
     }
@@ -1093,7 +1150,7 @@ export default function App() {
       }
       const clean = updated.filter((t) => !isDemoOrSampleTrade(t));
       try {
-        localStorage.setItem(LOCAL_STORAGE_MANUAL_TRADES_KEY, JSON.stringify(clean));
+        localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_MANUAL_TRADES_KEY, user?.id), JSON.stringify(clean));
       } catch (e) {}
 
       // Sync to cloud
@@ -1117,7 +1174,7 @@ export default function App() {
     setManualTrades((prev) => {
       const updated = prev.filter((t) => t.id !== tradeId && !isDemoOrSampleTrade(t));
       try {
-        localStorage.setItem(LOCAL_STORAGE_MANUAL_TRADES_KEY, JSON.stringify(updated));
+        localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_MANUAL_TRADES_KEY, user?.id), JSON.stringify(updated));
       } catch (e) {}
 
       // Sync to cloud
@@ -1140,7 +1197,7 @@ export default function App() {
   const handleClearAllManualTrades = () => {
     setManualTrades([]);
     try {
-      localStorage.setItem(LOCAL_STORAGE_MANUAL_TRADES_KEY, JSON.stringify([]));
+      localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_MANUAL_TRADES_KEY, user?.id), JSON.stringify([]));
     } catch (e) {}
 
     const token = authToken || localStorage.getItem('market_ai_auth_token');
@@ -1231,25 +1288,9 @@ export default function App() {
   }, [authToken, apiKeys]);
 
   const handleResetSignals = () => {
-    const marketSchedule = getMarketScheduleStatus();
-    if (marketSchedule.isClosed) {
-      setIsMarketClosedModalOpen(true);
-      return;
-    }
     setSignals([]);
-    autoGenerate3Signals(lang);
+    setDeletedSignalIds([]);
   };
-
-  // Auto trigger generation on site entry once market quotes load (ONLY when market is open)
-  useEffect(() => {
-    if (quotes.NASDAQ.price > 0 && !autoGeneratedRef.current) {
-      autoGeneratedRef.current = true;
-      const marketSchedule = getMarketScheduleStatus();
-      if (!marketSchedule.isClosed && signals.length === 0) {
-        autoGenerate3Signals(lang);
-      }
-    }
-  }, [quotes, autoGenerate3Signals, lang, signals.length]);
 
   // Automated trade status & milestone evaluation loop
   useEffect(() => {
@@ -1396,7 +1437,7 @@ export default function App() {
           }
           const updatedTrades = Array.from(map.values()).filter((t) => !isDemoOrSampleTrade(t));
           try {
-            localStorage.setItem(LOCAL_STORAGE_MANUAL_TRADES_KEY, JSON.stringify(updatedTrades));
+            localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_MANUAL_TRADES_KEY, user?.id), JSON.stringify(updatedTrades));
           } catch (e) {}
 
           const token = authToken || localStorage.getItem('market_ai_auth_token');
@@ -1419,7 +1460,7 @@ export default function App() {
         setDeletedSignalIds((prevDel) => {
           const nextDel = Array.from(new Set([...prevDel, ...newlyCancelledIds]));
           try {
-            localStorage.setItem(LOCAL_STORAGE_DELETED_SIGNALS_KEY, JSON.stringify(nextDel));
+            localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_DELETED_SIGNALS_KEY, user?.id), JSON.stringify(nextDel));
           } catch (e) {}
           return nextDel;
         });
@@ -1474,7 +1515,7 @@ export default function App() {
           setDeletedSignalIds((prevDel) => {
             const nextDel = Array.from(new Set([...prevDel, ...newlyCancelledIds]));
             try {
-              localStorage.setItem(LOCAL_STORAGE_DELETED_SIGNALS_KEY, JSON.stringify(nextDel));
+              localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_DELETED_SIGNALS_KEY, user?.id), JSON.stringify(nextDel));
             } catch (e) {}
             return nextDel;
           });

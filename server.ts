@@ -689,11 +689,29 @@ app.post('/api/user/sync-data', async (req, res) => {
 
   if (Array.isArray(signals)) {
     const existingSignals = user.signals || [];
-    // Merge existing server signals with incoming client signals
-    const combinedSignals = [...existingSignals, ...signals];
-    user.signals = filter30DaySignals(combinedSignals, user.deletedSignalIds);
+    // STRICT ENVIRONMENT ISOLATION:
+    // Drop any signals that do not belong to this user and enforce user ownership
+    const validIncoming = signals
+      .filter((s: any) => s && (!s.userId || s.userId === user.id))
+      .map((s: any) => ({ ...s, userId: user.id }));
+
+    const existingMap = new Map<string, any>();
+    for (const s of existingSignals) {
+      if (s && s.id && (!s.userId || s.userId === user.id)) {
+        existingMap.set(String(s.id), { ...s, userId: user.id });
+      }
+    }
+    for (const s of validIncoming) {
+      if (s && s.id) {
+        existingMap.set(String(s.id), s);
+      }
+    }
+    user.signals = filter30DaySignals(Array.from(existingMap.values()), user.deletedSignalIds);
   } else if (user.signals) {
-    user.signals = filter30DaySignals(user.signals, user.deletedSignalIds);
+    user.signals = filter30DaySignals(
+      user.signals.filter((s: any) => !s.userId || s.userId === user.id),
+      user.deletedSignalIds
+    );
   }
 
   if (Array.isArray(customRules)) user.customRules = customRules;
@@ -7020,14 +7038,22 @@ app.all(['/api/mt5/signals', '/api/mt5/signals/poll'], (req, res) => {
 
   const processedSet = new Set((matchedUser?.mt5ProcessedSignalIds || []).slice(-100).map((id) => String(id)));
 
-  // Filter signals: only send signals that are NOT cancelled, NOT hit SL/TP3, and NOT already placed in MT5
+  // Filter signals: only send fresh, pending signals that are strictly owned by matchedUser, NOT already placed, NOT running, and NOT hit any milestone
   let filtered = targetSignals.filter((s) => {
     if (!s) return false;
+    // Strict environment isolation
+    if (s.userId && s.userId !== matchedUser.id) return false;
+
     const sigId = String(s.id || s.signal_id || '');
     if (s.mt5Placed === true || processedSet.has(sigId)) return false;
     if (s.status === 'CANCELLED' || s.outcomeStatus === 'CANCELLED') return false;
-    if (s.outcomeStatus === 'SL_HIT' || s.outcomeStatus === 'TP3_HIT') return false;
-    return s.status === 'ACTIVE' || !s.status || s.status === 'RUNNING' || s.outcomeStatus === 'PENDING' || s.outcomeStatus === 'RUNNING';
+    if (s.status === 'CLOSED' || s.outcomeStatus === 'CLOSED') return false;
+    if (['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT', 'EXPIRED'].includes(s.outcomeStatus)) return false;
+
+    // CRITICAL: An order that already triggered entry or is already RUNNING must NEVER be sent as a new order to place!
+    if (s.isEntryTriggered === true || s.status === 'RUNNING' || s.outcomeStatus === 'RUNNING') return false;
+
+    return (s.status === 'ACTIVE' || !s.status) && (s.outcomeStatus === 'PENDING' || !s.outcomeStatus);
   });
 
   if (symbolParam && symbolParam !== 'ALL' && symbolParam !== '') {
@@ -7175,10 +7201,24 @@ app.post('/api/mt5/signals/sync', async (req, res) => {
   const { signals } = req.body;
   if (Array.isArray(signals)) {
     const existingSignals = targetUser.signals || [];
-    const incomingWithUser = signals.map((s: any) => ({ ...s, userId: targetUser!.id }));
-    const combinedSignals = [...existingSignals, ...incomingWithUser];
+    // STRICT ENVIRONMENT ISOLATION:
+    const validIncoming = signals
+      .filter((s: any) => s && (!s.userId || s.userId === targetUser!.id))
+      .map((s: any) => ({ ...s, userId: targetUser!.id }));
 
-    targetUser.signals = filter30DaySignals(combinedSignals, targetUser.deletedSignalIds);
+    const existingMap = new Map<string, any>();
+    for (const s of existingSignals) {
+      if (s && s.id && (!s.userId || s.userId === targetUser!.id)) {
+        existingMap.set(String(s.id), { ...s, userId: targetUser!.id });
+      }
+    }
+    for (const s of validIncoming) {
+      if (s && s.id) {
+        existingMap.set(String(s.id), s);
+      }
+    }
+
+    targetUser.signals = filter30DaySignals(Array.from(existingMap.values()), targetUser.deletedSignalIds);
     await saveUsersDb(users, targetUser.id);
     invalidateMt5SignalsCache(targetUser.id);
     return res.json({ success: true, count: targetUser.signals.length, userId: targetUser.id });
@@ -7683,10 +7723,24 @@ app.post(['/api/ninjatrader/signals/sync', '/api/nt8/signals/sync'], async (req,
   const { signals } = req.body;
   if (Array.isArray(signals)) {
     const existingSignals = targetUser.signals || [];
-    const incomingWithUser = signals.map((s: any) => ({ ...s, userId: targetUser!.id }));
-    const combinedSignals = [...existingSignals, ...incomingWithUser];
+    // STRICT ENVIRONMENT ISOLATION:
+    const validIncoming = signals
+      .filter((s: any) => s && (!s.userId || s.userId === targetUser!.id))
+      .map((s: any) => ({ ...s, userId: targetUser!.id }));
 
-    targetUser.signals = filter30DaySignals(combinedSignals, targetUser.deletedSignalIds);
+    const existingMap = new Map<string, any>();
+    for (const s of existingSignals) {
+      if (s && s.id && (!s.userId || s.userId === targetUser!.id)) {
+        existingMap.set(String(s.id), { ...s, userId: targetUser!.id });
+      }
+    }
+    for (const s of validIncoming) {
+      if (s && s.id) {
+        existingMap.set(String(s.id), s);
+      }
+    }
+
+    targetUser.signals = filter30DaySignals(Array.from(existingMap.values()), targetUser.deletedSignalIds);
     await saveUsersDb(users, targetUser.id);
     invalidateMt5SignalsCache(targetUser.id);
     return res.json({ success: true, count: targetUser.signals.length, userId: targetUser.id });
@@ -7735,9 +7789,17 @@ app.get(['/api/ninjatrader/signals', '/api/nt8/signals'], (req, res) => {
 
   const activeSignals = rawSignals.filter((s: any) => {
     if (!s || deletedIds.has(s.id)) return false;
-    const isStatActive = s.status === 'ACTIVE' || s.outcomeStatus === 'RUNNING' || s.outcomeStatus === 'PENDING';
-    const notHit = !['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT', 'CANCELLED', 'EXPIRED'].includes(s.outcomeStatus);
-    return isStatActive && notHit;
+    // Strict environment isolation
+    if (s.userId && s.userId !== matchedUser.id) return false;
+    if (s.ninjaTraderPlaced === true || processedIds.has(String(s.id))) return false;
+    if (s.status === 'CANCELLED' || s.outcomeStatus === 'CANCELLED') return false;
+    if (s.status === 'CLOSED' || s.outcomeStatus === 'CLOSED') return false;
+    if (['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT', 'EXPIRED'].includes(s.outcomeStatus)) return false;
+
+    // CRITICAL: An order that already triggered entry or is already RUNNING must NEVER be sent as a new order to place!
+    if (s.isEntryTriggered === true || s.status === 'RUNNING' || s.outcomeStatus === 'RUNNING') return false;
+
+    return (s.status === 'ACTIVE' || !s.status) && (s.outcomeStatus === 'PENDING' || !s.outcomeStatus);
   });
 
   const filtered = activeSignals.filter((s: any) => {

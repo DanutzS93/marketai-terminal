@@ -924,8 +924,8 @@ void OnTimer()
    ManageActivePositions();
    CheckAndReportTrackedTrades();
 
-   // Sync historical closed trades periodically every ~30 seconds (every 6 timer ticks)
-   if(syncCounter % 6 == 0)
+   // Sync historical closed trades periodically every ~3 minutes (every 36 timer ticks = 180s)
+   if(syncCounter % 36 == 0)
    {
       SyncClosedHistoricalTrades();
    }
@@ -1415,6 +1415,8 @@ void SyncClosedHistoricalTrades()
    }
 
    // Phase 2: report each closed position; remember it only after the server confirmed
+   // Throttle: max 1 historical closed deal sync per run to avoid socket exhaustion (err 5203)
+   int syncedCount = 0;
    for(int c = 0; c < ArraySize(candPos); c++)
    {
       long posId = candPos[c];
@@ -1444,6 +1446,13 @@ void SyncClosedHistoricalTrades()
          int sz = ArraySize(g_syncedClosedPosIds);
          ArrayResize(g_syncedClosedPosIds, sz + 1);
          g_syncedClosedPosIds[sz] = posId;
+         syncedCount++;
+         if(syncedCount >= 1) break;
+      }
+      else
+      {
+         // If update failed (e.g. timeout / network), abort remaining candidates this cycle
+         break;
       }
    }
 }
