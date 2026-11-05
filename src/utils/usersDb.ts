@@ -161,9 +161,15 @@ function sanitizeUserObj(user: StoredUser): StoredUser {
       !String(t.id).includes('sample')
   );
 
-  let tokens = Array.isArray(user.tokens) ? user.tokens.filter(Boolean) : [];
-  if (user.token && !tokens.includes(user.token)) {
-    tokens.push(user.token);
+  let tokens = Array.isArray(user.tokens)
+    ? user.tokens.filter((t) => t && typeof t === 'string' && t !== 'SYSTEM_ADMIN_TOKEN' && !t.startsWith('tok_usr_admin_fake'))
+    : [];
+  let userToken = user.token;
+  if (userToken === 'SYSTEM_ADMIN_TOKEN' || (typeof userToken === 'string' && userToken.startsWith('tok_usr_admin_fake'))) {
+    userToken = tokens.length > 0 ? tokens[tokens.length - 1] : '';
+  }
+  if (userToken && !tokens.includes(userToken)) {
+    tokens.push(userToken);
   }
   if (tokens.length > 50) {
     tokens = tokens.slice(-50);
@@ -171,7 +177,7 @@ function sanitizeUserObj(user: StoredUser): StoredUser {
 
   return {
     ...user,
-    token: user.token || (tokens.length > 0 ? tokens[tokens.length - 1] : ''),
+    token: userToken || (tokens.length > 0 ? tokens[tokens.length - 1] : ''),
     tokens,
     signals: cleanSignals || [],
     deletedSignalIds: deletedIds,
@@ -497,7 +503,7 @@ export function findUserByAuthToken(
 ): StoredUser | null {
   if (!token) return null;
   const clean = String(token).trim();
-  if (!clean) return null;
+  if (!clean || clean === 'SYSTEM_ADMIN_TOKEN' || clean.startsWith('tok_usr_admin_fake')) return null;
   const db = users || getUsersFromCache();
   for (const u of Object.values(db)) {
     if (!u) continue;
