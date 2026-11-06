@@ -291,6 +291,9 @@ export interface ScheduledExecutionLog {
 export interface TradeSchedulerConfig {
   enabled: boolean;
   timezone: string; // 'Europe/Bucharest'
+  slot1Enabled?: boolean; // Slot 1 ON/OFF toggle
+  slot2Enabled?: boolean; // Slot 2 ON/OFF toggle
+  slot3Enabled?: boolean; // Slot 3 ON/OFF toggle
   items: ScheduledTradeRow[];
   logs?: ScheduledExecutionLog[];
 }

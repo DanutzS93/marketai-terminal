@@ -384,6 +384,9 @@ function getDefaultTradeSchedulerConfig(): TradeSchedulerConfig {
   return {
     enabled: false,
     timezone: 'Europe/Bucharest',
+    slot1Enabled: true,
+    slot2Enabled: true,
+    slot3Enabled: true,
     items: [
       { instrumentId: 'GOLD', enabled: false, timeSlot1: '09:30', timeSlot2: '15:30', timeSlot3: '17:00', targetAccounts: ['all'], timeframe: '1h', strategy: 'Auto Smart Structure' },
       { instrumentId: 'NASDAQ', enabled: false, timeSlot1: '09:30', timeSlot2: '15:30', timeSlot3: '17:00', targetAccounts: ['all'], timeframe: '1h', strategy: 'Auto Smart Structure' },
@@ -409,6 +412,9 @@ function ensureUserTradeScheduler(user: StoredUser): TradeSchedulerConfig {
   }
   user.tradeScheduler.enabled = typeof user.tradeScheduler.enabled === 'boolean' ? user.tradeScheduler.enabled : false;
   user.tradeScheduler.timezone = user.tradeScheduler.timezone || 'Europe/Bucharest';
+  user.tradeScheduler.slot1Enabled = typeof user.tradeScheduler.slot1Enabled === 'boolean' ? user.tradeScheduler.slot1Enabled : true;
+  user.tradeScheduler.slot2Enabled = typeof user.tradeScheduler.slot2Enabled === 'boolean' ? user.tradeScheduler.slot2Enabled : true;
+  user.tradeScheduler.slot3Enabled = typeof user.tradeScheduler.slot3Enabled === 'boolean' ? user.tradeScheduler.slot3Enabled : true;
   user.tradeScheduler.logs = Array.isArray(user.tradeScheduler.logs) ? user.tradeScheduler.logs : [];
 
   if (!Array.isArray(user.tradeScheduler.items)) {
@@ -6873,6 +6879,9 @@ app.post('/api/user/trade-schedule', async (req, res) => {
 
   const current = ensureUserTradeScheduler(user);
   if (typeof schedule.enabled === 'boolean') current.enabled = schedule.enabled;
+  if (typeof schedule.slot1Enabled === 'boolean') current.slot1Enabled = schedule.slot1Enabled;
+  if (typeof schedule.slot2Enabled === 'boolean') current.slot2Enabled = schedule.slot2Enabled;
+  if (typeof schedule.slot3Enabled === 'boolean') current.slot3Enabled = schedule.slot3Enabled;
   if (Array.isArray(schedule.items)) {
     for (const newItem of schedule.items) {
       if (!newItem || !newItem.instrumentId) continue;
@@ -8959,14 +8968,15 @@ async function startServer() {
         for (const item of scheduler.items) {
           if (!item || !item.enabled) continue;
 
-          // Check slots 1, 2, 3
+          // Check slots 1, 2, 3 (respecting individual slot enable sliders)
           const slots = [
-            { slot: 1, time: item.timeSlot1 },
-            { slot: 2, time: item.timeSlot2 },
-            { slot: 3, time: item.timeSlot3 },
+            { slot: 1, time: item.timeSlot1, active: scheduler.slot1Enabled !== false },
+            { slot: 2, time: item.timeSlot2, active: scheduler.slot2Enabled !== false },
+            { slot: 3, time: item.timeSlot3, active: scheduler.slot3Enabled !== false },
           ];
 
           for (const s of slots) {
+            if (!s.active) continue; // Slot is turned OFF by top slider
             if (!s.time || s.time.trim() === '') continue;
             const targetTime = s.time.trim();
             if (targetTime === roTimeStr) {

@@ -116,6 +116,17 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
     return user?.tradeScheduler?.logs || [];
   });
 
+  // Individual hour slot enabled sliders (Ora 1, Ora 2, Ora 3)
+  const [slot1Enabled, setSlot1Enabled] = useState<boolean>(() => {
+    return user?.tradeScheduler?.slot1Enabled !== undefined ? user.tradeScheduler.slot1Enabled : true;
+  });
+  const [slot2Enabled, setSlot2Enabled] = useState<boolean>(() => {
+    return user?.tradeScheduler?.slot2Enabled !== undefined ? user.tradeScheduler.slot2Enabled : true;
+  });
+  const [slot3Enabled, setSlot3Enabled] = useState<boolean>(() => {
+    return user?.tradeScheduler?.slot3Enabled !== undefined ? user.tradeScheduler.slot3Enabled : true;
+  });
+
   // Track changes and saving status
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
@@ -127,6 +138,15 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
     if (user?.tradeScheduler) {
       if (typeof user.tradeScheduler.enabled === 'boolean') {
         setIsSchedulerMasterEnabled(user.tradeScheduler.enabled);
+      }
+      if (user.tradeScheduler.slot1Enabled !== undefined) {
+        setSlot1Enabled(user.tradeScheduler.slot1Enabled);
+      }
+      if (user.tradeScheduler.slot2Enabled !== undefined) {
+        setSlot2Enabled(user.tradeScheduler.slot2Enabled);
+      }
+      if (user.tradeScheduler.slot3Enabled !== undefined) {
+        setSlot3Enabled(user.tradeScheduler.slot3Enabled);
       }
       if (Array.isArray(user.tradeScheduler.items) && user.tradeScheduler.items.length > 0) {
         const map = new Map<string, ScheduledTradeRow>();
@@ -164,11 +184,15 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
   // Save handler
   const handleSaveSchedule = async (
     customMasterEnabled?: boolean,
-    customItems?: ScheduledTradeRow[]
+    customItems?: ScheduledTradeRow[],
+    customSlotOverrides?: { s1?: boolean; s2?: boolean; s3?: boolean }
   ) => {
     setIsSaving(true);
     const payloadItems = customItems || items;
     const payloadMaster = customMasterEnabled !== undefined ? customMasterEnabled : isSchedulerMasterEnabled;
+    const s1 = customSlotOverrides?.s1 !== undefined ? customSlotOverrides.s1 : slot1Enabled;
+    const s2 = customSlotOverrides?.s2 !== undefined ? customSlotOverrides.s2 : slot2Enabled;
+    const s3 = customSlotOverrides?.s3 !== undefined ? customSlotOverrides.s3 : slot3Enabled;
 
     try {
       if (authToken) {
@@ -182,6 +206,9 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
             schedule: {
               enabled: payloadMaster,
               timezone: 'Europe/Bucharest',
+              slot1Enabled: s1,
+              slot2Enabled: s2,
+              slot3Enabled: s3,
               items: payloadItems,
             },
           }),
@@ -205,6 +232,9 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
           tradeScheduler: {
             enabled: payloadMaster,
             timezone: 'Europe/Bucharest',
+            slot1Enabled: s1,
+            slot2Enabled: s2,
+            slot3Enabled: s3,
             items: payloadItems,
             logs,
           },
@@ -224,6 +254,26 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
     } finally {
       setIsSaving(false);
     }
+  };
+
+  // Toggle individual hour slot slider ON / OFF
+  const handleToggleSlot = (slotNum: 1 | 2 | 3) => {
+    let nextS1 = slot1Enabled;
+    let nextS2 = slot2Enabled;
+    let nextS3 = slot3Enabled;
+
+    if (slotNum === 1) {
+      nextS1 = !slot1Enabled;
+      setSlot1Enabled(nextS1);
+    } else if (slotNum === 2) {
+      nextS2 = !slot2Enabled;
+      setSlot2Enabled(nextS2);
+    } else if (slotNum === 3) {
+      nextS3 = !slot3Enabled;
+      setSlot3Enabled(nextS3);
+    }
+
+    handleSaveSchedule(isSchedulerMasterEnabled, items, { s1: nextS1, s2: nextS2, s3: nextS3 });
   };
 
   // Toggle individual instrument row ON/OFF
@@ -569,23 +619,100 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
                 <th className="py-3.5 px-4 w-64">
                   {isEn ? 'Platform Instrument' : 'Paritate Platformă'}
                 </th>
-                <th className="py-3.5 px-4 text-center w-48">
-                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-purple-500/10 text-purple-300 border border-purple-500/20">
-                    <Clock className="w-3 h-3 text-purple-400" />
-                    {isEn ? 'Hour 1 (Slot 1)' : 'Ora 1 (Slot 1)'}
-                  </span>
+                <th className="py-3 px-3 text-center w-52 bg-slate-950/40">
+                  <div className="flex flex-col items-center justify-center gap-1.5 py-1">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-purple-500/10 text-purple-300 border border-purple-500/20 font-bold text-xs">
+                      <Clock className="w-3.5 h-3.5 text-purple-400" />
+                      <span>{isEn ? 'Hour 1 (Slot 1)' : 'Ora 1 (Slot 1)'}</span>
+                    </span>
+
+                    {/* ON / OFF Slider Switch */}
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <button
+                        type="button"
+                        onClick={() => handleToggleSlot(1)}
+                        className={`relative inline-flex h-5 w-10 shrink-0 cursor-pointer rounded-full border-2 transition-colors duration-200 ease-in-out focus:outline-none ${
+                          slot1Enabled
+                            ? 'bg-purple-600 border-purple-400 shadow-sm shadow-purple-600/40'
+                            : 'bg-slate-800 border-slate-700'
+                        }`}
+                        title={slot1Enabled ? (isEn ? 'Slot 1 Active - Click to disable' : 'Intervalul 1 este Activat - click pentru oprire') : (isEn ? 'Slot 1 Disabled - Click to enable' : 'Intervalul 1 este Oprit - click pentru activare')}
+                      >
+                        <span
+                          className={`pointer-events-none inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out mt-0.5 ml-0.5 ${
+                            slot1Enabled ? 'translate-x-5' : 'translate-x-0'
+                          }`}
+                        />
+                      </button>
+                      <span className={`text-[10px] font-black uppercase tracking-wider ${slot1Enabled ? 'text-purple-300' : 'text-slate-500'}`}>
+                        {slot1Enabled ? 'ON' : 'OFF'}
+                      </span>
+                    </div>
+                  </div>
                 </th>
-                <th className="py-3.5 px-4 text-center w-48">
-                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-purple-500/10 text-purple-300 border border-purple-500/20">
-                    <Clock className="w-3 h-3 text-purple-400" />
-                    {isEn ? 'Hour 2 (Slot 2)' : 'Ora 2 (Slot 2)'}
-                  </span>
+
+                <th className="py-3 px-3 text-center w-52 bg-slate-950/40">
+                  <div className="flex flex-col items-center justify-center gap-1.5 py-1">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-purple-500/10 text-purple-300 border border-purple-500/20 font-bold text-xs">
+                      <Clock className="w-3.5 h-3.5 text-purple-400" />
+                      <span>{isEn ? 'Hour 2 (Slot 2)' : 'Ora 2 (Slot 2)'}</span>
+                    </span>
+
+                    {/* ON / OFF Slider Switch */}
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <button
+                        type="button"
+                        onClick={() => handleToggleSlot(2)}
+                        className={`relative inline-flex h-5 w-10 shrink-0 cursor-pointer rounded-full border-2 transition-colors duration-200 ease-in-out focus:outline-none ${
+                          slot2Enabled
+                            ? 'bg-purple-600 border-purple-400 shadow-sm shadow-purple-600/40'
+                            : 'bg-slate-800 border-slate-700'
+                        }`}
+                        title={slot2Enabled ? (isEn ? 'Slot 2 Active - Click to disable' : 'Intervalul 2 este Activat - click pentru oprire') : (isEn ? 'Slot 2 Disabled - Click to enable' : 'Intervalul 2 este Oprit - click pentru activare')}
+                      >
+                        <span
+                          className={`pointer-events-none inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out mt-0.5 ml-0.5 ${
+                            slot2Enabled ? 'translate-x-5' : 'translate-x-0'
+                          }`}
+                        />
+                      </button>
+                      <span className={`text-[10px] font-black uppercase tracking-wider ${slot2Enabled ? 'text-purple-300' : 'text-slate-500'}`}>
+                        {slot2Enabled ? 'ON' : 'OFF'}
+                      </span>
+                    </div>
+                  </div>
                 </th>
-                <th className="py-3.5 px-4 text-center w-48">
-                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-purple-500/10 text-purple-300 border border-purple-500/20">
-                    <Clock className="w-3 h-3 text-purple-400" />
-                    {isEn ? 'Hour 3 (Slot 3)' : 'Ora 3 (Slot 3)'}
-                  </span>
+
+                <th className="py-3 px-3 text-center w-52 bg-slate-950/40">
+                  <div className="flex flex-col items-center justify-center gap-1.5 py-1">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-purple-500/10 text-purple-300 border border-purple-500/20 font-bold text-xs">
+                      <Clock className="w-3.5 h-3.5 text-purple-400" />
+                      <span>{isEn ? 'Hour 3 (Slot 3)' : 'Ora 3 (Slot 3)'}</span>
+                    </span>
+
+                    {/* ON / OFF Slider Switch */}
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <button
+                        type="button"
+                        onClick={() => handleToggleSlot(3)}
+                        className={`relative inline-flex h-5 w-10 shrink-0 cursor-pointer rounded-full border-2 transition-colors duration-200 ease-in-out focus:outline-none ${
+                          slot3Enabled
+                            ? 'bg-purple-600 border-purple-400 shadow-sm shadow-purple-600/40'
+                            : 'bg-slate-800 border-slate-700'
+                        }`}
+                        title={slot3Enabled ? (isEn ? 'Slot 3 Active - Click to disable' : 'Intervalul 3 este Activat - click pentru oprire') : (isEn ? 'Slot 3 Disabled - Click to enable' : 'Intervalul 3 este Oprit - click pentru activare')}
+                      >
+                        <span
+                          className={`pointer-events-none inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out mt-0.5 ml-0.5 ${
+                            slot3Enabled ? 'translate-x-5' : 'translate-x-0'
+                          }`}
+                        />
+                      </button>
+                      <span className={`text-[10px] font-black uppercase tracking-wider ${slot3Enabled ? 'text-purple-300' : 'text-slate-500'}`}>
+                        {slot3Enabled ? 'ON' : 'OFF'}
+                      </span>
+                    </div>
+                  </div>
                 </th>
                 <th className="py-3.5 px-4 text-right">
                   {isEn ? 'Target Accounts & Action' : 'Conturi Țintă & Test'}
@@ -676,21 +803,21 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
                     </td>
 
                     {/* Column 3: Hour 1 (Slot 1) */}
-                    <td className="py-4 px-3 align-middle text-center">
+                    <td className={`py-4 px-3 align-middle text-center transition-opacity ${!slot1Enabled ? 'opacity-40 bg-black/10' : ''}`}>
                       <div className="flex flex-col items-center gap-1.5">
                         <div className="relative inline-flex items-center">
                           <input
                             type="time"
                             value={row.timeSlot1 || ''}
                             onChange={(e) => handleTimeSlotChange(row.instrumentId, 'timeSlot1', e.target.value)}
-                            disabled={!isEnabled}
+                            disabled={!isEnabled || !slot1Enabled}
                             className={`w-32 px-3 py-1.5 rounded-lg text-sm font-mono font-bold text-center border focus:outline-none transition ${
-                              isEnabled
+                              isEnabled && slot1Enabled
                                 ? 'bg-slate-900 border-purple-500/40 text-purple-200 focus:border-purple-400 focus:ring-1 focus:ring-purple-400'
                                 : 'bg-slate-950/60 border-slate-800 text-slate-600 cursor-not-allowed'
                             }`}
                           />
-                          {row.timeSlot1 && isEnabled && (
+                          {row.timeSlot1 && isEnabled && slot1Enabled && (
                             <button
                               type="button"
                               onClick={() => handleClearSlot(row.instrumentId, 'timeSlot1')}
@@ -701,7 +828,11 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
                             </button>
                           )}
                         </div>
-                        {isEnabled && (
+                        {!slot1Enabled ? (
+                          <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">
+                            {isEn ? 'Interval Paused' : 'Interval Oprit'}
+                          </span>
+                        ) : isEnabled ? (
                           <div className="flex items-center gap-1">
                             <button
                               type="button"
@@ -718,26 +849,26 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
                               15:30
                             </button>
                           </div>
-                        )}
+                        ) : null}
                       </div>
                     </td>
 
                     {/* Column 4: Hour 2 (Slot 2) */}
-                    <td className="py-4 px-3 align-middle text-center">
+                    <td className={`py-4 px-3 align-middle text-center transition-opacity ${!slot2Enabled ? 'opacity-40 bg-black/10' : ''}`}>
                       <div className="flex flex-col items-center gap-1.5">
                         <div className="relative inline-flex items-center">
                           <input
                             type="time"
                             value={row.timeSlot2 || ''}
                             onChange={(e) => handleTimeSlotChange(row.instrumentId, 'timeSlot2', e.target.value)}
-                            disabled={!isEnabled}
+                            disabled={!isEnabled || !slot2Enabled}
                             className={`w-32 px-3 py-1.5 rounded-lg text-sm font-mono font-bold text-center border focus:outline-none transition ${
-                              isEnabled
+                              isEnabled && slot2Enabled
                                 ? 'bg-slate-900 border-purple-500/40 text-purple-200 focus:border-purple-400 focus:ring-1 focus:ring-purple-400'
                                 : 'bg-slate-950/60 border-slate-800 text-slate-600 cursor-not-allowed'
                             }`}
                           />
-                          {row.timeSlot2 && isEnabled && (
+                          {row.timeSlot2 && isEnabled && slot2Enabled && (
                             <button
                               type="button"
                               onClick={() => handleClearSlot(row.instrumentId, 'timeSlot2')}
@@ -748,7 +879,11 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
                             </button>
                           )}
                         </div>
-                        {isEnabled && (
+                        {!slot2Enabled ? (
+                          <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">
+                            {isEn ? 'Interval Paused' : 'Interval Oprit'}
+                          </span>
+                        ) : isEnabled ? (
                           <div className="flex items-center gap-1">
                             <button
                               type="button"
@@ -765,26 +900,26 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
                               17:00
                             </button>
                           </div>
-                        )}
+                        ) : null}
                       </div>
                     </td>
 
                     {/* Column 5: Hour 3 (Slot 3) */}
-                    <td className="py-4 px-3 align-middle text-center">
+                    <td className={`py-4 px-3 align-middle text-center transition-opacity ${!slot3Enabled ? 'opacity-40 bg-black/10' : ''}`}>
                       <div className="flex flex-col items-center gap-1.5">
                         <div className="relative inline-flex items-center">
                           <input
                             type="time"
                             value={row.timeSlot3 || ''}
                             onChange={(e) => handleTimeSlotChange(row.instrumentId, 'timeSlot3', e.target.value)}
-                            disabled={!isEnabled}
+                            disabled={!isEnabled || !slot3Enabled}
                             className={`w-32 px-3 py-1.5 rounded-lg text-sm font-mono font-bold text-center border focus:outline-none transition ${
-                              isEnabled
+                              isEnabled && slot3Enabled
                                 ? 'bg-slate-900 border-purple-500/40 text-purple-200 focus:border-purple-400 focus:ring-1 focus:ring-purple-400'
                                 : 'bg-slate-950/60 border-slate-800 text-slate-600 cursor-not-allowed'
                             }`}
                           />
-                          {row.timeSlot3 && isEnabled && (
+                          {row.timeSlot3 && isEnabled && slot3Enabled && (
                             <button
                               type="button"
                               onClick={() => handleClearSlot(row.instrumentId, 'timeSlot3')}
@@ -795,7 +930,11 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
                             </button>
                           )}
                         </div>
-                        {isEnabled && (
+                        {!slot3Enabled ? (
+                          <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">
+                            {isEn ? 'Interval Paused' : 'Interval Oprit'}
+                          </span>
+                        ) : isEnabled ? (
                           <div className="flex items-center gap-1">
                             <button
                               type="button"
@@ -812,7 +951,7 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
                               20:00
                             </button>
                           </div>
-                        )}
+                        ) : null}
                       </div>
                     </td>
 
