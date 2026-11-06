@@ -277,6 +277,108 @@ function ensureUserNinjaTraderApiKey(user: StoredUser): string {
   return user.apiKeys.ninjaTraderApiKey;
 }
 
+export interface BridgeAccount {
+  id: string; // 'acc_1' | 'acc_2' | 'acc_3'
+  slot: number; // 1 | 2 | 3
+  name: string; // e.g. "Cont 1 (Principal)", "Cont 2 (VT Markets)", "Cont 3 (NinjaTrader)"
+  platform: 'MT5' | 'NINJATRADER';
+  apiKey: string;
+  accountNumber?: string | number;
+  accountServer?: string;
+  accountCompany?: string;
+  accountCurrency?: string;
+  balance?: number;
+  equity?: number;
+  lastConnectedAt?: string;
+  status?: 'active' | 'inactive';
+}
+
+// Helper to ensure each user has up to 3 dedicated Bridge Accounts (MT5 or NinjaTrader)
+function ensureUserBridgeAccounts(user: StoredUser): BridgeAccount[] {
+  if (!user) return [];
+  const primaryMt5Key = ensureUserMt5ApiKey(user);
+  const primaryNtKey = ensureUserNinjaTraderApiKey(user);
+  const cleanId = (user.id || '').replace(/[^a-zA-Z0-9]/g, '').slice(-8) || 'usr';
+
+  let currentAccounts: BridgeAccount[] = Array.isArray(user.bridgeAccounts) ? user.bridgeAccounts : [];
+  let didChange = false;
+
+  const getOrCreateSlot = (slot: number, defaultName: string, defaultPlatform: 'MT5' | 'NINJATRADER', defaultKey: string) => {
+    let existing = currentAccounts.find((a) => a.slot === slot || a.id === `acc_${slot}`);
+    if (!existing) {
+      existing = {
+        id: `acc_${slot}`,
+        slot,
+        name: defaultName,
+        platform: defaultPlatform,
+        apiKey: defaultKey,
+        status: 'active',
+      };
+      currentAccounts.push(existing);
+      didChange = true;
+    } else {
+      if (!existing.id) { existing.id = `acc_${slot}`; didChange = true; }
+      if (!existing.slot) { existing.slot = slot; didChange = true; }
+      if (!existing.name) { existing.name = defaultName; didChange = true; }
+      if (!existing.platform) { existing.platform = defaultPlatform; didChange = true; }
+      if (!existing.status) { existing.status = 'active'; didChange = true; }
+      if (!existing.apiKey || existing.apiKey.length < 16) {
+        existing.apiKey = defaultKey;
+        didChange = true;
+      }
+    }
+    return existing;
+  };
+
+  // Slot 1: Cont 1 (Principal MT5 - uses primary mt5ApiKey for 100% backward compatibility)
+  const acc1 = getOrCreateSlot(1, 'Cont 1 (Principal MT5)', 'MT5', primaryMt5Key);
+  if (!acc1.apiKey || acc1.apiKey !== primaryMt5Key) {
+    acc1.apiKey = primaryMt5Key;
+    didChange = true;
+  }
+  if (!acc1.accountNumber && user.mt5AccountNumber) {
+    acc1.accountNumber = user.mt5AccountNumber;
+    acc1.accountServer = user.mt5AccountServer;
+    acc1.accountCompany = user.mt5AccountCompany;
+    acc1.accountCurrency = user.mt5AccountCurrency;
+    acc1.balance = user.accountBalance;
+    acc1.equity = user.equity;
+    acc1.lastConnectedAt = user.mt5LastConnectedAt;
+    didChange = true;
+  }
+
+  // Slot 2: Cont 2 (MT5 Secundar by default)
+  const randAcc2 = crypto.randomBytes(6).toString('hex');
+  const defaultKey2 = `mt5_live_${cleanId}_acc2_${randAcc2}`;
+  getOrCreateSlot(2, 'Cont 2 (MT5 Secundar)', 'MT5', defaultKey2);
+
+  // Slot 3: Cont 3 (NinjaTrader 8 by default)
+  const randAcc3 = crypto.randomBytes(6).toString('hex');
+  const defaultKey3 = primaryNtKey || `nt8_live_${cleanId}_acc3_${randAcc3}`;
+  const acc3 = getOrCreateSlot(3, 'Cont 3 (NinjaTrader 8)', 'NINJATRADER', defaultKey3);
+  if (acc3.platform === 'NINJATRADER' && !acc3.accountNumber && user.ninjaTraderAccountNumber) {
+    acc3.accountNumber = user.ninjaTraderAccountNumber;
+    acc3.accountServer = user.ninjaTraderAccountName;
+    acc3.accountCurrency = user.ninjaTraderAccountCurrency;
+    acc3.lastConnectedAt = user.ninjaTraderLastConnectedAt;
+    didChange = true;
+  }
+
+  // Sort by slot ascending
+  currentAccounts.sort((a, b) => a.slot - b.slot);
+  user.bridgeAccounts = currentAccounts;
+
+  if (didChange) {
+    const users = loadUsersDb();
+    if (users[user.id]) {
+      users[user.id].bridgeAccounts = currentAccounts;
+      saveUsersDb(users, user.id).catch((err) => console.warn('Failed to save bridge accounts:', err));
+    }
+  }
+
+  return currentAccounts;
+}
+
 function isDemoOrSampleTrade(trade: any): boolean {
   if (!trade || typeof trade !== 'object') return false;
   const id = String(trade.id || '');
@@ -356,6 +458,7 @@ function formatUserForClient(u: StoredUser) {
     tradeJournal: (u.tradeJournal || []).filter((t: any) => !isDemoOrSampleTrade(t)),
     mt5OpenPositions: u.mt5OpenPositions || [],
     signals: u.signals || [],
+    bridgeAccounts: ensureUserBridgeAccounts(u),
   };
 }
 
@@ -5878,6 +5981,10 @@ Generate valid JSON output:
 
 async function attachSignalToUser(req: express.Request, signal: any) {
   try {
+    const targetAccounts = req.body?.targetAccounts;
+    signal.targetAccounts = Array.isArray(targetAccounts) && targetAccounts.length > 0 ? targetAccounts : ['all'];
+    signal.placedAccounts = signal.placedAccounts || {};
+
     const authHeader = req.headers.authorization;
     const token = authHeader?.replace(/^Bearer\s+/i, '').trim();
     if (token) {
@@ -6491,9 +6598,13 @@ app.post('/api/user/regenerate-mt5-key', async (req, res) => {
   const newKey = `mt5_live_${cleanId}_${randPart}`;
   user.apiKeys.mt5ApiKey = newKey;
   user.mt5ApiKey = newKey;
+  const accounts = ensureUserBridgeAccounts(user);
+  const acc1 = accounts.find((a) => a.id === 'acc_1' || a.slot === 1);
+  if (acc1) acc1.apiKey = newKey;
+  user.bridgeAccounts = accounts;
 
   await saveUsersDb(users, user.id);
-  return res.json({ success: true, mt5ApiKey: newKey, user: formatUserForClient(user) });
+  return res.json({ success: true, mt5ApiKey: newKey, bridgeAccounts: accounts, user: formatUserForClient(user) });
 });
 
 // Regenerate user NinjaTrader API key endpoint (Only on explicit user request)
@@ -6512,9 +6623,114 @@ app.post('/api/user/regenerate-ninjatrader-key', async (req, res) => {
   const newKey = `nt8_live_${cleanId}_${randPart}`;
   user.apiKeys.ninjaTraderApiKey = newKey;
   user.ninjaTraderApiKey = newKey;
+  const accounts = ensureUserBridgeAccounts(user);
+  const ntAcc = accounts.find((a) => a.platform === 'NINJATRADER') || accounts[2];
+  if (ntAcc) ntAcc.apiKey = newKey;
+  user.bridgeAccounts = accounts;
 
   await saveUsersDb(users, user.id);
-  return res.json({ success: true, ninjaTraderApiKey: newKey, user: formatUserForClient(user) });
+  return res.json({ success: true, ninjaTraderApiKey: newKey, bridgeAccounts: accounts, user: formatUserForClient(user) });
+});
+
+// GET user Bridge Accounts (Cont 1, Cont 2, Cont 3)
+app.get('/api/user/bridge-accounts', (req, res) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.replace(/^Bearer\s+/i, '').trim();
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const users = loadUsersDb();
+  const user = findUserByAuthToken(token, users);
+  if (!user) return res.status(401).json({ error: 'User not found' });
+
+  const accounts = ensureUserBridgeAccounts(user);
+  return res.json({ success: true, bridgeAccounts: accounts });
+});
+
+// POST update Bridge Accounts (Modify name, platform MT5/NT8, status)
+app.post('/api/user/bridge-accounts', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.replace(/^Bearer\s+/i, '').trim();
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const users = loadUsersDb();
+  const user = findUserByAuthToken(token, users);
+  if (!user) return res.status(401).json({ error: 'User not found' });
+
+  const { bridgeAccounts } = req.body;
+  if (!Array.isArray(bridgeAccounts)) {
+    return res.status(400).json({ error: 'Invalid bridge accounts array' });
+  }
+
+  const existing = ensureUserBridgeAccounts(user);
+  for (const incoming of bridgeAccounts) {
+    if (!incoming || !incoming.id) continue;
+    const targetSlot = existing.find((a) => a.id === incoming.id || a.slot === incoming.slot);
+    if (targetSlot) {
+      if (typeof incoming.name === 'string' && incoming.name.trim()) {
+        targetSlot.name = incoming.name.trim();
+      }
+      if (incoming.platform === 'MT5' || incoming.platform === 'NINJATRADER') {
+        // If platform changed and key prefix doesn't match, regenerate proper key prefix
+        if (targetSlot.platform !== incoming.platform) {
+          targetSlot.platform = incoming.platform;
+          const cleanId = (user.id || '').replace(/[^a-zA-Z0-9]/g, '').slice(-8) || 'usr';
+          const randPart = crypto.randomBytes(6).toString('hex');
+          const prefix = incoming.platform === 'NINJATRADER' ? 'nt8_live' : 'mt5_live';
+          targetSlot.apiKey = `${prefix}_${cleanId}_${targetSlot.id}_${randPart}`;
+        }
+      }
+      if (incoming.status === 'active' || incoming.status === 'inactive') {
+        targetSlot.status = incoming.status;
+      }
+    }
+  }
+
+  user.bridgeAccounts = existing;
+  await saveUsersDb(users, user.id);
+  return res.json({ success: true, bridgeAccounts: existing, user: formatUserForClient(user) });
+});
+
+// POST regenerate key for specific Bridge Account slot
+app.post('/api/user/regenerate-bridge-key', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.replace(/^Bearer\s+/i, '').trim();
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const users = loadUsersDb();
+  const user = findUserByAuthToken(token, users);
+  if (!user) return res.status(401).json({ error: 'User not found' });
+
+  const { accountId } = req.body;
+  const accounts = ensureUserBridgeAccounts(user);
+  const targetAcc = accounts.find((a) => a.id === accountId);
+  if (!targetAcc) {
+    return res.status(404).json({ error: 'Account slot not found' });
+  }
+
+  const cleanId = (user.id || '').replace(/[^a-zA-Z0-9]/g, '').slice(-8) || 'usr';
+  const randPart = crypto.randomBytes(6).toString('hex');
+  const prefix = targetAcc.platform === 'NINJATRADER' ? 'nt8_live' : 'mt5_live';
+  const newKey = `${prefix}_${cleanId}_${targetAcc.id}_${randPart}`;
+
+  targetAcc.apiKey = newKey;
+  if (targetAcc.id === 'acc_1' && targetAcc.platform === 'MT5') {
+    user.mt5ApiKey = newKey;
+    if (user.apiKeys) user.apiKeys.mt5ApiKey = newKey;
+  }
+  if (targetAcc.platform === 'NINJATRADER' && targetAcc.slot === 3) {
+    user.ninjaTraderApiKey = newKey;
+    if (user.apiKeys) user.apiKeys.ninjaTraderApiKey = newKey;
+  }
+
+  user.bridgeAccounts = accounts;
+  await saveUsersDb(users, user.id);
+  return res.json({
+    success: true,
+    accountId,
+    newApiKey: newKey,
+    bridgeAccounts: accounts,
+    user: formatUserForClient(user),
+  });
 });
 
 // Helper to extract MT5 API token from headers, query params or body
@@ -6540,9 +6756,14 @@ function extractMt5Token(req: express.Request): string | null {
 }
 
 // Helper to resolve user associated with MT5 token
-function resolveUserByMt5Token(token: string | null): { user: StoredUser | null; allUsers: Record<string, StoredUser> } {
+function resolveUserByMt5Token(token: string | null): {
+  user: StoredUser | null;
+  accountId: string;
+  account: BridgeAccount | null;
+  allUsers: Record<string, StoredUser>;
+} {
   const users = loadUsersDb();
-  if (!token) return { user: null, allUsers: users };
+  if (!token) return { user: null, accountId: 'acc_1', account: null, allUsers: users };
 
   const cleanToken = token.trim();
   // Reject default or invalid tokens immediately
@@ -6552,25 +6773,36 @@ function resolveUserByMt5Token(token: string | null): { user: StoredUser | null;
     cleanToken === 'mt5_live_token_marketai2026' ||
     cleanToken.length < 15
   ) {
-    return { user: null, allUsers: users };
+    return { user: null, accountId: 'acc_1', account: null, allUsers: users };
   }
 
   const userList = Object.values(users);
 
-  // STRICT DIRECT MATCH: EA token must exactly equal user's dedicated mt5ApiKey
+  // STRICT MATCH: Check user's bridge accounts (Slot 1, 2, 3) or primary MT5 key
   for (const u of userList) {
+    const bridgeAccounts = ensureUserBridgeAccounts(u);
+    // 1. Check if token matches an active MT5 bridge account
+    const matchedAcc = bridgeAccounts.find(
+      (a) => a.apiKey === cleanToken && a.platform === 'MT5'
+    );
+    if (matchedAcc) {
+      return { user: u, accountId: matchedAcc.id, account: matchedAcc, allUsers: users };
+    }
+
+    // 2. Direct match on primary mt5ApiKey (default Slot 1)
     const userKey = ensureUserMt5ApiKey(u);
     if (
       userKey === cleanToken ||
       (u.apiKeys && u.apiKeys.mt5ApiKey === cleanToken) ||
       (u.mt5ApiKey && u.mt5ApiKey === cleanToken)
     ) {
-      return { user: u, allUsers: users };
+      const acc1 = bridgeAccounts.find((a) => a.slot === 1) || bridgeAccounts[0];
+      return { user: u, accountId: acc1 ? acc1.id : 'acc_1', account: acc1 || null, allUsers: users };
     }
   }
 
   // Strict isolation: never fall back to admin or arbitrary user
-  return { user: null, allUsers: users };
+  return { user: null, accountId: 'acc_1', account: null, allUsers: users };
 }
 
 // MetaTrader 5 Bridge Endpoint for EA integration (User-Specific)
@@ -6868,7 +7100,7 @@ app.all(['/api/mt5/signals', '/api/mt5/signals/poll'], (req, res) => {
     return res.status(401).json({ error: 'Unauthorized MT5 API Token. Include your personal API key in InpApiKey parameter.' });
   }
 
-  const { user: matchedUser } = resolveUserByMt5Token(token);
+  const { user: matchedUser, accountId: matchedAccountId, account: matchedAccount } = resolveUserByMt5Token(token);
   if (!matchedUser) {
     return res.status(401).json({
       error: 'Invalid MT5 API Key. Fiecare utilizator are o cheie unică generată în contul său MarketAI. Deschideți fereastra MT5 Bridge din platformă și copiați cheia InpApiKey unică a contului dvs.',
@@ -7000,7 +7232,7 @@ app.all(['/api/mt5/signals', '/api/mt5/signals/poll'], (req, res) => {
   }
 
   const nowMs = Date.now();
-  const cacheKey = `${matchedUser.id}:${symbolParam || 'ALL'}`;
+  const cacheKey = `${matchedUser.id}:${matchedAccountId}:${symbolParam || 'ALL'}`;
   const cached = mt5SignalsCache.get(cacheKey);
   if (cached && nowMs - cached.timestamp < 3000) {
     return res.json(cached.payload);
@@ -7009,10 +7241,13 @@ app.all(['/api/mt5/signals', '/api/mt5/signals/poll'], (req, res) => {
   // Update MT5 last connected timestamp (throttled to at most once every 30s)
   const lastConnMs = matchedUser.mt5LastConnectedAt ? new Date(matchedUser.mt5LastConnectedAt).getTime() : 0;
   if (nowMs - lastConnMs > 30000) {
-    matchedUser.mt5LastConnectedAt = new Date().toISOString();
+    const nowIso = new Date().toISOString();
+    matchedUser.mt5LastConnectedAt = nowIso;
+    if (matchedAccount) matchedAccount.lastConnectedAt = nowIso;
     const users = loadUsersDb();
     if (users[matchedUser.id]) {
       users[matchedUser.id].mt5LastConnectedAt = matchedUser.mt5LastConnectedAt;
+      users[matchedUser.id].bridgeAccounts = matchedUser.bridgeAccounts;
       saveUsersDb(users, matchedUser.id).catch(() => {});
     }
   }
@@ -7038,14 +7273,26 @@ app.all(['/api/mt5/signals', '/api/mt5/signals/poll'], (req, res) => {
 
   const processedSet = new Set((matchedUser?.mt5ProcessedSignalIds || []).slice(-100).map((id) => String(id)));
 
-  // Filter signals: only send fresh, pending signals that are strictly owned by matchedUser, NOT already placed, NOT running, and NOT hit any milestone
+  // Filter signals: only send fresh, pending signals that are strictly owned by matchedUser, targeted to matchedAccountId, NOT already placed, NOT running, and NOT hit any milestone
   let filtered = targetSignals.filter((s) => {
     if (!s) return false;
     // Strict environment isolation
     if (s.userId && s.userId !== matchedUser.id) return false;
 
+    // MULTI-ACCOUNT TARGETING CHECK:
+    const targets = Array.isArray(s.targetAccounts) ? s.targetAccounts : [];
+    if (targets.length > 0 && !targets.includes('all') && !targets.includes(matchedAccountId)) {
+      return false; // Not targeted to this EA account
+    }
+
     const sigId = String(s.id || s.signal_id || '');
-    if (s.mt5Placed === true || processedSet.has(sigId)) return false;
+    const accountPlaced = s.placedAccounts && s.placedAccounts[matchedAccountId]?.placed;
+    if (accountPlaced) return false;
+
+    // Single account legacy fallback check
+    if (!s.placedAccounts && s.mt5Placed === true && matchedAccountId === 'acc_1') return false;
+    if (processedSet.has(sigId) && matchedAccountId === 'acc_1') return false;
+
     if (s.status === 'CANCELLED' || s.outcomeStatus === 'CANCELLED') return false;
     if (s.status === 'CLOSED' || s.outcomeStatus === 'CLOSED') return false;
     if (['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT', 'EXPIRED'].includes(s.outcomeStatus)) return false;
@@ -7337,7 +7584,22 @@ app.post('/api/mt5/account', async (req, res) => {
       didChange = true;
       didMetaChange = true;
     }
-    matchedUser.mt5LastConnectedAt = new Date().toISOString();
+    const nowIso = new Date().toISOString();
+    matchedUser.mt5LastConnectedAt = nowIso;
+    if (matchedAccount) {
+      if (accountBalance !== undefined && accountBalance !== null && !isNaN(Number(accountBalance))) {
+        matchedAccount.balance = Number(accountBalance);
+      }
+      if (equity !== undefined && equity !== null && !isNaN(Number(equity))) {
+        matchedAccount.equity = Number(equity);
+      }
+      if (accountNumber) matchedAccount.accountNumber = String(accountNumber).trim();
+      if (accountServer) matchedAccount.accountServer = String(accountServer).trim();
+      if (accountCompany) matchedAccount.accountCompany = String(accountCompany).trim();
+      if (accountCurrency) matchedAccount.accountCurrency = String(accountCurrency).trim();
+      matchedAccount.lastConnectedAt = nowIso;
+      didChange = true;
+    }
 
     // Memory is updated instantly.
     // Disk & Cloud persistence is throttled: only persist if balance/metadata changed,
@@ -7431,7 +7693,22 @@ app.post('/api/mt5/update', async (req, res) => {
       matchedUser.mt5AccountCompany = String(accountCompany).trim();
       didChange = true;
     }
-    matchedUser.mt5LastConnectedAt = new Date().toISOString();
+    const nowIso = new Date().toISOString();
+    matchedUser.mt5LastConnectedAt = nowIso;
+    if (matchedAccount) {
+      if (accountBalance !== undefined && accountBalance !== null && !isNaN(Number(accountBalance))) {
+        matchedAccount.balance = Number(accountBalance);
+      }
+      if (equity !== undefined && equity !== null && !isNaN(Number(equity))) {
+        matchedAccount.equity = Number(equity);
+      }
+      if (accountNumber) matchedAccount.accountNumber = String(accountNumber).trim();
+      if (accountServer) matchedAccount.accountServer = String(accountServer).trim();
+      if (accountCompany) matchedAccount.accountCompany = String(accountCompany).trim();
+      if (accountCurrency) matchedAccount.accountCurrency = String(accountCurrency).trim();
+      matchedAccount.lastConnectedAt = nowIso;
+      didChange = true;
+    }
 
     // Memoize processed signal ID to prevent duplicate sending/placing
     if (signal_id) {
@@ -7450,6 +7727,15 @@ app.post('/api/mt5/update', async (req, res) => {
           s.signal_id === signal_id
         );
         if (target) {
+          target.placedAccounts = target.placedAccounts || {};
+          target.placedAccounts[matchedAccountId] = {
+            placed: true,
+            placedAt: target.placedAccounts[matchedAccountId]?.placedAt || new Date().toISOString(),
+            platform: 'MT5',
+            pnl: incomingPnl !== undefined ? Number(incomingPnl) : target.placedAccounts[matchedAccountId]?.pnl,
+            status: status || target.placedAccounts[matchedAccountId]?.status || 'RUNNING',
+            accountNumber: accountNumber || matchedAccount?.accountNumber,
+          };
           if (!target.mt5Placed) { target.mt5Placed = true; didChange = true; }
           target.mt5PlacedAt = target.mt5PlacedAt || new Date().toISOString();
           target.accountSource = 'MT5';
@@ -7634,28 +7920,44 @@ function extractNinjaTraderToken(req: express.Request): string | null {
 }
 
 // Helper to resolve user associated with NinjaTrader token
-function resolveUserByNinjaTraderToken(token: string | null): { user: StoredUser | null; allUsers: Record<string, StoredUser> } {
+function resolveUserByNinjaTraderToken(token: string | null): {
+  user: StoredUser | null;
+  accountId: string;
+  account: BridgeAccount | null;
+  allUsers: Record<string, StoredUser>;
+} {
   const users = loadUsersDb();
-  if (!token) return { user: null, allUsers: users };
+  if (!token) return { user: null, accountId: 'acc_3', account: null, allUsers: users };
 
   const cleanToken = token.trim();
   if (!cleanToken || cleanToken === 'default' || cleanToken.length < 15) {
-    return { user: null, allUsers: users };
+    return { user: null, accountId: 'acc_3', account: null, allUsers: users };
   }
   const userList = Object.values(users);
 
   for (const u of userList) {
+    const bridgeAccounts = ensureUserBridgeAccounts(u);
+    // 1. Check if token matches an active NinjaTrader bridge account
+    const matchedAcc = bridgeAccounts.find(
+      (a) => a.apiKey === cleanToken && a.platform === 'NINJATRADER'
+    );
+    if (matchedAcc) {
+      return { user: u, accountId: matchedAcc.id, account: matchedAcc, allUsers: users };
+    }
+
+    // 2. Direct match on primary ninjaTraderApiKey
     const ntKey = ensureUserNinjaTraderApiKey(u);
     if (
       ntKey === cleanToken ||
       (u.apiKeys && u.apiKeys.ninjaTraderApiKey === cleanToken) ||
       (u.ninjaTraderApiKey && u.ninjaTraderApiKey === cleanToken)
     ) {
-      return { user: u, allUsers: users };
+      const ntAcc = bridgeAccounts.find((a) => a.platform === 'NINJATRADER') || bridgeAccounts[2] || bridgeAccounts[0];
+      return { user: u, accountId: ntAcc ? ntAcc.id : 'acc_3', account: ntAcc || null, allUsers: users };
     }
   }
 
-  return { user: null, allUsers: users };
+  return { user: null, accountId: 'acc_3', account: null, allUsers: users };
 }
 
 // Helper to map instrument ID to NinjaTrader symbol
@@ -7758,7 +8060,7 @@ app.get(['/api/ninjatrader/signals', '/api/nt8/signals'], (req, res) => {
     });
   }
 
-  const { user: matchedUser } = resolveUserByNinjaTraderToken(token);
+  const { user: matchedUser, accountId: matchedAccountId, account: matchedAccount } = resolveUserByNinjaTraderToken(token);
   if (!matchedUser) {
     return res.status(401).json({
       error: 'Invalid NinjaTrader API Key. Verify your API key in MarketAI -> NinjaTrader Bridge.',
@@ -7791,7 +8093,18 @@ app.get(['/api/ninjatrader/signals', '/api/nt8/signals'], (req, res) => {
     if (!s || deletedIds.has(s.id)) return false;
     // Strict environment isolation
     if (s.userId && s.userId !== matchedUser.id) return false;
-    if (s.ninjaTraderPlaced === true || processedIds.has(String(s.id))) return false;
+
+    // MULTI-ACCOUNT TARGETING CHECK:
+    const targets = Array.isArray(s.targetAccounts) ? s.targetAccounts : [];
+    if (targets.length > 0 && !targets.includes('all') && !targets.includes(matchedAccountId)) {
+      return false; // Not targeted to this EA account
+    }
+
+    const accountPlaced = s.placedAccounts && s.placedAccounts[matchedAccountId]?.placed;
+    if (accountPlaced) return false;
+
+    if (!s.placedAccounts && s.ninjaTraderPlaced === true) return false;
+    if (processedIds.has(String(s.id))) return false;
     if (s.status === 'CANCELLED' || s.outcomeStatus === 'CANCELLED') return false;
     if (s.status === 'CLOSED' || s.outcomeStatus === 'CLOSED') return false;
     if (['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT', 'EXPIRED'].includes(s.outcomeStatus)) return false;
@@ -7889,7 +8202,7 @@ app.post(['/api/ninjatrader/account', '/api/nt8/account'], async (req, res) => {
   const token = extractNinjaTraderToken(req);
   if (!token) return res.status(401).json({ error: 'Unauthorized NinjaTrader Token' });
 
-  const { user: matchedUser, allUsers: users } = resolveUserByNinjaTraderToken(token);
+  const { user: matchedUser, accountId: matchedAccountId, account: matchedAccount, allUsers: users } = resolveUserByNinjaTraderToken(token);
   if (!matchedUser) return res.status(401).json({ error: 'Invalid NinjaTrader API Key' });
 
   let body = req.body;
@@ -7936,7 +8249,21 @@ app.post(['/api/ninjatrader/account', '/api/nt8/account'], async (req, res) => {
     matchedUser.ninjaTraderAccountCurrency = String(accountCurrency).trim();
     didChange = true;
   }
-  matchedUser.ninjaTraderLastConnectedAt = new Date().toISOString();
+  const nowIso = new Date().toISOString();
+  matchedUser.ninjaTraderLastConnectedAt = nowIso;
+  if (matchedAccount) {
+    if (accountBalance !== undefined && accountBalance !== null && !isNaN(Number(accountBalance))) {
+      matchedAccount.balance = Number(accountBalance);
+    }
+    if (equity !== undefined && equity !== null && !isNaN(Number(equity))) {
+      matchedAccount.equity = Number(equity);
+    }
+    if (accountNumber) matchedAccount.accountNumber = String(accountNumber).trim();
+    if (accountName) matchedAccount.accountServer = String(accountName).trim();
+    if (accountCurrency) matchedAccount.accountCurrency = String(accountCurrency).trim();
+    matchedAccount.lastConnectedAt = nowIso;
+    didChange = true;
+  }
 
   const uMeta = matchedUser as any;
   const lastPersistEquity = uMeta._lastPersistedNtEquity ?? matchedUser.equity ?? 0;
@@ -7965,7 +8292,7 @@ app.post(['/api/ninjatrader/update', '/api/nt8/update'], async (req, res) => {
   const token = extractNinjaTraderToken(req);
   if (!token) return res.status(401).json({ error: 'Unauthorized NinjaTrader Token' });
 
-  const { user: matchedUser, allUsers: users } = resolveUserByNinjaTraderToken(token);
+  const { user: matchedUser, accountId: matchedAccountId, account: matchedAccount, allUsers: users } = resolveUserByNinjaTraderToken(token);
 
   let body = req.body;
   if (typeof body === 'string') {
@@ -8001,6 +8328,15 @@ app.post(['/api/ninjatrader/update', '/api/nt8/update'], async (req, res) => {
           s.signal_id === signal_id
         );
         if (target) {
+          target.placedAccounts = target.placedAccounts || {};
+          target.placedAccounts[matchedAccountId] = {
+            placed: true,
+            placedAt: target.placedAccounts[matchedAccountId]?.placedAt || new Date().toISOString(),
+            platform: 'NINJATRADER',
+            pnl: incomingPnl !== undefined ? Number(incomingPnl) : target.placedAccounts[matchedAccountId]?.pnl,
+            status: status || target.placedAccounts[matchedAccountId]?.status || 'RUNNING',
+            accountNumber: accountNumber || matchedAccount?.accountNumber,
+          };
           target.ninjaTraderPlaced = true;
           target.ninjaTraderPlacedAt = target.ninjaTraderPlacedAt || new Date().toISOString();
           target.accountSource = 'NINJATRADER';

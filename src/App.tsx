@@ -1712,7 +1712,8 @@ export default function App() {
   const handleGenerateSignal = async (
     instrumentId: InstrumentId,
     timeframe: TimeFrame,
-    strategy: string
+    strategy: string = 'Auto Smart Structure (Limit, Stop sau Market)',
+    targetAccounts: string[] = ['all']
   ) => {
     // Check local timezone market status (Closed: Sat 00:00 - Mon 01:00 AM)
     const marketSchedule = getMarketScheduleStatus();
@@ -1747,6 +1748,7 @@ export default function App() {
           strategy,
           lang,
           geminiApiKey: apiKeys.geminiApiKey,
+          targetAccounts,
         }),
       });
 
@@ -2060,6 +2062,7 @@ export default function App() {
         lang={lang}
         authToken={authToken}
         user={user}
+        onAccountsUpdated={(newAccs) => setUser((prev) => (prev ? { ...prev, bridgeAccounts: newAccs } : prev))}
       />
 
       <NinjaTraderIntegrationModal
@@ -2068,6 +2071,7 @@ export default function App() {
         lang={lang}
         authToken={authToken}
         user={user}
+        onAccountsUpdated={(newAccs) => setUser((prev) => (prev ? { ...prev, bridgeAccounts: newAccs } : prev))}
       />
 
       <ConfirmDeleteModal

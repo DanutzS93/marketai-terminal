@@ -3,7 +3,8 @@ export function getNinjaTraderScript(
   accountEndpoint: string,
   updateEndpoint: string,
   apiKey: string,
-  currentOrigin: string
+  currentOrigin: string,
+  accountName: string = 'Cont 3 (NinjaTrader)'
 ): string {
   return `#region Using declarations
 using System;
@@ -96,6 +97,10 @@ namespace NinjaTrader.NinjaScript.Strategies
         [NinjaScriptProperty]
         [Display(Name = "Auto Break-Even at TP1", Description = "Move Stop Loss to Entry when Target 1 is reached", Order = 11, GroupName = "4. Risk Management")]
         public bool AutoBreakEven { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Account Slot Identifier", Description = "MarketAI account slot identifier (e.g. Cont 1, Cont 2, Cont 3)", Order = 12, GroupName = "1. MarketAI Connection")]
+        public string AccountSlotName { get; set; }
         #endregion
 
         public enum MarketAiOrderMode
@@ -109,7 +114,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             if (State == State.SetDefaults)
             {
-                Description                                 = "MarketAI NinjaTrader 8 Auto-Trading Bridge with Real-Time Risk Rules & Account Synchronization";
+                Description                                 = "MarketAI NinjaTrader 8 Auto-Trading Bridge for " + "${accountName}" + " with Real-Time Risk Rules & Account Synchronization";
                 Name                                        = "MarketAI_NinjaTrader_Bridge";
                 Calculate                                   = Calculate.OnPriceChange;
                 EntriesPerDirection                         = 1;
@@ -130,6 +135,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 // Default Parameters
                 MarketAiApiKey        = "${apiKey}";
+                AccountSlotName      = "${accountName}";
                 SignalsUrl           = "${signalsEndpoint}";
                 AccountUrl           = "${accountEndpoint}";
                 UpdateUrl           = "${updateEndpoint}";

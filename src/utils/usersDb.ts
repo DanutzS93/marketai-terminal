@@ -44,6 +44,22 @@ export function verifyPassword(password: string, storedHash: string): boolean {
   return storedHash === legacyHash;
 }
 
+export interface BridgeAccount {
+  id: string; // 'acc_1' | 'acc_2' | 'acc_3'
+  slot: number; // 1 | 2 | 3
+  name: string; // e.g. "Cont 1 (Principal)", "Cont 2 (VT Markets)", "Cont 3 (NinjaTrader)"
+  platform: 'MT5' | 'NINJATRADER';
+  apiKey: string;
+  accountNumber?: string | number;
+  accountServer?: string;
+  accountCompany?: string;
+  accountCurrency?: string;
+  balance?: number;
+  equity?: number;
+  lastConnectedAt?: string;
+  status?: 'active' | 'inactive';
+}
+
 export interface StoredUser {
   id: string;
   username: string;
@@ -83,6 +99,7 @@ export interface StoredUser {
   };
   mt5ProcessedSignalIds?: string[];
   ninjaTraderProcessedSignalIds?: string[];
+  bridgeAccounts?: BridgeAccount[];
 }
 
 export interface StoredInviteCode {

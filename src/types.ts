@@ -110,6 +110,20 @@ export interface TradingSignal {
   mt5PlacedAt?: string;
   ninjaTraderPlaced?: boolean;
   ninjaTraderPlacedAt?: string;
+  targetAccounts?: string[]; // e.g. ['all'] or ['acc_1', 'acc_2']
+  placedAccounts?: Record<
+    string,
+    {
+      placed: boolean;
+      placedAt?: string;
+      orderTicket?: string | number;
+      dealTicket?: string | number;
+      platform?: 'MT5' | 'NINJATRADER';
+      pnl?: number;
+      status?: string;
+      accountNumber?: string | number;
+    }
+  >;
   pnl?: number;
   realizedProfit?: number;
   liveProfit?: number;
@@ -176,6 +190,22 @@ export interface UserApiKeys {
   twelveDataKey?: string;
 }
 
+export interface BridgeAccount {
+  id: string; // 'acc_1' | 'acc_2' | 'acc_3'
+  slot: number; // 1 | 2 | 3
+  name: string; // e.g. "Cont 1 (Principal)", "Cont 2 (VT Markets)", "Cont 3 (NinjaTrader)"
+  platform: 'MT5' | 'NINJATRADER';
+  apiKey: string;
+  accountNumber?: string | number;
+  accountServer?: string;
+  accountCompany?: string;
+  accountCurrency?: string;
+  balance?: number;
+  equity?: number;
+  lastConnectedAt?: string;
+  status?: 'active' | 'inactive';
+}
+
 export interface UserProfile {
   id: string;
   username: string;
@@ -228,6 +258,7 @@ export interface UserProfile {
   signals?: TradingSignal[];
   tradeJournal?: TradeJournalEntry[];
   mt5OpenPositions?: any[];
+  bridgeAccounts?: BridgeAccount[];
 }
 
 export interface TradeJournalEntry {

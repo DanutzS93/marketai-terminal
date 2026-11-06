@@ -4,7 +4,8 @@ export function getMql5EaCode(
   mt5Endpoint: string,
   mt5UpdateEndpoint: string,
   apiKey: string,
-  currentOrigin: string
+  currentOrigin: string,
+  accountName: string = 'Cont 1 (Principal)'
 ): string {
   return `//+------------------------------------------------------------------+
 //|                                         MarketAI_MT5_Bridge.mq5 |
@@ -14,7 +15,7 @@ export function getMql5EaCode(
 #property copyright "MarketAI Signals"
 #property link      "https://ai.studio"
 #property version   "${MT5_EA_VERSION}"
-#property description "MarketAI MT5 Auto-Trading Bridge v${MT5_EA_VERSION} with High-Reliability JSON POST Engine & Exact Broker PnL Sync"
+#property description "MarketAI MT5 Auto-Trading Bridge v${MT5_EA_VERSION} for ${accountName} with Exact Broker PnL Sync"
 
 #include <Trade\\Trade.mqh>
 CTrade trade;
@@ -25,7 +26,8 @@ CTrade trade;
 input group "=== [1] Web API & Connection Settings ==="
 input string   InpEndpointURL           = "${mt5Endpoint}";
 input string   InpUpdateURL             = "${mt5UpdateEndpoint}";
-input string   InpApiKey                = "${apiKey}"; // Cheia MT5 API Personalizata (Asigura izolarea 100% per utilizator)
+input string   InpApiKey                = "${apiKey}"; // Cheia MT5 API Personalizata (Asigura izolarea 100% per cont)
+input string   InpAccountSlotName       = "${accountName}"; // Identificator slot cont (ex: Cont 1, Cont 2)
 input string   InpBrokerSymbol          = "";             // Custom broker symbol (e.g. EURUSD.pro, XAUUSD, NAS100, leave blank for chart symbol)
 input int      InpMagicNumber           = 26082026;       // EA Magic Number
 input int      InpCheckInterval         = 5;              // Check interval in seconds (5s recommended to avoid socket pileup)
@@ -862,7 +864,7 @@ int OnInit()
    long login = AccountInfoInteger(ACCOUNT_LOGIN);
    string serverName = AccountInfoString(ACCOUNT_SERVER);
    string company = AccountInfoString(ACCOUNT_COMPANY);
-   Print("MarketAI MT5 Bridge v", "${MT5_EA_VERSION}", " initialized with Exact Broker PnL Engine. Target Symbol: ", targetSymbol, " Magic: ", InpMagicNumber, " Connected Account: #", login, " (", serverName, ") [", company, "]");
+   Print("MarketAI MT5 Bridge v", "${MT5_EA_VERSION}", " [", InpAccountSlotName, "] initialized with Exact Broker PnL Engine. Target Symbol: ", targetSymbol, " Magic: ", InpMagicNumber, " Connected Account: #", login, " (", serverName, ") [", company, "]");
    
    // Register any existing open positions and sync historical closed trades from MT5
    RegisterOpenPositions();

@@ -154,6 +154,61 @@ export const SignalDetailsModal: React.FC<SignalDetailsModalProps> = ({
             </div>
           </div>
 
+          {/* Target EA Accounts Multi-Bridge Execution Box */}
+          <div className="p-3.5 rounded-xl bg-slate-900/80 border border-white/10 space-y-2 font-mono text-xs">
+            <div className="flex items-center justify-between">
+              <span className="text-slate-400 font-sans font-bold text-[11px] uppercase flex items-center gap-1.5">
+                <Cpu className="w-3.5 h-3.5 text-indigo-400" />
+                <span>{lang === 'ro' ? 'Conturi EA Țintă & Execuție Terminal:' : 'Target EA Accounts & Execution:'}</span>
+              </span>
+              <span className="text-[10px] text-indigo-300">
+                {(!signal.targetAccounts || signal.targetAccounts.includes('all'))
+                  ? (lang === 'ro' ? 'Toate Conturile (1, 2, 3)' : 'All Accounts (1, 2, 3)')
+                  : `${signal.targetAccounts.length} ${lang === 'ro' ? 'conturi selectate' : 'accounts selected'}`}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+              {(user?.bridgeAccounts || [
+                { id: 'acc_1', slot: 1, name: 'Cont 1 (Principal MT5)', platform: 'MT5' as const },
+                { id: 'acc_2', slot: 2, name: 'Cont 2 (MT5 Secundar)', platform: 'MT5' as const },
+                { id: 'acc_3', slot: 3, name: 'Cont 3 (NinjaTrader 8)', platform: 'NINJATRADER' as const },
+              ]).map((acc) => {
+                const isTargeted = !signal.targetAccounts || signal.targetAccounts.includes('all') || signal.targetAccounts.includes(acc.id);
+                const placedInfo = signal.placedAccounts && signal.placedAccounts[acc.id];
+                const isPlaced = !!placedInfo?.placed;
+
+                return (
+                  <div
+                    key={acc.id}
+                    className={`p-2.5 rounded-lg border flex flex-col justify-between gap-1 text-[11px] ${
+                      isTargeted
+                        ? isPlaced
+                          ? 'bg-emerald-950/30 border-emerald-500/40 text-emerald-200'
+                          : 'bg-indigo-950/30 border-indigo-500/40 text-indigo-200'
+                        : 'bg-slate-950/40 border-white/5 text-slate-500 opacity-60'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold truncate">{acc.name}</span>
+                      <span className="text-[9px] px-1 rounded uppercase font-bold bg-white/10">{acc.platform}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-[10px] mt-1">
+                      <span>{isTargeted ? (lang === 'ro' ? 'Țintă:' : 'Target:') : (lang === 'ro' ? 'Omis:' : 'Excluded:')}</span>
+                      <strong className={isPlaced ? 'text-emerald-400' : isTargeted ? 'text-amber-400' : 'text-slate-500'}>
+                        {isPlaced
+                          ? (lang === 'ro' ? '✓ Executat' : '✓ Placed')
+                          : isTargeted
+                          ? (lang === 'ro' ? '⏳ În așteptare' : '⏳ Pending')
+                          : (lang === 'ro' ? 'Nebifat' : 'Unchecked')}
+                      </strong>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Synchronized Live P&L Banner */}
           {(() => {
             const pnlData = calculateTradePnLMetrics(signal, user, quotes);

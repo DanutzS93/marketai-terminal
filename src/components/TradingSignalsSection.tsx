@@ -38,7 +38,7 @@ interface TradingSignalsSectionProps {
   signals: TradingSignal[];
   selectedInstrument: InstrumentId;
   onSelectInstrument: (id: InstrumentId) => void;
-  onGenerateSignal: (instrumentId: InstrumentId, timeframe: TimeFrame, strategy: string) => void;
+  onGenerateSignal: (instrumentId: InstrumentId, timeframe: TimeFrame, strategy: string, targetAccounts?: string[]) => void;
   isGenerating: boolean;
   onOpenCalcModal: () => void;
   lang: 'ro' | 'en';
@@ -117,6 +117,48 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
   };
 
   const marketSchedule = getMarketScheduleStatus();
+
+  // Multi-Account Bridge targeting state
+  const bridgeAccounts = user?.bridgeAccounts && Array.isArray(user.bridgeAccounts) && user.bridgeAccounts.length > 0
+    ? user.bridgeAccounts
+    : [
+        { id: 'acc_1', slot: 1, name: 'Cont 1 (Principal MT5)', platform: 'MT5' as const, status: 'active' as const, apiKey: '' },
+        { id: 'acc_2', slot: 2, name: 'Cont 2 (MT5 Secundar)', platform: 'MT5' as const, status: 'active' as const, apiKey: '' },
+        { id: 'acc_3', slot: 3, name: 'Cont 3 (NinjaTrader 8)', platform: 'NINJATRADER' as const, status: 'active' as const, apiKey: '' },
+      ];
+
+  const [selectedTargetAccountIds, setSelectedTargetAccountIds] = useState<string[]>(['all']);
+
+  const isAllAccountsSelected =
+    selectedTargetAccountIds.includes('all') ||
+    selectedTargetAccountIds.length === bridgeAccounts.length;
+
+  const handleToggleAllAccounts = () => {
+    if (isAllAccountsSelected) {
+      setSelectedTargetAccountIds(['acc_1']);
+    } else {
+      setSelectedTargetAccountIds(['all']);
+    }
+  };
+
+  const handleToggleAccount = (accId: string) => {
+    if (isAllAccountsSelected) {
+      setSelectedTargetAccountIds([accId]);
+      return;
+    }
+
+    if (selectedTargetAccountIds.includes(accId)) {
+      const next = selectedTargetAccountIds.filter((id) => id !== accId && id !== 'all');
+      setSelectedTargetAccountIds(next.length === 0 ? ['all'] : next);
+    } else {
+      const next = [...selectedTargetAccountIds.filter((id) => id !== 'all'), accId];
+      if (next.length >= bridgeAccounts.length) {
+        setSelectedTargetAccountIds(['all']);
+      } else {
+        setSelectedTargetAccountIds(next);
+      }
+    }
+  };
 
   const filteredSignals = signals.filter((s) => {
     if (filterInstrument !== 'ALL' && s.instrumentId !== filterInstrument) return false;
@@ -233,9 +275,9 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
         </div>
 
         {/* Action controls */}
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Generate AI Signal Controls */}
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 bg-slate-950/70 p-2 rounded-xl border border-white/10 w-full sm:w-auto backdrop-blur-xl shadow-inner">
+        <div className="flex flex-col gap-2 w-full lg:w-auto">
+          {/* Generate AI Signal Controls Bar */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 bg-slate-950/70 p-2 rounded-xl border border-white/10 w-full backdrop-blur-xl shadow-inner">
             <select
               value={selectedInstrument}
               onChange={(e) => onSelectInstrument(e.target.value as InstrumentId)}
@@ -296,7 +338,7 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
             </select>
 
             <button
-              onClick={() => onGenerateSignal(selectedInstrument, selectedTimeframe, selectedStrategy)}
+              onClick={() => onGenerateSignal(selectedInstrument, selectedTimeframe, selectedStrategy, isAllAccountsSelected ? ['all'] : selectedTargetAccountIds)}
               disabled={isGenerating}
               className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white font-bold text-xs shadow-[0_0_20px_rgba(99,102,241,0.4)] transition disabled:opacity-50 cursor-pointer border border-indigo-400/40 shrink-0"
             >
@@ -307,6 +349,75 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
                   : (lang === 'ro' ? 'Generează Semnal AI' : 'Generate AI Signal')}
               </span>
             </button>
+          </div>
+
+          {/* Multi-Account Target Selection Bar */}
+          <div className="flex flex-wrap items-center gap-2 px-3 py-2 bg-slate-950/60 rounded-xl border border-white/10 text-xs backdrop-blur-md">
+            <span className="text-[11px] font-bold text-slate-300 font-mono flex items-center gap-1.5 mr-1">
+              <Cpu className="w-3.5 h-3.5 text-indigo-400" />
+              <span>{lang === 'ro' ? 'Trimite spre EA Conturi:' : 'Dispatch to EA Accounts:'}</span>
+            </span>
+
+            {/* Toate Conturile Button */}
+            <button
+              type="button"
+              onClick={handleToggleAllAccounts}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition border cursor-pointer ${
+                isAllAccountsSelected
+                  ? 'bg-indigo-600/30 text-indigo-200 border-indigo-400/50 shadow-[0_0_12px_rgba(99,102,241,0.25)]'
+                  : 'bg-slate-900/40 text-slate-400 border-white/10 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <CheckCircle2 className={`w-3.5 h-3.5 ${isAllAccountsSelected ? 'text-indigo-400' : 'text-slate-600'}`} />
+              <span>{lang === 'ro' ? 'Toate Conturile (1, 2, 3)' : 'All Accounts (1, 2, 3)'}</span>
+            </button>
+
+            {/* Individual Account Pills / Checkboxes */}
+            {bridgeAccounts.map((acc) => {
+              const isSelected = selectedTargetAccountIds.includes(acc.id) || isAllAccountsSelected;
+              const isConnected = !!(
+                acc.accountNumber ||
+                (acc.lastConnectedAt && Date.now() - new Date(acc.lastConnectedAt).getTime() < 86400000)
+              );
+              return (
+                <button
+                  key={acc.id}
+                  type="button"
+                  onClick={() => handleToggleAccount(acc.id)}
+                  className={`flex items-center gap-2 px-2.5 py-1 rounded-lg text-xs font-medium transition border cursor-pointer ${
+                    isSelected
+                      ? acc.platform === 'MT5'
+                        ? 'bg-blue-500/20 border-blue-400/50 text-blue-200 shadow-sm'
+                        : 'bg-orange-500/20 border-orange-400/50 text-orange-200 shadow-sm'
+                      : 'bg-slate-900/40 border-white/5 text-slate-500 hover:text-slate-300 hover:border-white/15'
+                  }`}
+                  title={`${acc.name} (${acc.platform}) - ${isConnected ? 'Conectat' : 'Offline'}`}
+                >
+                  <div
+                    className={`w-3.5 h-3.5 rounded flex items-center justify-center border text-[9px] font-bold ${
+                      isSelected
+                        ? acc.platform === 'MT5'
+                          ? 'bg-blue-600 border-blue-400 text-white'
+                          : 'bg-orange-600 border-orange-400 text-white'
+                        : 'border-slate-700 bg-slate-900 text-transparent'
+                    }`}
+                  >
+                    ✓
+                  </div>
+                  <span className="font-semibold text-white">{acc.name}</span>
+                  <span
+                    className={`text-[9.5px] px-1 py-0.2 rounded font-mono font-bold uppercase ${
+                      acc.platform === 'MT5' ? 'bg-blue-900/60 text-blue-300' : 'bg-orange-900/60 text-orange-300'
+                    }`}
+                  >
+                    {acc.platform}
+                  </span>
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`}
+                  />
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -1156,6 +1267,34 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
                   </span>
                 </div>
 
+                {/* Target EA Accounts Multi-Badge Row */}
+                <div className="flex flex-wrap items-center gap-1 text-[10px] font-mono">
+                  <span className="text-slate-400">🎯 {lang === 'ro' ? 'Trimis spre:' : 'Target:'}</span>
+                  {(!sig.targetAccounts || sig.targetAccounts.includes('all')) ? (
+                    <span className="px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-bold border border-indigo-400/30">
+                      {lang === 'ro' ? 'Toate Conturile (1, 2, 3)' : 'All Accounts (1, 2, 3)'}
+                    </span>
+                  ) : (
+                    sig.targetAccounts.map((accId) => {
+                      const acc = bridgeAccounts.find((a) => a.id === accId);
+                      const isExecuted = !!(sig.placedAccounts && sig.placedAccounts[accId]?.placed);
+                      return (
+                        <span
+                          key={accId}
+                          className={`px-1.5 py-0.5 rounded border font-semibold flex items-center gap-1 ${
+                            isExecuted
+                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/40'
+                              : 'bg-slate-800 text-slate-300 border-white/10'
+                          }`}
+                        >
+                          {isExecuted && <Check className="w-2.5 h-2.5 text-emerald-400" />}
+                          <span>{acc?.name || accId}</span>
+                        </span>
+                      );
+                    })
+                  )}
+                </div>
+
                 {/* PNL Curent Row for Mobile */}
                 {(() => {
                   const pnlData = calculateTradePnLMetrics(sig, user, quotes);
@@ -1331,6 +1470,31 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
                       <div className="text-[9px] text-slate-400 font-mono mt-0.5 flex items-center gap-1 font-normal">
                         <Calendar className="w-2.5 h-2.5 text-cyan-400 shrink-0" />
                         <span>{formatFullDateTime(sig.createdAt, lang)}</span>
+                      </div>
+                      <div className="flex items-center gap-1 mt-1">
+                        {(!sig.targetAccounts || sig.targetAccounts.includes('all')) ? (
+                          <span className="text-[8.5px] px-1 py-0.2 rounded bg-indigo-500/15 text-indigo-300 font-bold border border-indigo-400/25">
+                            EA: All (1, 2, 3)
+                          </span>
+                        ) : (
+                          sig.targetAccounts.map((accId) => {
+                            const acc = bridgeAccounts.find((a) => a.id === accId);
+                            const isExecuted = !!(sig.placedAccounts && sig.placedAccounts[accId]?.placed);
+                            return (
+                              <span
+                                key={accId}
+                                className={`text-[8px] px-1 py-0.2 rounded border font-semibold ${
+                                  isExecuted
+                                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/30'
+                                    : 'bg-slate-800 text-slate-300 border-white/10'
+                                }`}
+                                title={acc ? `${acc.name} (${acc.platform})` : accId}
+                              >
+                                {isExecuted ? '✓ ' : ''}Slot {acc?.slot || accId.replace('acc_', '')}
+                              </span>
+                            );
+                          })
+                        )}
                       </div>
                     </td>
                     <td className="px-1.5 py-2 text-center whitespace-nowrap">
