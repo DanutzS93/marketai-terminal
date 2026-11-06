@@ -29,7 +29,7 @@ import {
   Check,
 } from 'lucide-react';
 import { TradingSignal, InstrumentId, TimeFrame, UserProfile, MarketQuote } from '../types';
-import { getOutcomeBadgeDetails, getLocalizedSignalText, formatFullDateTime, getCancellationReason, calculateExecutionType, getOrCalculateVolumeProfileLevels, formatSignalPrice, calculateTradePnLMetrics } from '../utils/signalUtils';
+import { getOutcomeBadgeDetails, getEffectiveOutcomeStatus, getLocalizedSignalText, formatFullDateTime, getCancellationReason, calculateExecutionType, getOrCalculateVolumeProfileLevels, formatSignalPrice, calculateTradePnLMetrics } from '../utils/signalUtils';
 import { getMarketScheduleStatus } from '../utils/marketSchedule';
 import { SignalHistoryStatsModal } from './SignalHistoryStatsModal';
 import { SignalDetailsModal } from './SignalDetailsModal';
@@ -616,8 +616,8 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
               {/* Status Outcome Badge */}
               <div className="flex items-center gap-2 bg-[#0B1428]/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/10 shadow-sm">
                 <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider font-mono">{lang === 'ro' ? 'Stare:' : 'Status:'}</span>
-                <span className={`px-2.5 py-0.5 rounded-md text-xs border font-mono font-bold ${getOutcomeBadgeDetails(featuredSignal.outcomeStatus, lang, featuredSignal.isBeHitAfterTp1).badgeClass}`}>
-                  {getOutcomeBadgeDetails(featuredSignal.outcomeStatus, lang, featuredSignal.isBeHitAfterTp1).label}
+                <span className={`px-2.5 py-0.5 rounded-md text-xs border font-mono font-bold ${getOutcomeBadgeDetails(getEffectiveOutcomeStatus(featuredSignal), lang, featuredSignal.isBeHitAfterTp1).badgeClass}`}>
+                  {getOutcomeBadgeDetails(getEffectiveOutcomeStatus(featuredSignal), lang, featuredSignal.isBeHitAfterTp1).label}
                 </span>
               </div>
 
@@ -1215,7 +1215,7 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
         {/* Mobile View: Stacked Cards (Frosted Glass) */}
         <div className="block md:hidden space-y-3">
           {filteredSignals.map((sig) => {
-            const badge = getOutcomeBadgeDetails(sig.outcomeStatus, lang, sig.isBeHitAfterTp1, sig.isBeHitAfterTp2);
+            const badge = getOutcomeBadgeDetails(getEffectiveOutcomeStatus(sig), lang, sig.isBeHitAfterTp1, sig.isBeHitAfterTp2);
             return (
               <div
                 key={sig.id}
@@ -1388,16 +1388,21 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
 
                 {/* Action Buttons */}
                 <div className="flex items-center justify-between gap-2 pt-1" onClick={(e) => e.stopPropagation()}>
-                  {sig.outcomeStatus !== 'CANCELLED' && (
-                    <button
-                      onClick={() => handleCloseClick(sig)}
-                      className="py-1.5 px-2.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/35 text-rose-300 font-bold text-xs flex items-center justify-center gap-1 transition border border-rose-500/40 shadow-sm"
-                      title={lang === 'ro' ? 'Închide Trade-ul (MT5 / NinjaTrader)' : 'Close Trade (MT5 / NinjaTrader)'}
-                    >
-                      <X className="w-3.5 h-3.5 text-rose-400" />
-                      <span>{lang === 'ro' ? 'Închide' : 'Close'}</span>
-                    </button>
-                  )}
+                  {(() => {
+                    const effOutcome = getEffectiveOutcomeStatus(sig);
+                    const isClosedTrade = sig.status === 'CLOSED' || effOutcome === 'CANCELLED' || effOutcome === 'SL_HIT' || effOutcome === 'TP3_HIT' || effOutcome.startsWith('MANUAL_');
+                    if (isClosedTrade) return null;
+                    return (
+                      <button
+                        onClick={() => handleCloseClick(sig)}
+                        className="py-1.5 px-2.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/35 text-rose-300 font-bold text-xs flex items-center justify-center gap-1 transition border border-rose-500/40 shadow-sm"
+                        title={lang === 'ro' ? 'Închide Trade-ul (MT5 / NinjaTrader)' : 'Close Trade (MT5 / NinjaTrader)'}
+                      >
+                        <X className="w-3.5 h-3.5 text-rose-400" />
+                        <span>{lang === 'ro' ? 'Închide' : 'Close'}</span>
+                      </button>
+                    );
+                  })()}
                   <button
                     onClick={() => setSelectedSignalForChart(sig)}
                     className="flex-1 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 font-bold text-xs flex items-center justify-center gap-1.5 transition border border-emerald-500/30"
@@ -1454,7 +1459,7 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
             </thead>
             <tbody className="divide-y divide-white/5 bg-transparent">
               {filteredSignals.map((sig) => {
-                const badge = getOutcomeBadgeDetails(sig.outcomeStatus, lang, sig.isBeHitAfterTp1, sig.isBeHitAfterTp2);
+                const badge = getOutcomeBadgeDetails(getEffectiveOutcomeStatus(sig), lang, sig.isBeHitAfterTp1, sig.isBeHitAfterTp2);
                 return (
                   <tr
                     key={sig.id}
@@ -1647,16 +1652,21 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
                     <td className="px-2.5 py-2 text-right whitespace-nowrap">
                       <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
                         {/* Buton X - Închide Trade (MT5 & NinjaTrader) */}
-                        {sig.outcomeStatus !== 'CANCELLED' && (
-                          <button
-                            onClick={() => handleCloseClick(sig)}
-                            className="px-2 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/35 text-rose-300 hover:text-white font-bold text-[10.5px] flex items-center gap-1 transition cursor-pointer border border-rose-500/40 shadow-sm hover:border-rose-400 group shrink-0"
-                            title={lang === 'ro' ? 'Închide Trade-ul (Comandă Stop MT5 / NinjaTrader)' : 'Close Trade (Stop Order MT5 / NinjaTrader)'}
-                          >
-                            <X className="w-3.5 h-3.5 text-rose-400 group-hover:scale-125 transition-transform" />
-                            <span className="font-mono">{lang === 'ro' ? 'Închide' : 'Close'}</span>
-                          </button>
-                        )}
+                        {(() => {
+                          const effOutcome = getEffectiveOutcomeStatus(sig);
+                          const isClosedTrade = sig.status === 'CLOSED' || effOutcome === 'CANCELLED' || effOutcome === 'SL_HIT' || effOutcome === 'TP3_HIT' || effOutcome.startsWith('MANUAL_');
+                          if (isClosedTrade) return null;
+                          return (
+                            <button
+                              onClick={() => handleCloseClick(sig)}
+                              className="px-2 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/35 text-rose-300 hover:text-white font-bold text-[10.5px] flex items-center gap-1 transition cursor-pointer border border-rose-500/40 shadow-sm hover:border-rose-400 group shrink-0"
+                              title={lang === 'ro' ? 'Închide Trade-ul (Comandă Stop MT5 / NinjaTrader)' : 'Close Trade (Stop Order MT5 / NinjaTrader)'}
+                            >
+                              <X className="w-3.5 h-3.5 text-rose-400 group-hover:scale-125 transition-transform" />
+                              <span className="font-mono">{lang === 'ro' ? 'Închide' : 'Close'}</span>
+                            </button>
+                          );
+                        })()}
                         {/* Buton Grafic */}
                         <button
                           onClick={() => setSelectedSignalForChart(sig)}

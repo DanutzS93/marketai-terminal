@@ -385,9 +385,23 @@ export default function App() {
                   const srv = data.user.signals.find((sig: any) => String(sig.id) === String(s.id));
                   if (!srv) return s;
 
-                  // Extract latest floating profit from open positions or signal snapshot
+                  const isClosedSignal =
+                    s.status === 'CLOSED' ||
+                    s.status === 'CANCELLED' ||
+                    s.isManualClose === true ||
+                    s.closedManually === true ||
+                    s.realizedProfit !== undefined ||
+                    s.closedAt !== undefined ||
+                    s.outcomeStatus === 'CANCELLED' ||
+                    s.outcomeStatus === 'TP3_HIT' ||
+                    s.outcomeStatus === 'SL_HIT' ||
+                    (typeof s.outcomeStatus === 'string' && s.outcomeStatus.startsWith('MANUAL_'));
+
+                  const isPendingOrder = (!s.outcomeStatus || s.outcomeStatus === 'PENDING') && !s.isEntryTriggered;
+
+                  // Extract latest floating profit ONLY for active, triggered, non-closed trades
                   let posProfit: number | undefined = undefined;
-                  if (Array.isArray(data.user.mt5OpenPositions)) {
+                  if (!isClosedSignal && !isPendingOrder && Array.isArray(data.user.mt5OpenPositions)) {
                     const p = data.user.mt5OpenPositions.find((pos: any) =>
                       pos && (
                         (pos.signalId && (String(pos.signalId) === String(s.id) || String(pos.signalId) === String(s.signal_id))) ||
@@ -399,26 +413,35 @@ export default function App() {
                     }
                   }
 
-                  const newLiveProfit = posProfit !== undefined ? posProfit : srv.liveProfit;
+                  // Clear liveProfit if closed or pending order
+                  const newLiveProfit = (isClosedSignal || isPendingOrder) ? undefined : (posProfit !== undefined ? posProfit : srv.liveProfit);
                   const newPnl = srv.pnl;
                   const newStatus = srv.status;
                   const newOutcome = srv.outcomeStatus;
 
+                  const srvIsClosed =
+                    srv.status === 'CLOSED' ||
+                    srv.status === 'CANCELLED' ||
+                    srv.realizedProfit !== undefined ||
+                    (typeof srv.outcomeStatus === 'string' && (
+                      srv.outcomeStatus.startsWith('MANUAL_') ||
+                      ['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT', 'CANCELLED'].includes(srv.outcomeStatus)
+                    ));
+
                   // Never overwrite live streaming prices with stale server snapshots
                   // Never overwrite unactivated pending limit orders with stale server RUNNING status
-                  const isPendingOrder = (!s.outcomeStatus || s.outcomeStatus === 'PENDING') && !s.isEntryTriggered;
                   const canAcceptOutcome =
                     newOutcome &&
                     s.outcomeStatus !== newOutcome &&
-                    !(isPendingOrder && newOutcome === 'RUNNING') &&
-                    s.outcomeStatus !== 'SL_HIT' &&
-                    s.outcomeStatus !== 'TP3_HIT' &&
-                    s.outcomeStatus !== 'CANCELLED';
+                    (srvIsClosed || (!(isPendingOrder && newOutcome === 'RUNNING') &&
+                     s.outcomeStatus !== 'SL_HIT' &&
+                     s.outcomeStatus !== 'TP3_HIT' &&
+                     s.outcomeStatus !== 'CANCELLED'));
 
                   const canAcceptStatus =
                     newStatus &&
                     s.status !== newStatus &&
-                    !(isPendingOrder && newStatus === 'RUNNING');
+                    (srvIsClosed || !(isPendingOrder && newStatus === 'RUNNING'));
 
                   if (
                     (newLiveProfit !== undefined && s.liveProfit !== newLiveProfit) ||
@@ -1502,6 +1525,33 @@ export default function App() {
       const milestoneJournalEntries: TradeJournalEntry[] = [];
 
       const updated = prevSignals.map((sig) => {
+        const isClosedSignal =
+          sig.status === 'CLOSED' ||
+          sig.status === 'CANCELLED' ||
+          sig.isManualClose === true ||
+          sig.closedManually === true ||
+          sig.realizedProfit !== undefined ||
+          sig.closedAt !== undefined ||
+          sig.outcomeStatus === 'CANCELLED' ||
+          sig.outcomeStatus === 'TP3_HIT' ||
+          sig.outcomeStatus === 'SL_HIT' ||
+          (typeof sig.outcomeStatus === 'string' && sig.outcomeStatus.startsWith('MANUAL_'));
+
+        if (isClosedSignal) {
+          if (sig.outcomeStatus === 'PENDING' || sig.outcomeStatus === 'RUNNING' || !sig.outcomeStatus) {
+            hasChanges = true;
+            const termOutcome: NonNullable<TradingSignal['outcomeStatus']> = sig.status === 'CANCELLED'
+              ? 'CANCELLED'
+              : (sig.pnl !== undefined && sig.pnl > 0 ? 'MANUAL_PROFIT' : (sig.pnl !== undefined && sig.pnl < 0 ? 'MANUAL_LOSS' : 'MANUAL_BE'));
+            return {
+              ...sig,
+              status: (sig.status === 'CANCELLED' ? 'CANCELLED' : 'CLOSED') as TradingSignal['status'],
+              outcomeStatus: termOutcome,
+            };
+          }
+          return sig;
+        }
+
         const liveQuote = quotes[sig.instrumentId];
         const evalPrice = liveQuote && liveQuote.price > 0 ? liveQuote.price : (sig.currentMarketPrice || sig.entryPrice || 0);
 

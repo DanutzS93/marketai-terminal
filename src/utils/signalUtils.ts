@@ -612,8 +612,8 @@ export function evaluateSignalOutcome(
   rawSig: TradingSignal,
   livePrice: number
 ): {
-  outcomeStatus: 'PENDING' | 'RUNNING' | 'TP1_HIT' | 'TP2_HIT' | 'TP3_HIT' | 'SL_HIT' | 'CANCELLED';
-  firstHitMilestone: 'TP1' | 'TP2' | 'TP3' | 'SL' | 'ENTRY' | 'PENDING' | 'CANCELLED';
+  outcomeStatus: NonNullable<TradingSignal['outcomeStatus']>;
+  firstHitMilestone: NonNullable<TradingSignal['firstHitMilestone']>;
   isEntryTriggered?: boolean;
   isBeHitAfterTp1?: boolean;
   isBeHitAfterTp2?: boolean;
@@ -635,12 +635,37 @@ export function evaluateSignalOutcome(
   const sig = rawSig;
   const currentStatus = (sig.outcomeStatus as string) || 'PENDING';
 
-  // 1. Terminal states check (CANCELLED, TP3_HIT, SL_HIT can NEVER change)
-  if (currentStatus === 'CANCELLED' || currentStatus === 'TP3_HIT' || currentStatus === 'SL_HIT') {
+  // 1. Terminal states check (CANCELLED, TP3_HIT, SL_HIT, MANUAL_*, CLOSED can NEVER change back to PENDING/RUNNING)
+  const isTerminal =
+    sig.status === 'CLOSED' ||
+    sig.status === 'CANCELLED' ||
+    sig.isManualClose === true ||
+    sig.closedManually === true ||
+    sig.realizedProfit !== undefined ||
+    sig.closedAt !== undefined ||
+    currentStatus === 'CANCELLED' ||
+    currentStatus === 'TP3_HIT' ||
+    currentStatus === 'SL_HIT' ||
+    currentStatus === 'CLOSED' ||
+    currentStatus.startsWith('MANUAL_');
+
+  if (isTerminal) {
+    let finalOutcome = currentStatus;
+    if (finalOutcome === 'PENDING' || finalOutcome === 'RUNNING' || finalOutcome === 'CLOSED' || !finalOutcome) {
+      if (sig.status === 'CANCELLED') {
+        finalOutcome = 'CANCELLED';
+      } else {
+        const prof = sig.realizedProfit !== undefined ? sig.realizedProfit : sig.pnl;
+        if (prof !== undefined && prof > 0) finalOutcome = 'MANUAL_PROFIT';
+        else if (prof !== undefined && prof < 0) finalOutcome = 'MANUAL_LOSS';
+        else if (prof !== undefined && prof === 0) finalOutcome = 'MANUAL_BE';
+        else finalOutcome = 'MANUAL_CLOSED';
+      }
+    }
     return {
-      outcomeStatus: currentStatus as any,
-      firstHitMilestone: sig.firstHitMilestone || 'PENDING',
-      isEntryTriggered: sig.isEntryTriggered,
+      outcomeStatus: finalOutcome as any,
+      firstHitMilestone: sig.firstHitMilestone || (finalOutcome === 'SL_HIT' ? 'SL' : finalOutcome === 'CANCELLED' ? 'CANCELLED' : 'MANUAL_CLOSE'),
+      isEntryTriggered: sig.isEntryTriggered ?? (finalOutcome !== 'CANCELLED' && finalOutcome !== 'PENDING'),
       isBeHitAfterTp1: sig.isBeHitAfterTp1,
       isBeHitAfterTp2: sig.isBeHitAfterTp2,
       cancelReasonRo: sig.cancelReasonRo,
@@ -704,6 +729,10 @@ export function evaluateSignalOutcome(
   // Check if entry has been filled/triggered for pending limit/stop orders
   let isTriggered =
     isMarket ||
+    sig.isEntryTriggered === true ||
+    (sig.status as string) === 'RUNNING' ||
+    currentStatus === 'RUNNING' ||
+    sig.firstHitMilestone === 'ENTRY' ||
     sig.firstHitMilestone === 'TP1' ||
     sig.firstHitMilestone === 'TP2' ||
     sig.firstHitMilestone === 'TP3';
@@ -713,7 +742,6 @@ export function evaluateSignalOutcome(
     else if (isBuyStop && livePrice >= sig.entryPrice) isTriggered = true;
     else if (isSellLimit && livePrice >= sig.entryPrice) isTriggered = true;
     else if (isSellStop && livePrice <= sig.entryPrice) isTriggered = true;
-    else if (sig.isEntryTriggered === true && sig.firstHitMilestone === 'ENTRY') isTriggered = true;
   }
 
   // 2. If order is a PENDING limit/stop order and was NOT yet triggered:
@@ -857,12 +885,63 @@ export function evaluateSignalOutcome(
   };
 }
 
+/**
+ * Resolves the true effective outcome status of a signal, ensuring that trades that are
+ * closed, realized, or manually closed can never revert to PENDING or RUNNING.
+ */
+export function getEffectiveOutcomeStatus(sigOrStatus?: string | Partial<TradingSignal>): string {
+  if (!sigOrStatus) return 'PENDING';
+  if (typeof sigOrStatus === 'string') {
+    return sigOrStatus;
+  }
+  const sig = sigOrStatus;
+  const currentOutcome = (sig.outcomeStatus as string) || '';
+  const isTerminalOutcome =
+    currentOutcome === 'CANCELLED' ||
+    currentOutcome === 'TP3_HIT' ||
+    currentOutcome === 'SL_HIT' ||
+    currentOutcome.startsWith('MANUAL_');
+
+  if (isTerminalOutcome) {
+    return currentOutcome;
+  }
+
+  const isClosed =
+    sig.status === 'CLOSED' ||
+    sig.status === 'CANCELLED' ||
+    sig.isManualClose === true ||
+    sig.closedManually === true ||
+    sig.realizedProfit !== undefined ||
+    sig.closedAt !== undefined;
+
+  if (isClosed) {
+    if (sig.status === 'CANCELLED') return 'CANCELLED';
+    const prof = sig.realizedProfit !== undefined ? sig.realizedProfit : sig.pnl;
+    if (prof !== undefined && prof > 0) return 'MANUAL_PROFIT';
+    if (prof !== undefined && prof < 0) return 'MANUAL_LOSS';
+    if (prof !== undefined && prof === 0) return 'MANUAL_BE';
+    return 'MANUAL_CLOSED';
+  }
+
+  return currentOutcome || ((sig.status as string) === 'RUNNING' || sig.status === 'ACTIVE' ? 'RUNNING' : 'PENDING');
+}
+
 export function getOutcomeBadgeDetails(
-  outcomeStatus?: string,
+  outcomeStatusOrSig?: string | Partial<TradingSignal>,
   lang: 'ro' | 'en' = 'ro',
   isBeHitAfterTp1?: boolean,
   isBeHitAfterTp2?: boolean
 ): { label: string; badgeClass: string; icon: string } {
+  let outcomeStatus: string | undefined;
+  if (typeof outcomeStatusOrSig === 'string') {
+    outcomeStatus = outcomeStatusOrSig;
+  } else if (typeof outcomeStatusOrSig === 'object' && outcomeStatusOrSig !== null) {
+    outcomeStatus = getEffectiveOutcomeStatus(outcomeStatusOrSig);
+    if (isBeHitAfterTp1 === undefined) isBeHitAfterTp1 = outcomeStatusOrSig.isBeHitAfterTp1;
+    if (isBeHitAfterTp2 === undefined) isBeHitAfterTp2 = outcomeStatusOrSig.isBeHitAfterTp2;
+  } else {
+    outcomeStatus = undefined;
+  }
   switch (outcomeStatus) {
     case 'TP1_HIT':
       if (isBeHitAfterTp1) {
@@ -1182,9 +1261,14 @@ export function filter30DaySignals(signals: TradingSignal[], deletedIds?: string
     RUNNING: 3,
     TP1_HIT: 4,
     TP2_HIT: 5,
-    TP3_HIT: 6,
-    SL_HIT: 6,
-    CANCELLED: 6,
+    TP3_HIT: 7,
+    SL_HIT: 7,
+    CANCELLED: 7,
+    MANUAL_PROFIT: 7,
+    MANUAL_LOSS: 7,
+    MANUAL_BE: 7,
+    MANUAL_CLOSED: 7,
+    CLOSED: 7,
   };
 
   for (const s of validSignals) {
@@ -1193,8 +1277,14 @@ export function filter30DaySignals(signals: TradingSignal[], deletedIds?: string
     if (!existing) {
       map.set(cleanS.id, cleanS);
     } else {
-      const existingRank = statusRank[existing.outcomeStatus || 'PENDING'] || 1;
-      const cleanRank = statusRank[cleanS.outcomeStatus || 'PENDING'] || 1;
+      let existingRank = statusRank[existing.outcomeStatus || 'PENDING'] || 1;
+      if (existing.status === 'CLOSED' || existing.realizedProfit !== undefined || existing.isManualClose || existing.closedManually) {
+        existingRank = Math.max(existingRank, 7);
+      }
+      let cleanRank = statusRank[cleanS.outcomeStatus || 'PENDING'] || 1;
+      if (cleanS.status === 'CLOSED' || cleanS.realizedProfit !== undefined || cleanS.isManualClose || cleanS.closedManually) {
+        cleanRank = Math.max(cleanRank, 7);
+      }
       
       const merged: TradingSignal = {
         ...existing,
@@ -1431,17 +1521,30 @@ export function calculateTradePnLMetrics(
     ? (liveQuote?.price as number)
     : (signal.currentMarketPrice && signal.currentMarketPrice > 0 ? signal.currentMarketPrice : 0);
   const riskDist = Math.max(0.0001, Math.abs(signal.entryPrice - signal.stopLoss));
-  const status = signal.outcomeStatus || 'PENDING';
+  const effectiveStatus = getEffectiveOutcomeStatus(signal);
+  const status = effectiveStatus;
 
   let rr = 0;
   let pnl = 0;
   let statusLabel = 'În Așteptare';
   let hasPrice = true;
 
-  const isClosed = signal.status === 'CLOSED' || ['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT'].includes(status);
+  const isClosed =
+    signal.status === 'CLOSED' ||
+    signal.status === 'CANCELLED' ||
+    signal.isManualClose === true ||
+    signal.closedManually === true ||
+    signal.realizedProfit !== undefined ||
+    signal.closedAt !== undefined ||
+    status === 'CANCELLED' ||
+    status === 'SL_HIT' ||
+    status === 'TP3_HIT' ||
+    status.startsWith('MANUAL_') ||
+    ['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT', 'CLOSED'].includes(status);
 
-  if (isClosed && signal.pnl !== undefined && typeof signal.pnl === 'number') {
-    pnl = Math.round(signal.pnl * 100) / 100;
+  if (isClosed && (signal.pnl !== undefined || signal.realizedProfit !== undefined)) {
+    const closedProfit = signal.realizedProfit !== undefined ? signal.realizedProfit : (signal.pnl as number);
+    pnl = Math.round(closedProfit * 100) / 100;
     rr = dollarRisk > 0 ? Math.round((pnl / dollarRisk) * 100) / 100 : 0;
     if (accountSource === 'MT5') {
       accountBadge = user?.mt5AccountNumber ? `MT5 #${user.mt5AccountNumber} [REALIZAT]` : 'MT5 REALIZAT';
@@ -1487,17 +1590,20 @@ export function calculateTradePnLMetrics(
     rr = rawTp3Rr;
     pnl = Math.round(dollarRisk * rr * 100) / 100;
     statusLabel = 'TP3 MAX Atins';
-  } else if (status === 'RUNNING' || status === 'ACTIVE' || (signal.liveProfit !== undefined && !isClosed)) {
+  } else if (!isClosed && (status === 'RUNNING' || (status === 'ACTIVE' && signal.isEntryTriggered) || (signal.liveProfit !== undefined && (signal.isEntryTriggered || status === 'RUNNING')))) {
     // 1. Check direct open positions reported by MT5 terminal first for fresh live PnL
     let liveProf: number | undefined = undefined;
-    if (!isClosed && Array.isArray(user?.mt5OpenPositions) && user.mt5OpenPositions.length > 0) {
+    if (Array.isArray(user?.mt5OpenPositions) && user.mt5OpenPositions.length > 0) {
       const p = user.mt5OpenPositions.find((pos: any) =>
         pos && (
           (pos.signalId && (String(pos.signalId) === String(signal.id) || String(pos.signalId) === String(signal.signal_id))) ||
-          (pos.symbol && signal.symbol && (
-            pos.symbol.toUpperCase().replace(/[^A-Z0-9]/g, '').includes(signal.symbol.toUpperCase().replace(/[^A-Z0-9]/g, '')) ||
-            signal.symbol.toUpperCase().replace(/[^A-Z0-9]/g, '').includes(pos.symbol.toUpperCase().replace(/[^A-Z0-9]/g, ''))
-          ))
+          // ONLY match by symbol if signal is actively running / triggered
+          ((signal.isEntryTriggered || status === 'RUNNING' || signal.executionType?.includes('MARKET')) &&
+            pos.symbol && signal.symbol && (
+              pos.symbol.toUpperCase().replace(/[^A-Z0-9]/g, '').includes(signal.symbol.toUpperCase().replace(/[^A-Z0-9]/g, '')) ||
+              signal.symbol.toUpperCase().replace(/[^A-Z0-9]/g, '').includes(pos.symbol.toUpperCase().replace(/[^A-Z0-9]/g, ''))
+            )
+          )
         )
       );
       if (p && typeof p.profit === 'number') {

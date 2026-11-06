@@ -24,7 +24,7 @@ import {
   DollarSign,
 } from 'lucide-react';
 import { TradingSignal, UserProfile, MarketQuote } from '../types';
-import { getOutcomeBadgeDetails, getLocalizedSignalText, formatFullDateTime, getCancellationReason, calculateExecutionType, getOrCalculateVolumeProfileLevels, formatSignalPrice, calculateTradePnLMetrics } from '../utils/signalUtils';
+import { getOutcomeBadgeDetails, getEffectiveOutcomeStatus, getLocalizedSignalText, formatFullDateTime, getCancellationReason, calculateExecutionType, getOrCalculateVolumeProfileLevels, formatSignalPrice, calculateTradePnLMetrics } from '../utils/signalUtils';
 import { OrderFlowWidget } from './OrderFlowWidget';
 
 interface SignalDetailsModalProps {
@@ -55,7 +55,7 @@ export const SignalDetailsModal: React.FC<SignalDetailsModalProps> = ({
   if (!isOpen || !signal) return null;
 
   const isBuy = signal.type.includes('BUY');
-  const badgeOutcome = getOutcomeBadgeDetails(signal.outcomeStatus, lang, signal.isBeHitAfterTp1, signal.isBeHitAfterTp2);
+  const badgeOutcome = getOutcomeBadgeDetails(getEffectiveOutcomeStatus(signal), lang, signal.isBeHitAfterTp1, signal.isBeHitAfterTp2);
   const summaryText = getLocalizedSignalText(signal, 'summary', lang);
   const rationaleText = getLocalizedSignalText(signal, 'rationale', lang);
   const titleText = getLocalizedSignalText(signal, 'title', lang);

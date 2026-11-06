@@ -18,7 +18,7 @@ import {
   Info,
 } from 'lucide-react';
 import { TradingSignal, InstrumentId, TimeFrame } from '../types';
-import { getOutcomeBadgeDetails, getLocalizedSignalText, formatFullDateTime, getCancellationReason } from '../utils/signalUtils';
+import { getOutcomeBadgeDetails, getEffectiveOutcomeStatus, getLocalizedSignalText, formatFullDateTime, getCancellationReason } from '../utils/signalUtils';
 import { SignalDetailsModal } from './SignalDetailsModal';
 
 interface SignalHistoryStatsModalProps {
@@ -319,7 +319,7 @@ export const SignalHistoryStatsModal: React.FC<SignalHistoryStatsModalProps> = (
                   </tr>
                 ) : (
                   filtered.map((sig) => {
-                    const badge = getOutcomeBadgeDetails(sig.outcomeStatus, lang, sig.isBeHitAfterTp1, sig.isBeHitAfterTp2);
+                    const badge = getOutcomeBadgeDetails(getEffectiveOutcomeStatus(sig), lang, sig.isBeHitAfterTp1, sig.isBeHitAfterTp2);
                     const isBuy = sig.type.includes('BUY');
 
                     return (

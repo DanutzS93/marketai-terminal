@@ -37,6 +37,7 @@ import { TradingSignal, TimeFrame } from '../types';
 import {
   formatSignalPrice,
   getOutcomeBadgeDetails,
+  getEffectiveOutcomeStatus,
   calculateExecutionType,
   getLocalizedSignalText,
   formatFullDateTime,
@@ -846,7 +847,7 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
     calculateExecutionType(signal.type, signal.entryPrice, signal.currentMarketPrice || signal.entryPrice);
 
   const outcomeBadge = getOutcomeBadgeDetails(
-    signal.outcomeStatus,
+    getEffectiveOutcomeStatus(signal),
     lang,
     signal.isBeHitAfterTp1,
     signal.isBeHitAfterTp2

@@ -102,8 +102,20 @@ export interface TradingSignal {
   riskRewardRatio: string;
   confidencePercent: number;
   status: 'ACTIVE' | 'TARGET_HIT' | 'EXPIRED' | 'CANCELLED' | 'CLOSED';
-  outcomeStatus?: 'PENDING' | 'RUNNING' | 'TP1_HIT' | 'TP2_HIT' | 'TP3_HIT' | 'SL_HIT' | 'CANCELLED' | 'ACTIVE';
-  firstHitMilestone?: 'TP1' | 'TP2' | 'TP3' | 'SL' | 'ENTRY' | 'PENDING' | 'CANCELLED';
+  outcomeStatus?:
+    | 'PENDING'
+    | 'RUNNING'
+    | 'TP1_HIT'
+    | 'TP2_HIT'
+    | 'TP3_HIT'
+    | 'SL_HIT'
+    | 'CANCELLED'
+    | 'ACTIVE'
+    | 'MANUAL_PROFIT'
+    | 'MANUAL_LOSS'
+    | 'MANUAL_BE'
+    | 'MANUAL_CLOSED';
+  firstHitMilestone?: 'TP1' | 'TP2' | 'TP3' | 'SL' | 'ENTRY' | 'PENDING' | 'CANCELLED' | 'MANUAL_CLOSE';
   isBeHitAfterTp1?: boolean;
   isBeHitAfterTp2?: boolean;
   isEntryTriggered?: boolean;
