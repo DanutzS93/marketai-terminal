@@ -25,6 +25,8 @@ import {
   X,
   XCircle,
   Ban,
+  Cpu,
+  Check,
 } from 'lucide-react';
 import { TradingSignal, InstrumentId, TimeFrame, UserProfile, MarketQuote } from '../types';
 import { getOutcomeBadgeDetails, getLocalizedSignalText, formatFullDateTime, getCancellationReason, calculateExecutionType, getOrCalculateVolumeProfileLevels, formatSignalPrice, calculateTradePnLMetrics } from '../utils/signalUtils';

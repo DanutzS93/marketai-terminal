@@ -7480,7 +7480,7 @@ app.post('/api/mt5/account', async (req, res) => {
     return res.status(401).json({ error: 'Unauthorized MT5 API Token' });
   }
 
-  const { user: matchedUser, allUsers: users } = resolveUserByMt5Token(token);
+  const { user: matchedUser, accountId: matchedAccountId, account: matchedAccount, allUsers: users } = resolveUserByMt5Token(token);
 
   let body = req.body;
   if (typeof body === 'string') {
@@ -7638,7 +7638,7 @@ app.post('/api/mt5/update', async (req, res) => {
     return res.status(401).json({ error: 'Unauthorized MT5 API Token' });
   }
 
-  const { user: matchedUser, allUsers: users } = resolveUserByMt5Token(token);
+  const { user: matchedUser, accountId: matchedAccountId, account: matchedAccount, allUsers: users } = resolveUserByMt5Token(token);
 
   let body = req.body;
   if (typeof body === 'string') {
@@ -8328,6 +8328,7 @@ app.post(['/api/ninjatrader/update', '/api/nt8/update'], async (req, res) => {
           s.signal_id === signal_id
         );
         if (target) {
+          const incomingPnl = pnl ?? profit ?? (status === 'CLOSED' ? realizedPnL : unrealizedPnL);
           target.placedAccounts = target.placedAccounts || {};
           target.placedAccounts[matchedAccountId] = {
             placed: true,
@@ -8340,7 +8341,6 @@ app.post(['/api/ninjatrader/update', '/api/nt8/update'], async (req, res) => {
           target.ninjaTraderPlaced = true;
           target.ninjaTraderPlacedAt = target.ninjaTraderPlacedAt || new Date().toISOString();
           target.accountSource = 'NINJATRADER';
-          const incomingPnl = pnl ?? profit ?? (status === 'CLOSED' ? realizedPnL : unrealizedPnL);
           if (incomingPnl !== undefined && !isNaN(Number(incomingPnl))) {
             target.pnl = Math.round(Number(incomingPnl) * 100) / 100;
             target.realizedProfit = target.pnl;
