@@ -404,6 +404,61 @@ function getDefaultTradeSchedulerConfig(): TradeSchedulerConfig {
   };
 }
 
+/**
+ * Normalizes user-entered time strings into standard 24h 'HH:MM' format.
+ * Correctly parses '9:30' -> '09:30', '5:50pm' / '5:50 PM' -> '17:50', '17:50:00' -> '17:50'.
+ */
+function normalizeTimeSlot(t: string | undefined | null): string {
+  if (!t || typeof t !== 'string') return '';
+  const clean = t.trim().toLowerCase();
+  if (!clean) return '';
+  const isPm = clean.includes('pm');
+  const isAm = clean.includes('am');
+  const digitsOnly = clean.replace(/[^\d:]/g, '');
+  const parts = digitsOnly.split(':');
+  if (parts.length >= 2) {
+    let h = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10);
+    if (!isNaN(h) && !isNaN(m)) {
+      if (isPm && h < 12) h += 12;
+      if (isAm && h === 12) h = 0;
+      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    }
+  }
+  return t.trim();
+}
+
+/**
+ * Robust matcher for scheduled hours. Handles variations like '9:30' matching '09:30',
+ * '5:50pm' / '5:50 PM' matching '17:50', and '17:50:00' matching '17:50'.
+ */
+function matchesScheduledTime(targetTime: string, roTimeStr: string): boolean {
+  if (!targetTime || !roTimeStr) return false;
+  const cleanTarget = targetTime.trim().toLowerCase();
+  const cleanRo = roTimeStr.trim().toLowerCase();
+  if (cleanTarget === cleanRo) return true;
+
+  const parseTime = (t: string): { h: number; m: number } | null => {
+    const isPm = t.includes('pm');
+    const isAm = t.includes('am');
+    const digitsOnly = t.replace(/[^\d:]/g, '');
+    const parts = digitsOnly.split(':');
+    if (parts.length < 2) return null;
+    let h = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10);
+    if (isNaN(h) || isNaN(m)) return null;
+    if (isPm && h < 12) h += 12;
+    if (isAm && h === 12) h = 0;
+    return { h, m };
+  };
+
+  const tParsed = parseTime(cleanTarget);
+  const roParsed = parseTime(cleanRo);
+  if (!tParsed || !roParsed) return false;
+
+  return tParsed.h === roParsed.h && tParsed.m === roParsed.m;
+}
+
 function ensureUserTradeScheduler(user: StoredUser): TradeSchedulerConfig {
   const defaultConf = getDefaultTradeSchedulerConfig();
   if (!user.tradeScheduler || typeof user.tradeScheduler !== 'object') {
@@ -432,9 +487,9 @@ function ensureUserTradeScheduler(user: StoredUser): TradeSchedulerConfig {
           ...def,
           ...ex,
           enabled: typeof ex.enabled === 'boolean' ? ex.enabled : def.enabled,
-          timeSlot1: ex.timeSlot1 !== undefined ? ex.timeSlot1 : def.timeSlot1,
-          timeSlot2: ex.timeSlot2 !== undefined ? ex.timeSlot2 : def.timeSlot2,
-          timeSlot3: ex.timeSlot3 !== undefined ? ex.timeSlot3 : def.timeSlot3,
+          timeSlot1: normalizeTimeSlot(ex.timeSlot1 !== undefined ? ex.timeSlot1 : def.timeSlot1),
+          timeSlot2: normalizeTimeSlot(ex.timeSlot2 !== undefined ? ex.timeSlot2 : def.timeSlot2),
+          timeSlot3: normalizeTimeSlot(ex.timeSlot3 !== undefined ? ex.timeSlot3 : def.timeSlot3),
           targetAccounts: Array.isArray(ex.targetAccounts) ? ex.targetAccounts : ['all'],
           timeframe: ex.timeframe || def.timeframe,
           strategy: ex.strategy || def.strategy,
@@ -7005,9 +7060,9 @@ app.post('/api/user/trade-schedule', async (req, res) => {
       const target = current.items.find((it) => it.instrumentId === newItem.instrumentId);
       if (target) {
         if (typeof newItem.enabled === 'boolean') target.enabled = newItem.enabled;
-        if (newItem.timeSlot1 !== undefined) target.timeSlot1 = String(newItem.timeSlot1 || '').trim();
-        if (newItem.timeSlot2 !== undefined) target.timeSlot2 = String(newItem.timeSlot2 || '').trim();
-        if (newItem.timeSlot3 !== undefined) target.timeSlot3 = String(newItem.timeSlot3 || '').trim();
+        if (newItem.timeSlot1 !== undefined) target.timeSlot1 = normalizeTimeSlot(String(newItem.timeSlot1 || ''));
+        if (newItem.timeSlot2 !== undefined) target.timeSlot2 = normalizeTimeSlot(String(newItem.timeSlot2 || ''));
+        if (newItem.timeSlot3 !== undefined) target.timeSlot3 = normalizeTimeSlot(String(newItem.timeSlot3 || ''));
         if (Array.isArray(newItem.targetAccounts)) target.targetAccounts = newItem.targetAccounts;
         if (newItem.timeframe) target.timeframe = newItem.timeframe;
         if (newItem.strategy) target.strategy = newItem.strategy;
@@ -9314,7 +9369,7 @@ async function startServer() {
             if (!s.active) continue; // Slot is turned OFF by top slider
             if (!s.time || s.time.trim() === '') continue;
             const targetTime = s.time.trim();
-            if (targetTime === roTimeStr) {
+            if (matchesScheduledTime(targetTime, roTimeStr)) {
               const execKey = `${user.id}_${item.instrumentId}_${roDateStr}_${roTimeStr}_slot${s.slot}`;
               if (scheduledExecutedKeys.has(execKey)) continue;
               scheduledExecutedKeys.add(execKey);

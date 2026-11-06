@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Clock,
   Power,
@@ -53,6 +53,111 @@ const INSTRUMENTS_LIST: { id: InstrumentId; name: string; symbol: string; catego
   { id: 'YM_F', name: 'Dow Futures (YM.F / MYM)', symbol: 'YM.F', category: 'FUTURES', defaultSlots: ['15:30', '17:00', '19:00'] },
   { id: 'GC_F', name: 'Gold Futures (GC.F / MGC)', symbol: 'GC.F', category: 'FUTURES', defaultSlots: ['09:30', '15:30', '17:00'] },
 ];
+
+const HOURS_24 = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'));
+const MINUTES_60 = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0'));
+
+interface Time24PickerProps {
+  value: string;
+  onChange: (val: string) => void;
+  onClear?: () => void;
+  disabled?: boolean;
+}
+
+const Time24Picker: React.FC<Time24PickerProps> = ({ value, onChange, onClear, disabled = false }) => {
+  const cleanVal = (value || '').trim();
+  const parts = cleanVal.split(':');
+  const hRaw = parts[0] || '';
+  const mRaw = parts[1] || '';
+  const currentHour = hRaw.length === 1 ? `0${hRaw}` : hRaw;
+  const currentMinute = mRaw.length === 1 ? `0${mRaw}` : mRaw;
+
+  const handleHourSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const h = e.target.value;
+    if (!h) {
+      onChange('');
+      return;
+    }
+    const m = currentMinute || '00';
+    onChange(`${h}:${m}`);
+  };
+
+  const handleMinuteSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const m = e.target.value;
+    const h = currentHour || '12';
+    onChange(`${h}:${m}`);
+  };
+
+  return (
+    <div
+      className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border transition shadow-sm ${
+        !disabled
+          ? 'bg-slate-900/95 border-purple-500/40 text-purple-200 focus-within:border-purple-400 focus-within:ring-2 focus-within:ring-purple-400/20'
+          : 'bg-slate-950/60 border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
+      }`}
+    >
+      {/* 24h Hour Select: 00 to 23 */}
+      <div className="flex flex-col items-center">
+        <select
+          value={currentHour}
+          onChange={handleHourSelect}
+          disabled={disabled}
+          className="bg-transparent text-sm font-mono font-black text-center focus:outline-none cursor-pointer text-white hover:text-purple-300 [&>option]:bg-slate-900 [&>option]:text-white py-0.5"
+          title="Selectează ora în format 24h (00 - 23)"
+        >
+          <option value="" disabled className="text-slate-500">
+            --
+          </option>
+          {HOURS_24.map((h) => (
+            <option key={h} value={h}>
+              {h}
+            </option>
+          ))}
+        </select>
+        <span className="text-[8px] font-bold text-slate-400 tracking-tighter uppercase -mt-1">
+          ora
+        </span>
+      </div>
+
+      <span className="font-mono font-black text-purple-400 text-sm select-none -mt-3.5">:</span>
+
+      {/* Minute Select: 00 to 59 */}
+      <div className="flex flex-col items-center">
+        <select
+          value={currentMinute}
+          onChange={handleMinuteSelect}
+          disabled={disabled || !currentHour}
+          className="bg-transparent text-sm font-mono font-bold text-center focus:outline-none cursor-pointer text-purple-200 hover:text-purple-300 [&>option]:bg-slate-900 [&>option]:text-white py-0.5"
+          title="Selectează minutul (00 - 59)"
+        >
+          <option value="" disabled className="text-slate-500">
+            --
+          </option>
+          {MINUTES_60.map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </select>
+        <span className="text-[8px] font-bold text-slate-400 tracking-tighter uppercase -mt-1">
+          min
+        </span>
+      </div>
+
+      {/* Clear button if has value */}
+      {cleanVal && !disabled && onClear && (
+        <button
+          type="button"
+          onClick={onClear}
+          className="ml-1 text-slate-500 hover:text-rose-400 text-sm font-bold transition px-1 -mt-2.5"
+          title="Șterge ora programată"
+        >
+          ×
+        </button>
+      )}
+    </div>
+  );
+};
 
 export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSectionProps> = ({
   user,
@@ -133,9 +238,42 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
   const [testTriggerLoading, setTestTriggerLoading] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
-  // Synchronize when user updates from server
+  // Safeguards to prevent incoming background polls from reverting live user edits
+  const isInitializedRef = useRef<boolean>(false);
+  const lastSavedJsonRef = useRef<string>('');
+
+  // Synchronize when user updates from server (guarded against overwriting local edits)
   useEffect(() => {
-    if (user?.tradeScheduler) {
+    if (!user?.tradeScheduler) return;
+
+    const incomingJson = JSON.stringify({
+      enabled: user.tradeScheduler.enabled,
+      s1: user.tradeScheduler.slot1Enabled,
+      s2: user.tradeScheduler.slot2Enabled,
+      s3: user.tradeScheduler.slot3Enabled,
+      items: user.tradeScheduler.items?.map((i) => ({
+        id: i.instrumentId,
+        en: i.enabled,
+        t1: i.timeSlot1,
+        t2: i.timeSlot2,
+        t3: i.timeSlot3,
+        acc: i.targetAccounts,
+      })),
+    });
+
+    // If incoming data matches what we just saved, only sync logs (never revert user items!)
+    if (lastSavedJsonRef.current && incomingJson === lastSavedJsonRef.current) {
+      if (Array.isArray(user.tradeScheduler.logs)) {
+        setLogs(user.tradeScheduler.logs);
+      }
+      return;
+    }
+
+    // Only hydrate state on initial mount, preventing background polling jumps
+    if (!isInitializedRef.current) {
+      isInitializedRef.current = true;
+      lastSavedJsonRef.current = incomingJson;
+
       if (typeof user.tradeScheduler.enabled === 'boolean') {
         setIsSchedulerMasterEnabled(user.tradeScheduler.enabled);
       }
@@ -169,9 +307,10 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
           })
         );
       }
-      if (Array.isArray(user.tradeScheduler.logs)) {
-        setLogs(user.tradeScheduler.logs);
-      }
+    }
+
+    if (Array.isArray(user.tradeScheduler.logs)) {
+      setLogs(user.tradeScheduler.logs);
     }
   }, [user?.tradeScheduler]);
 
@@ -193,6 +332,22 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
     const s1 = customSlotOverrides?.s1 !== undefined ? customSlotOverrides.s1 : slot1Enabled;
     const s2 = customSlotOverrides?.s2 !== undefined ? customSlotOverrides.s2 : slot2Enabled;
     const s3 = customSlotOverrides?.s3 !== undefined ? customSlotOverrides.s3 : slot3Enabled;
+
+    const savedSnapshot = JSON.stringify({
+      enabled: payloadMaster,
+      s1: s1,
+      s2: s2,
+      s3: s3,
+      items: payloadItems.map((i) => ({
+        id: i.instrumentId,
+        en: i.enabled,
+        t1: i.timeSlot1,
+        t2: i.timeSlot2,
+        t3: i.timeSlot3,
+        acc: i.targetAccounts,
+      })),
+    });
+    lastSavedJsonRef.current = savedSnapshot;
 
     try {
       if (authToken) {
@@ -278,22 +433,43 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
 
   // Toggle individual instrument row ON/OFF
   const handleToggleItem = (instrumentId: InstrumentId) => {
+    let nextMaster = isSchedulerMasterEnabled;
+    const targetItem = items.find((it) => it.instrumentId === instrumentId);
+    const willBeEnabled = targetItem ? !targetItem.enabled : false;
+
+    // Auto-enable master switch if activating an instrument while master is OFF
+    if (willBeEnabled && !isSchedulerMasterEnabled) {
+      nextMaster = true;
+      setIsSchedulerMasterEnabled(true);
+      showToast(
+        isEn
+          ? 'Master Scheduler activated automatically!'
+          : 'Planificatorul General a fost activat automat!'
+      );
+    }
+
     const updated = items.map((it) => {
       if (it.instrumentId === instrumentId) {
-        return { ...it, enabled: !it.enabled };
+        return { ...it, enabled: willBeEnabled };
       }
       return it;
     });
     setItems(updated);
-    handleSaveSchedule(isSchedulerMasterEnabled, updated);
+    handleSaveSchedule(nextMaster, updated);
   };
 
-  // Change slot time
+  // Change slot time (instant auto-save, never jumps back!)
   const handleTimeSlotChange = (
     instrumentId: InstrumentId,
     slotKey: 'timeSlot1' | 'timeSlot2' | 'timeSlot3',
     value: string
   ) => {
+    let nextMaster = isSchedulerMasterEnabled;
+    const targetItem = items.find((it) => it.instrumentId === instrumentId);
+    if (targetItem?.enabled && !isSchedulerMasterEnabled && value) {
+      nextMaster = true;
+      setIsSchedulerMasterEnabled(true);
+    }
     const updated = items.map((it) => {
       if (it.instrumentId === instrumentId) {
         return { ...it, [slotKey]: value };
@@ -301,6 +477,7 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
       return it;
     });
     setItems(updated);
+    handleSaveSchedule(nextMaster, updated);
   };
 
   // Clear a slot
@@ -315,6 +492,7 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
       return it;
     });
     setItems(updated);
+    handleSaveSchedule(isSchedulerMasterEnabled, updated);
   };
 
   // Set preset hour on slot
@@ -323,6 +501,12 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
     slotKey: 'timeSlot1' | 'timeSlot2' | 'timeSlot3',
     time: string
   ) => {
+    let nextMaster = isSchedulerMasterEnabled;
+    const targetItem = items.find((it) => it.instrumentId === instrumentId);
+    if (targetItem?.enabled && !isSchedulerMasterEnabled && time) {
+      nextMaster = true;
+      setIsSchedulerMasterEnabled(true);
+    }
     const updated = items.map((it) => {
       if (it.instrumentId === instrumentId) {
         return { ...it, [slotKey]: time };
@@ -330,6 +514,7 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
       return it;
     });
     setItems(updated);
+    handleSaveSchedule(nextMaster, updated);
   };
 
   // Change target accounts
@@ -353,6 +538,7 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
       return it;
     });
     setItems(updated);
+    handleSaveSchedule(isSchedulerMasterEnabled, updated);
   };
 
   // Master switch toggle
@@ -633,6 +819,46 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
         </div>
       </div>
 
+      {/* Prominent Master Status Banner */}
+      {!isSchedulerMasterEnabled ? (
+        <div className="p-4 rounded-2xl border border-amber-500/40 bg-amber-500/10 backdrop-blur-md flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-lg">
+          <div className="flex items-start sm:items-center gap-3 text-amber-300">
+            <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 shrink-0">
+              <Power className="w-5 h-5" />
+            </div>
+            <div className="text-xs sm:text-sm">
+              <span className="font-extrabold uppercase tracking-wide text-amber-200 block sm:inline mr-1">
+                {isEn ? '⚠️ Master Scheduler is Paused / OFF:' : '⚠️ Întrerupătorul General este OPRIT:'}
+              </span>
+              <span className="text-amber-300/90 leading-relaxed">
+                {isEn
+                  ? 'Configured hours will NOT generate trades until you activate the Master Scheduler switch above.'
+                  : 'Niciun trade automat nu va fi generat sau trimis către MT5 / NinjaTrader până când nu activați comutatorul general de sus («Activare Generală»).'}
+              </span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleToggleMaster}
+            className="shrink-0 px-4 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-extrabold uppercase tracking-wider transition shadow-lg shadow-purple-600/30 flex items-center gap-1.5"
+          >
+            <Power className="w-3.5 h-3.5" />
+            <span>{isEn ? 'Activate Master Scheduler Now' : 'Activează Acum Planificatorul General'}</span>
+          </button>
+        </div>
+      ) : (
+        <div className="p-3.5 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 backdrop-blur-md flex items-center gap-3 text-emerald-300 text-xs sm:text-sm shadow-md">
+          <div className="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400 shrink-0">
+            <CheckCircle2 className="w-4 h-4" />
+          </div>
+          <span className="font-medium">
+            {isEn
+              ? 'Master Scheduler is ACTIVE. Signals will automatically generate at your configured hours and dispatch directly to your MT5 & NinjaTrader EAs.'
+              : 'Planificatorul Automat este ACTIVAT. Semnalele vor fi generate automat la orele stabilite și trimise instant către conturile MT5 și NinjaTrader conectate.'}
+          </span>
+        </div>
+      )}
+
       {/* Main Scheduling Table Card */}
       <div className="rounded-2xl border border-slate-800 bg-slate-900/90 backdrop-blur-md shadow-xl overflow-hidden">
         <div className="p-4 md:p-5 border-b border-white/5 flex items-center justify-between bg-slate-950/60">
@@ -847,29 +1073,12 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
                     {/* Column 3: Hour 1 (Slot 1) */}
                     <td className={`py-4 px-3 align-middle text-center transition-opacity ${!slot1Enabled ? 'opacity-40 bg-black/10' : ''}`}>
                       <div className="flex flex-col items-center gap-1.5">
-                        <div className="relative inline-flex items-center">
-                          <input
-                            type="time"
-                            value={row.timeSlot1 || ''}
-                            onChange={(e) => handleTimeSlotChange(row.instrumentId, 'timeSlot1', e.target.value)}
-                            disabled={!isEnabled || !slot1Enabled}
-                            className={`w-32 px-3 py-1.5 rounded-lg text-sm font-mono font-bold text-center border focus:outline-none transition ${
-                              isEnabled && slot1Enabled
-                                ? 'bg-slate-900 border-purple-500/40 text-purple-200 focus:border-purple-400 focus:ring-1 focus:ring-purple-400'
-                                : 'bg-slate-950/60 border-slate-800 text-slate-600 cursor-not-allowed'
-                            }`}
-                          />
-                          {row.timeSlot1 && isEnabled && slot1Enabled && (
-                            <button
-                              type="button"
-                              onClick={() => handleClearSlot(row.instrumentId, 'timeSlot1')}
-                              className="absolute right-2 text-slate-500 hover:text-rose-400 transition"
-                              title="Șterge ora"
-                            >
-                              ×
-                            </button>
-                          )}
-                        </div>
+                        <Time24Picker
+                          value={row.timeSlot1 || ''}
+                          onChange={(val) => handleTimeSlotChange(row.instrumentId, 'timeSlot1', val)}
+                          onClear={() => handleClearSlot(row.instrumentId, 'timeSlot1')}
+                          disabled={!isEnabled || !slot1Enabled}
+                        />
                         {!slot1Enabled ? (
                           <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">
                             {isEn ? 'Interval Paused' : 'Interval Oprit'}
@@ -898,29 +1107,12 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
                     {/* Column 4: Hour 2 (Slot 2) */}
                     <td className={`py-4 px-3 align-middle text-center transition-opacity ${!slot2Enabled ? 'opacity-40 bg-black/10' : ''}`}>
                       <div className="flex flex-col items-center gap-1.5">
-                        <div className="relative inline-flex items-center">
-                          <input
-                            type="time"
-                            value={row.timeSlot2 || ''}
-                            onChange={(e) => handleTimeSlotChange(row.instrumentId, 'timeSlot2', e.target.value)}
-                            disabled={!isEnabled || !slot2Enabled}
-                            className={`w-32 px-3 py-1.5 rounded-lg text-sm font-mono font-bold text-center border focus:outline-none transition ${
-                              isEnabled && slot2Enabled
-                                ? 'bg-slate-900 border-purple-500/40 text-purple-200 focus:border-purple-400 focus:ring-1 focus:ring-purple-400'
-                                : 'bg-slate-950/60 border-slate-800 text-slate-600 cursor-not-allowed'
-                            }`}
-                          />
-                          {row.timeSlot2 && isEnabled && slot2Enabled && (
-                            <button
-                              type="button"
-                              onClick={() => handleClearSlot(row.instrumentId, 'timeSlot2')}
-                              className="absolute right-2 text-slate-500 hover:text-rose-400 transition"
-                              title="Șterge ora"
-                            >
-                              ×
-                            </button>
-                          )}
-                        </div>
+                        <Time24Picker
+                          value={row.timeSlot2 || ''}
+                          onChange={(val) => handleTimeSlotChange(row.instrumentId, 'timeSlot2', val)}
+                          onClear={() => handleClearSlot(row.instrumentId, 'timeSlot2')}
+                          disabled={!isEnabled || !slot2Enabled}
+                        />
                         {!slot2Enabled ? (
                           <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">
                             {isEn ? 'Interval Paused' : 'Interval Oprit'}
@@ -936,10 +1128,10 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
                             </button>
                             <button
                               type="button"
-                              onClick={() => handleApplyPreset(row.instrumentId, 'timeSlot2', '17:00')}
-                              className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 hover:text-white transition"
+                              onClick={() => handleApplyPreset(row.instrumentId, 'timeSlot2', '17:50')}
+                              className="text-[10px] px-1.5 py-0.5 rounded bg-purple-900/60 text-purple-300 hover:text-white transition font-bold"
                             >
-                              17:00
+                              17:50
                             </button>
                           </div>
                         ) : null}
@@ -949,29 +1141,12 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
                     {/* Column 5: Hour 3 (Slot 3) */}
                     <td className={`py-4 px-3 align-middle text-center transition-opacity ${!slot3Enabled ? 'opacity-40 bg-black/10' : ''}`}>
                       <div className="flex flex-col items-center gap-1.5">
-                        <div className="relative inline-flex items-center">
-                          <input
-                            type="time"
-                            value={row.timeSlot3 || ''}
-                            onChange={(e) => handleTimeSlotChange(row.instrumentId, 'timeSlot3', e.target.value)}
-                            disabled={!isEnabled || !slot3Enabled}
-                            className={`w-32 px-3 py-1.5 rounded-lg text-sm font-mono font-bold text-center border focus:outline-none transition ${
-                              isEnabled && slot3Enabled
-                                ? 'bg-slate-900 border-purple-500/40 text-purple-200 focus:border-purple-400 focus:ring-1 focus:ring-purple-400'
-                                : 'bg-slate-950/60 border-slate-800 text-slate-600 cursor-not-allowed'
-                            }`}
-                          />
-                          {row.timeSlot3 && isEnabled && slot3Enabled && (
-                            <button
-                              type="button"
-                              onClick={() => handleClearSlot(row.instrumentId, 'timeSlot3')}
-                              className="absolute right-2 text-slate-500 hover:text-rose-400 transition"
-                              title="Șterge ora"
-                            >
-                              ×
-                            </button>
-                          )}
-                        </div>
+                        <Time24Picker
+                          value={row.timeSlot3 || ''}
+                          onChange={(val) => handleTimeSlotChange(row.instrumentId, 'timeSlot3', val)}
+                          onClear={() => handleClearSlot(row.instrumentId, 'timeSlot3')}
+                          disabled={!isEnabled || !slot3Enabled}
+                        />
                         {!slot3Enabled ? (
                           <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">
                             {isEn ? 'Interval Paused' : 'Interval Oprit'}
@@ -980,10 +1155,10 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
                           <div className="flex items-center gap-1">
                             <button
                               type="button"
-                              onClick={() => handleApplyPreset(row.instrumentId, 'timeSlot3', '17:00')}
-                              className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 hover:text-white transition"
+                              onClick={() => handleApplyPreset(row.instrumentId, 'timeSlot3', '17:50')}
+                              className="text-[10px] px-1.5 py-0.5 rounded bg-purple-900/60 text-purple-300 hover:text-white transition font-bold"
                             >
-                              17:00
+                              17:50
                             </button>
                             <button
                               type="button"
