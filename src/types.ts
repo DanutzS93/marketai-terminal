@@ -130,6 +130,8 @@ export interface TradingSignal {
   liveProfit?: number;
   exitPrice?: number;
   closedAt?: string;
+  isManualClose?: boolean;
+  closedManually?: boolean;
   accountSource?: 'MT5' | 'NINJATRADER' | 'SIM' | 'AUTO';
   cancelReason?: string;
   cancelReasonRo?: string;
@@ -321,6 +323,8 @@ export interface TradeJournalEntry {
   timeframe?: string;
   linkedSignalId?: string;
   isManual?: boolean;
+  isManualClose?: boolean;
+  closedManually?: boolean;
   generatedAt?: string; // Exact ISO timestamp when trade was generated / opened
   entryDate?: string; // Date of generation / entry "YYYY-MM-DD"
   entryTime?: string; // Hour of generation / entry "HH:mm"

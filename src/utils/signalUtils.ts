@@ -896,6 +896,25 @@ export function getOutcomeBadgeDetails(
         badgeClass: 'bg-indigo-600 text-white border-indigo-700 font-bold shadow-xs',
         icon: '💎',
       };
+    case 'MANUAL_PROFIT':
+      return {
+        label: lang === 'ro' ? 'Închis Manual (Profit) ✋' : 'Closed Manually (Profit) ✋',
+        badgeClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 font-bold',
+        icon: '✋',
+      };
+    case 'MANUAL_LOSS':
+      return {
+        label: lang === 'ro' ? 'Închis Manual (Pierdere) ✋' : 'Closed Manually (Loss) ✋',
+        badgeClass: 'bg-rose-500/20 text-rose-300 border-rose-500/40 font-bold',
+        icon: '✋',
+      };
+    case 'MANUAL_BE':
+    case 'MANUAL_CLOSED':
+      return {
+        label: lang === 'ro' ? 'Închis Manual din MT5 ✋' : 'Closed Manually in MT5 ✋',
+        badgeClass: 'bg-purple-500/20 text-purple-300 border-purple-500/40 font-bold',
+        icon: '✋',
+      };
     case 'SL_HIT':
       return {
         label: lang === 'ro' ? 'SL Atins (Trade Închis) 🔴' : 'Stop Loss Hit (Trade Closed) 🔴',

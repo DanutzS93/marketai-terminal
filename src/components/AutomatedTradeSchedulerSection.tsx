@@ -438,6 +438,48 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
     }
   };
 
+  // Permanently clear scheduled execution logs from server and state
+  const handleClearLogs = async () => {
+    setLogs([]);
+    try {
+      if (authToken) {
+        const res = await fetch('/api/user/trade-schedule/logs', {
+          method: 'DELETE',
+          headers: {
+            Authorization: `Bearer ${authToken}`,
+          },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.user && onUpdateUser) {
+            onUpdateUser(data.user);
+          }
+        }
+      }
+
+      if (user) {
+        const updatedUser: UserProfile = {
+          ...user,
+          tradeScheduler: {
+            ...(user.tradeScheduler || {
+              enabled: isSchedulerMasterEnabled,
+              timezone: 'Europe/Bucharest',
+              items,
+            }),
+            logs: [],
+          },
+        };
+        try {
+          localStorage.setItem('market_ai_user_profile', JSON.stringify(updatedUser));
+        } catch (_) {}
+        if (onUpdateUser) onUpdateUser(updatedUser);
+      }
+      showToast(isEn ? 'Execution logs cleared permanently!' : 'Jurnalul de execuții a fost golit definitiv!');
+    } catch (e) {
+      console.warn('Failed to clear logs on server:', e);
+    }
+  };
+
   // Count active instruments
   const activeCount = useMemo(() => items.filter((i) => i.enabled).length, [items]);
 
@@ -1045,7 +1087,7 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
           {logs.length > 0 && (
             <button
               type="button"
-              onClick={() => setLogs([])}
+              onClick={handleClearLogs}
               className="text-xs text-slate-400 hover:text-rose-400 flex items-center gap-1 transition"
             >
               <Trash2 className="w-3.5 h-3.5" />

@@ -1176,10 +1176,11 @@ string DescribeWebRequestError(int err)
 //| Calculate exact cumulative realized P&L for a position ticket    |
 //| Sums profit, swap, commission across all entry and exit deals    |
 //+------------------------------------------------------------------+
-double GetRealizedProfitForPosition(ulong posId, double &lastExitPrice)
+double GetRealizedProfitForPosition(ulong posId, double &lastExitPrice, bool &isManualClose)
 {
    double totalProfit = 0.0;
    lastExitPrice = 0.0;
+   isManualClose = false;
    
    // HistorySelectByPosition loads only this position's deals (much faster than full history)
    if(HistorySelectByPosition((long)posId))
@@ -1201,6 +1202,15 @@ double GetRealizedProfitForPosition(ulong posId, double &lastExitPrice)
                   totalProfit += HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
                   totalProfit += HistoryDealGetDouble(dealTicket, DEAL_FEE);
                   lastExitPrice = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
+
+                  long reason = HistoryDealGetInteger(dealTicket, DEAL_REASON);
+                  // DEAL_REASON_CLIENT = 0, DEAL_REASON_MOBILE = 1, DEAL_REASON_WEB = 2
+                  // DEAL_REASON_SL = 4, DEAL_REASON_TP = 5
+                  // If closing deal is not triggered by SL (4) and not by TP (5), it is closed manually
+                  if(reason == 0 || reason == 1 || reason == 2 || (reason != 4 && reason != 5))
+                  {
+                     isManualClose = true;
+                  }
                }
                else if(entryType == DEAL_ENTRY_IN)
                {
@@ -1214,10 +1224,17 @@ double GetRealizedProfitForPosition(ulong posId, double &lastExitPrice)
    return NormalizeDouble(totalProfit, 2);
 }
 
+// Backward-compatible overload
+double GetRealizedProfitForPosition(ulong posId, double &lastExitPrice)
+{
+   bool dummyManual = false;
+   return GetRealizedProfitForPosition(posId, lastExitPrice, dummyManual);
+}
+
 //+------------------------------------------------------------------+
 //| Send trade execution, update & realized P&L to MarketAI Web API  |
 //+------------------------------------------------------------------+
-bool SendTradeUpdate(string signalId, string status, string outcome, string milestone, double pnl = 0.0, double exitPrice = 0.0)
+bool SendTradeUpdate(string signalId, string status, string outcome, string milestone, double pnl = 0.0, double exitPrice = 0.0, bool isManualClose = false)
 {
    if(signalId == "") return true;
    
@@ -1247,6 +1264,7 @@ bool SendTradeUpdate(string signalId, string status, string outcome, string mile
                     "\\"status\\":\\"" + status + "\\"," +
                     "\\"outcomeStatus\\":\\"" + outcome + "\\"," +
                     "\\"milestone\\":\\"" + milestone + "\\"," +
+                    "\\"isManualClose\\":" + (isManualClose ? "true" : "false") + "," +
                     "\\"pnl\\":" + DoubleToString(pnl, 2) + "," +
                     "\\"profit\\":" + DoubleToString(pnl, 2) + exitPriceJson + "," +
                     "\\"accountNumber\\":\\"" + IntegerToString(login) + "\\"," +
@@ -1387,17 +1405,29 @@ void CheckAndReportTrackedTrades()
       {
          // Position is closed in MT5!
          double exitPrice = 0.0;
-         double realPnl = GetRealizedProfitForPosition(posId, exitPrice);
+         bool isManualClose = false;
+         double realPnl = GetRealizedProfitForPosition(posId, exitPrice, isManualClose);
          trackedTrades[i].finalPnl = realPnl;
          
-         string outcome = (realPnl > 0.01) ? "TP1_HIT" : ((realPnl < -0.01) ? "SL_HIT" : "BREAKEVEN");
-         if(trackedTrades[i].tp2Hit && realPnl > 0.01) outcome = "TP2_HIT";
+         string outcome = "";
+         string milestone = "";
+         if(isManualClose)
+         {
+            outcome = (realPnl > 0.01) ? "MANUAL_PROFIT" : ((realPnl < -0.01) ? "MANUAL_LOSS" : "MANUAL_BE");
+            milestone = "MANUAL_CLOSE";
+         }
+         else
+         {
+            outcome = (realPnl > 0.01) ? "TP1_HIT" : ((realPnl < -0.01) ? "SL_HIT" : "BREAKEVEN");
+            if(trackedTrades[i].tp2Hit && realPnl > 0.01) outcome = "TP2_HIT";
+            milestone = "POSITION_CLOSED";
+         }
          
          // Mark closed only after the server confirmed; on HTTP 1003 / network error retry on next timer tick
-         if(!SendTradeUpdate(trackedTrades[i].signalId, "CLOSED", outcome, "POSITION_CLOSED", realPnl, exitPrice))
+         if(!SendTradeUpdate(trackedTrades[i].signalId, "CLOSED", outcome, milestone, realPnl, exitPrice, isManualClose))
             continue;
          trackedTrades[i].isClosed = true;
-         Print("[MarketAI] Trade closed in MT5 for Signal ", trackedTrades[i].signalId, " (Pos #", posId, ")! Realized PnL: $", DoubleToString(realPnl, 2), " Exit Price: ", exitPrice);
+         Print("[MarketAI] Trade closed in MT5 for Signal ", trackedTrades[i].signalId, " (Pos #", posId, ") [Manual: ", isManualClose ? "YES" : "NO", "]! Realized PnL: $", DoubleToString(realPnl, 2), " Exit Price: ", exitPrice);
          
          if(activeSignalId == trackedTrades[i].signalId)
          {
@@ -1478,9 +1508,21 @@ void SyncClosedHistoricalTrades()
       if(!isOpen)
       {
          double exitPrice = 0.0;
-         double realPnl = GetRealizedProfitForPosition((ulong)posId, exitPrice);
-         string outcome = (realPnl > 0.01) ? "TP1_HIT" : ((realPnl < -0.01) ? "SL_HIT" : "BREAKEVEN");
-         done = SendTradeUpdate(candSig[c], "CLOSED", outcome, "HISTORICAL_SYNC", realPnl, exitPrice);
+         bool isManualClose = false;
+         double realPnl = GetRealizedProfitForPosition((ulong)posId, exitPrice, isManualClose);
+         string outcome = "";
+         string milestone = "";
+         if(isManualClose)
+         {
+            outcome = (realPnl > 0.01) ? "MANUAL_PROFIT" : ((realPnl < -0.01) ? "MANUAL_LOSS" : "MANUAL_BE");
+            milestone = "MANUAL_CLOSE";
+         }
+         else
+         {
+            outcome = (realPnl > 0.01) ? "TP1_HIT" : ((realPnl < -0.01) ? "SL_HIT" : "BREAKEVEN");
+            milestone = "HISTORICAL_SYNC";
+         }
+         done = SendTradeUpdate(candSig[c], "CLOSED", outcome, milestone, realPnl, exitPrice, isManualClose);
       }
 
       if(done)
