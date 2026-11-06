@@ -384,26 +384,24 @@ export const DayTradesModal: React.FC<DayTradesModalProps> = ({
                       )}
 
                       {trade.isManual && (
-                        <>
-                          <button
-                            onClick={() => onEditTrade(trade)}
-                            className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white transition flex items-center gap-1 cursor-pointer border border-white/10 font-mono"
-                            title={lang === 'ro' ? 'Editează' : 'Edit'}
-                          >
-                            <Edit2 className="w-3 h-3" />
-                            <span>{lang === 'ro' ? 'Editează' : 'Edit'}</span>
-                          </button>
-
-                          <button
-                            onClick={() => onDeleteTrade(trade.id)}
-                            className="px-2 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 hover:text-white transition flex items-center gap-1 cursor-pointer border border-rose-500/30 font-mono"
-                            title={lang === 'ro' ? 'Șterge' : 'Delete'}
-                          >
-                            <Trash2 className="w-3 h-3" />
-                            <span>{lang === 'ro' ? 'Șterge' : 'Delete'}</span>
-                          </button>
-                        </>
+                        <button
+                          onClick={() => onEditTrade(trade)}
+                          className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white transition flex items-center gap-1 cursor-pointer border border-white/10 font-mono"
+                          title={lang === 'ro' ? 'Editează' : 'Edit'}
+                        >
+                          <Edit2 className="w-3 h-3" />
+                          <span>{lang === 'ro' ? 'Editează' : 'Edit'}</span>
+                        </button>
                       )}
+
+                      <button
+                        onClick={() => onDeleteTrade(trade.id)}
+                        className="px-2 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 hover:text-white transition flex items-center gap-1 cursor-pointer border border-rose-500/30 font-mono"
+                        title={lang === 'ro' ? 'Șterge definitiv' : 'Delete permanently'}
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        <span>{lang === 'ro' ? 'Șterge' : 'Delete'}</span>
+                      </button>
                     </div>
                   </div>
                 </div>

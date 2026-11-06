@@ -84,6 +84,10 @@ struct TrackedTrade {
 };
 TrackedTrade trackedTrades[];
 
+// Forward declarations
+bool SendTradeUpdate(string signalId, string status, string outcome, string milestone, double pnl = 0.0, double exitPrice = 0.0, bool isManualClose = false);
+void UpdateChartHUD();
+
 int FindTrackedTradeIndex(ulong posId, ulong posTicket)
 {
    for(int k = 0; k < ArraySize(trackedTrades); k++)
@@ -888,6 +892,58 @@ void OnDeinit(const int reason)
    Print("MarketAI MT5 Bridge v", "${MT5_EA_VERSION}", " stopped.");
 }
 
+string g_reportedCancelledSigIds[];
+
+bool IsSignalCancelReported(string sId)
+{
+   if(sId == "") return false;
+   for(int k = 0; k < ArraySize(g_reportedCancelledSigIds); k++)
+   {
+      if(g_reportedCancelledSigIds[k] == sId) return true;
+   }
+   return false;
+}
+
+void MarkSignalCancelReported(string sId)
+{
+   if(sId == "" || IsSignalCancelReported(sId)) return;
+   int sz = ArraySize(g_reportedCancelledSigIds);
+   ArrayResize(g_reportedCancelledSigIds, sz + 1);
+   g_reportedCancelledSigIds[sz] = sId;
+}
+
+void CheckCancelledOrdersInHistory()
+{
+   static datetime lastHistOrderCheck = 0;
+   datetime now = TimeCurrent();
+   if(now - lastHistOrderCheck < 3) return; // Check history every 3s
+   lastHistOrderCheck = now;
+
+   if(!HistorySelect(now - 86400, now)) return;
+
+   int totalHist = HistoryOrdersTotal();
+   for(int i = totalHist - 1; i >= 0 && i >= totalHist - 60; i--)
+   {
+      ulong ticket = HistoryOrderGetTicket(i);
+      if(ticket > 0)
+      {
+         long state = HistoryOrderGetInteger(ticket, ORDER_STATE);
+         if(state == ORDER_STATE_CANCELED || state == ORDER_STATE_EXPIRED || state == ORDER_STATE_REJECTED)
+         {
+            string comm = HistoryOrderGetString(ticket, ORDER_COMMENT);
+            string sigId = ExtractSignalIdFromText(comm);
+            if(sigId != "" && !IsSignalCancelReported(sigId))
+            {
+               MarkSignalCancelReported(sigId);
+               Print("[MarketAI] Ordin pending anulat/sters din MT5 identificat in istoric: #", ticket, " (Signal: ", sigId, "). Se trimite anularea spre platforma...");
+               SendTradeUpdate(sigId, "CANCELLED", "CANCELLED", "MANUAL_CANCEL", 0.0, 0.0, true);
+               g_pendingTradeSync = true;
+            }
+         }
+      }
+   }
+}
+
 //+------------------------------------------------------------------+
 //| TradeTransaction function: triggers instantly on any deal/fill   |
 //+------------------------------------------------------------------+
@@ -900,6 +956,27 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
       // Non-blocking asynchronous notification: set flag so OnTimer flushes sync without freezing main trading thread
       g_pendingTradeSync = true;
       UpdateChartHUD();
+   }
+   else if(trans.type == TRADE_TRANSACTION_ORDER_DELETE)
+   {
+      // A pending order was deleted or cancelled in MT5 (e.g. user clicked X on a Buy Limit / Sell Limit)
+      if(HistoryOrderSelect(trans.order))
+      {
+         long ordState = HistoryOrderGetInteger(trans.order, ORDER_STATE);
+         if(ordState == ORDER_STATE_CANCELED || ordState == ORDER_STATE_EXPIRED || ordState == ORDER_STATE_REJECTED)
+         {
+            string comm = HistoryOrderGetString(trans.order, ORDER_COMMENT);
+            string sigId = ExtractSignalIdFromText(comm);
+            if(sigId != "")
+            {
+               MarkSignalCancelReported(sigId);
+               Print("[MarketAI] Ordin pending #", trans.order, " (Signal: ", sigId, ") a fost anulat/sters direct din MT5! Notificare imediata catre platforma...");
+               SendTradeUpdate(sigId, "CANCELLED", "CANCELLED", "MANUAL_CANCEL", 0.0, 0.0, true);
+               g_pendingTradeSync = true;
+               UpdateChartHUD();
+            }
+         }
+      }
    }
 }
 
@@ -937,12 +1014,14 @@ void OnTimer()
    {
       g_pendingTradeSync = false;
       CheckAndReportTrackedTrades();
+      CheckCancelledOrdersInHistory();
       SendAccountSync();
    }
 
    FetchAndExecuteSignals();
    ManageActivePositions();
    CheckAndReportTrackedTrades();
+   CheckCancelledOrdersInHistory();
 
    // Sync historical closed trades periodically every ~3 minutes (every 90 timer ticks = 180s when interval=2)
    if(syncCounter % 90 == 0)
@@ -1122,7 +1201,45 @@ void SendAccountSync()
    }
    posJson += "]";
 
-   string payload = "{\\"accountNumber\\":\\"" + IntegerToString(login) + "\\",\\"accountServer\\":\\"" + serverName + "\\",\\"accountCurrency\\":\\"" + currency + "\\",\\"accountCompany\\":\\"" + company + "\\",\\"accountBalance\\":" + DoubleToString(balance, 2) + ",\\"equity\\":" + DoubleToString(equity, 2) + ",\\"positions\\":" + posJson + "}";
+   // Build JSON array of all pending orders in MT5 (Buy Limit, Sell Limit, Buy Stop, Sell Stop)
+   string ordJson = "[";
+   int ordCount = 0;
+   for(int o = OrdersTotal() - 1; o >= 0; o--)
+   {
+      ulong ot = OrderGetTicket(o);
+      if(ot > 0)
+      {
+         string ocomm = OrderGetString(ORDER_COMMENT);
+         string osigId = ExtractSignalIdFromText(ocomm);
+         string osym = OrderGetString(ORDER_SYMBOL);
+         long oType = OrderGetInteger(ORDER_TYPE);
+         double oPrice = OrderGetDouble(ORDER_PRICE_OPEN);
+         double oVol = OrderGetDouble(ORDER_VOLUME_INITIAL);
+         int odigits = (int)SymbolInfoInteger(osym, SYMBOL_DIGITS);
+         if(odigits <= 0) odigits = 2;
+
+         string typeStr = "ORDER";
+         if(oType == ORDER_TYPE_BUY_LIMIT) typeStr = "BUY_LIMIT";
+         else if(oType == ORDER_TYPE_SELL_LIMIT) typeStr = "SELL_LIMIT";
+         else if(oType == ORDER_TYPE_BUY_STOP) typeStr = "BUY_STOP";
+         else if(oType == ORDER_TYPE_SELL_STOP) typeStr = "SELL_STOP";
+
+         if(ordCount > 0) ordJson += ",";
+         ordJson += "{\\"ticket\\":" + IntegerToString(ot) +
+                    ",\\"symbol\\":\\"" + osym + "\\"" +
+                    ",\\"type\\":\\"" + typeStr + "\\"" +
+                    ",\\"volume\\":" + DoubleToString(oVol, 2) +
+                    ",\\"openPrice\\":" + DoubleToString(oPrice, odigits) +
+                    ",\\"currentPrice\\":" + DoubleToString(oPrice, odigits) +
+                    ",\\"profit\\":0.0" +
+                    ",\\"isPending\\":true" +
+                    ",\\"signalId\\":\\"" + osigId + "\\"}";
+         ordCount++;
+      }
+   }
+   ordJson += "]";
+
+   string payload = "{\\"accountNumber\\":\\"" + IntegerToString(login) + "\\",\\"accountServer\\":\\"" + serverName + "\\",\\"accountCurrency\\":\\"" + currency + "\\",\\"accountCompany\\":\\"" + company + "\\",\\"accountBalance\\":" + DoubleToString(balance, 2) + ",\\"equity\\":" + DoubleToString(equity, 2) + ",\\"positions\\":" + posJson + ",\\"orders\\":" + ordJson + "}";
    int copied = StringToCharArray(payload, data, 0, WHOLE_ARRAY, CP_UTF8);
    if(copied > 0 && data[copied - 1] == 0) ArrayResize(data, copied - 1);
    ArrayResize(result, 0);

@@ -260,7 +260,10 @@ export interface UserProfile {
   };
   signals?: TradingSignal[];
   tradeJournal?: TradeJournalEntry[];
+  deletedSignalIds?: string[];
+  deletedJournalTradeIds?: string[];
   mt5OpenPositions?: any[];
+  mt5OpenOrders?: any[];
   bridgeAccounts?: BridgeAccount[];
   tradeScheduler?: TradeSchedulerConfig;
 }

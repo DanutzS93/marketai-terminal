@@ -75,6 +75,7 @@ export interface StoredUser {
   signals?: any[];
   tradeJournal?: any[];
   deletedSignalIds?: string[];
+  deletedJournalTradeIds?: string[];
   customRules?: any[];
   accountBalance?: number;
   equity?: number;
@@ -92,6 +93,7 @@ export interface StoredUser {
   ninjaTraderApiKey?: string;
   riskSettings?: any;
   mt5OpenPositions?: any[];
+  mt5OpenOrders?: any[];
   apiKeys?: {
     geminiApiKey?: string;
     lseKey?: string;
@@ -169,7 +171,14 @@ function sanitizeUserObj(user: StoredUser): StoredUser {
     deletedIds = deletedIds.slice(-150);
   }
 
-  // Filter out any demo, dummy, or sample trades from the trade journal
+  // Cap deletedJournalTradeIds up to 500 to keep DB compact & permanently track deletions
+  let deletedJournalIds = user.deletedJournalTradeIds || [];
+  if (Array.isArray(deletedJournalIds) && deletedJournalIds.length > 500) {
+    deletedJournalIds = deletedJournalIds.slice(-500);
+  }
+  const deletedJournalSet = new Set(deletedJournalIds);
+
+  // Filter out any demo, dummy, or sample trades, as well as permanently deleted trades from the trade journal
   const cleanTradeJournal = (user.tradeJournal || []).filter(
     (t: any) =>
       t &&
@@ -177,7 +186,10 @@ function sanitizeUserObj(user: StoredUser): StoredUser {
       !t.id.startsWith('sample_trade') &&
       !t.id.startsWith('dummy_') &&
       !t.id.startsWith('demo_') &&
-      !String(t.id).includes('sample')
+      !String(t.id).includes('sample') &&
+      !deletedJournalSet.has(t.id) &&
+      (!t.linkedSignalId || !deletedJournalSet.has(t.linkedSignalId)) &&
+      !deletedJournalSet.has(`sig_journal_${t.id}`)
   );
 
   let tokens = Array.isArray(user.tokens)
@@ -200,6 +212,7 @@ function sanitizeUserObj(user: StoredUser): StoredUser {
     tokens,
     signals: cleanSignals || [],
     deletedSignalIds: deletedIds,
+    deletedJournalTradeIds: deletedJournalIds,
     tradeJournal: cleanTradeJournal,
   };
 }

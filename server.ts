@@ -524,7 +524,14 @@ function formatUserForClient(u: StoredUser) {
       leverage: 100,
       isCustomized: false,
     },
-    tradeJournal: (u.tradeJournal || []).filter((t: any) => !isDemoOrSampleTrade(t)),
+    tradeJournal: (u.tradeJournal || []).filter((t: any) => {
+      if (!t || isDemoOrSampleTrade(t)) return false;
+      const delSet = new Set(u.deletedJournalTradeIds || []);
+      if (delSet.has(t.id) || (t.linkedSignalId && delSet.has(t.linkedSignalId)) || delSet.has(`sig_journal_${t.id}`)) return false;
+      return true;
+    }),
+    deletedSignalIds: u.deletedSignalIds || [],
+    deletedJournalTradeIds: u.deletedJournalTradeIds || [],
     mt5OpenPositions: u.mt5OpenPositions || [],
     signals: u.signals || [],
     bridgeAccounts: ensureUserBridgeAccounts(u),
@@ -836,7 +843,13 @@ app.get('/api/user/sync-data', (req, res) => {
     signals: cleanSignals,
     deletedSignalIds: deletedIds,
     customRules: user.customRules || [],
-    tradeJournal: (user.tradeJournal || []).filter((t: any) => !isDemoOrSampleTrade(t)),
+    tradeJournal: (user.tradeJournal || []).filter((t: any) => {
+      if (!t || isDemoOrSampleTrade(t)) return false;
+      const delSet = new Set(user.deletedJournalTradeIds || []);
+      if (delSet.has(t.id) || (t.linkedSignalId && delSet.has(t.linkedSignalId)) || delSet.has(`sig_journal_${t.id}`)) return false;
+      return true;
+    }),
+    deletedJournalTradeIds: user.deletedJournalTradeIds || [],
     apiKeys: userApiKeys,
     mt5ApiKey: mt5Key,
     ninjaTraderApiKey: nt8Key,
@@ -849,7 +862,7 @@ app.post('/api/user/sync-data', async (req, res) => {
   const token = authHeader?.replace('Bearer ', '').trim();
   if (!token) return res.status(401).json({ error: 'Neautorizat' });
 
-  const { signals, customRules, apiKeys, deletedSignalIds, riskSettings, leverage, accountBalance, tradeJournal } = req.body;
+  const { signals, customRules, apiKeys, deletedSignalIds, deletedJournalTradeIds, riskSettings, leverage, accountBalance, tradeJournal } = req.body;
   const users = loadUsersDb();
   const user = findUserByAuthToken(token, users);
   if (!user) return res.status(401).json({ error: 'Sesiune nevalidă.' });
@@ -858,6 +871,12 @@ app.post('/api/user/sync-data', async (req, res) => {
   if (Array.isArray(deletedSignalIds)) {
     const combinedDeleted = new Set([...user.deletedSignalIds, ...deletedSignalIds]);
     user.deletedSignalIds = Array.from(combinedDeleted);
+  }
+
+  if (!user.deletedJournalTradeIds) user.deletedJournalTradeIds = [];
+  if (Array.isArray(deletedJournalTradeIds)) {
+    const combinedDeletedJournal = new Set([...user.deletedJournalTradeIds, ...deletedJournalTradeIds]);
+    user.deletedJournalTradeIds = Array.from(combinedDeletedJournal);
   }
 
   if (Array.isArray(signals)) {
@@ -905,7 +924,12 @@ app.post('/api/user/sync-data', async (req, res) => {
 
   if (Array.isArray(customRules)) user.customRules = customRules;
   if (Array.isArray(tradeJournal)) {
-    user.tradeJournal = tradeJournal.filter((t: any) => !isDemoOrSampleTrade(t));
+    const delSet = new Set(user.deletedJournalTradeIds || []);
+    user.tradeJournal = tradeJournal.filter((t: any) => {
+      if (!t || isDemoOrSampleTrade(t)) return false;
+      if (delSet.has(t.id) || (t.linkedSignalId && delSet.has(t.linkedSignalId)) || delSet.has(`sig_journal_${t.id}`)) return false;
+      return true;
+    });
   }
   
   // Ensure user MT5 & NinjaTrader API keys are permanently preserved and never wiped
@@ -958,11 +982,97 @@ app.post('/api/user/delete-signal', async (req, res) => {
     user.deletedSignalIds.push(signalId);
   }
 
+  if (!user.deletedJournalTradeIds) user.deletedJournalTradeIds = [];
+  if (!user.deletedJournalTradeIds.includes(signalId)) user.deletedJournalTradeIds.push(signalId);
+  if (!user.deletedJournalTradeIds.includes(`sig_journal_${signalId}`)) user.deletedJournalTradeIds.push(`sig_journal_${signalId}`);
+
   user.signals = (user.signals || []).filter((s) => s && s.id !== signalId && !user.deletedSignalIds?.includes(s.id));
+  if (Array.isArray(user.tradeJournal)) {
+    user.tradeJournal = user.tradeJournal.filter(
+      (t) => t && t.id !== signalId && t.id !== `sig_journal_${signalId}` && t.linkedSignalId !== signalId
+    );
+  }
 
   await saveUsersDb(users, user.id);
 
   return res.json({ success: true, deletedSignalId: signalId });
+});
+
+app.post('/api/user/trade-journal/delete', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.replace('Bearer ', '').trim();
+  if (!token) return res.status(401).json({ error: 'Neautorizat' });
+
+  const users = loadUsersDb();
+  const user = findUserByAuthToken(token, users);
+  if (!user) return res.status(401).json({ error: 'Sesiune nevalidă.' });
+
+  const { tradeId, linkedSignalId, tradeIds } = req.body;
+  const idsToDelete: string[] = [];
+
+  if (Array.isArray(tradeIds)) {
+    idsToDelete.push(...tradeIds);
+  }
+  if (tradeId) idsToDelete.push(tradeId);
+  if (linkedSignalId) idsToDelete.push(linkedSignalId);
+
+  // If tradeId is sig_journal_xxx, also include xxx and vice-versa
+  for (const id of [...idsToDelete]) {
+    if (typeof id === 'string') {
+      if (id.startsWith('sig_journal_')) {
+        idsToDelete.push(id.replace('sig_journal_', ''));
+      } else {
+        idsToDelete.push(`sig_journal_${id}`);
+      }
+    }
+  }
+
+  if (!user.deletedJournalTradeIds) user.deletedJournalTradeIds = [];
+  const delSet = new Set([...user.deletedJournalTradeIds, ...idsToDelete]);
+  user.deletedJournalTradeIds = Array.from(delSet);
+
+  if (Array.isArray(user.tradeJournal)) {
+    user.tradeJournal = user.tradeJournal.filter((t: any) => {
+      if (!t) return false;
+      if (delSet.has(t.id)) return false;
+      if (t.linkedSignalId && delSet.has(t.linkedSignalId)) return false;
+      if (delSet.has(`sig_journal_${t.id}`)) return false;
+      return true;
+    });
+  }
+
+  await saveUsersDb(users, user.id);
+  return res.json({ success: true, deletedJournalTradeIds: user.deletedJournalTradeIds });
+});
+
+app.post('/api/user/trade-journal/clear-all', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.replace('Bearer ', '').trim();
+  if (!token) return res.status(401).json({ error: 'Neautorizat' });
+
+  const users = loadUsersDb();
+  const user = findUserByAuthToken(token, users);
+  if (!user) return res.status(401).json({ error: 'Sesiune nevalidă.' });
+
+  const allIds: string[] = [];
+  if (Array.isArray(user.tradeJournal)) {
+    for (const t of user.tradeJournal) {
+      if (t && t.id) allIds.push(t.id, `sig_journal_${t.id}`);
+      if (t && t.linkedSignalId) allIds.push(t.linkedSignalId, `sig_journal_${t.linkedSignalId}`);
+    }
+  }
+  if (Array.isArray(user.signals)) {
+    for (const s of user.signals) {
+      if (s && s.id) allIds.push(s.id, `sig_journal_${s.id}`);
+    }
+  }
+
+  if (!user.deletedJournalTradeIds) user.deletedJournalTradeIds = [];
+  user.deletedJournalTradeIds = Array.from(new Set([...user.deletedJournalTradeIds, ...allIds]));
+  user.tradeJournal = [];
+
+  await saveUsersDb(users, user.id);
+  return res.json({ success: true, deletedJournalTradeIds: user.deletedJournalTradeIds });
 });
 
 app.post('/api/user/close-trade', async (req, res) => {
@@ -1016,14 +1126,16 @@ app.post('/api/user/close-trade', async (req, res) => {
 
   // Update or insert into user.tradeJournal
   if (!user.tradeJournal) user.tradeJournal = [];
-  if (journalEntry) {
+  const delSetJ = new Set(user.deletedJournalTradeIds || []);
+  const isDeletedJ = delSetJ.has(signalId) || delSetJ.has(`sig_journal_${signalId}`);
+  if (journalEntry && !isDeletedJ && !delSetJ.has(journalEntry.id)) {
     const existingIdx = user.tradeJournal.findIndex((t: any) => t.id === journalEntry.id || t.linkedSignalId === signalId);
     if (existingIdx >= 0) {
       user.tradeJournal[existingIdx] = journalEntry;
     } else {
       user.tradeJournal.unshift(journalEntry);
     }
-  } else if (targetSig) {
+  } else if (targetSig && !isDeletedJ) {
     const isBuy = (targetSig.type || '').toUpperCase().includes('BUY');
     const finalExit = exitPrice || targetSig.currentMarketPrice || targetSig.entryPrice;
     const riskDist = Math.max(0.0001, Math.abs(targetSig.entryPrice - targetSig.stopLoss));
@@ -1129,8 +1241,13 @@ app.post('/api/user/close-all-trades', async (req, res) => {
 
   // Update or insert into user.tradeJournal
   if (!user.tradeJournal) user.tradeJournal = [];
+  const delSetCloseAll = new Set(user.deletedJournalTradeIds || []);
   if (Array.isArray(journalEntries)) {
     for (const jEntry of journalEntries) {
+      if (!jEntry) continue;
+      if (delSetCloseAll.has(jEntry.id) || (jEntry.linkedSignalId && delSetCloseAll.has(jEntry.linkedSignalId)) || delSetCloseAll.has(`sig_journal_${jEntry.id}`)) {
+        continue;
+      }
       const existingIdx = user.tradeJournal.findIndex((t: any) => t.id === jEntry.id || (jEntry.linkedSignalId && t.linkedSignalId === jEntry.linkedSignalId));
       if (existingIdx >= 0) {
         user.tradeJournal[existingIdx] = jEntry;
@@ -7788,20 +7905,50 @@ app.post('/api/mt5/account', async (req, res) => {
   if (!body || typeof body !== 'object') body = {};
 
   const nowMs = Date.now();
-  const { accountBalance, equity, accountNumber, accountServer, accountCurrency, accountCompany, positions } = body;
+  const { accountBalance, equity, accountNumber, accountServer, accountCurrency, accountCompany, positions, orders } = body;
 
   // Throttle stdout log to once every 30s per account
   const lastAccLog = accLogMap.get(token) || 0;
   if (nowMs - lastAccLog > 30000) {
     accLogMap.set(token, nowMs);
     pruneMapIfLarge(accLogMap);
-    console.log(`[MT5 EA Account Sync] Token: ${token.substring(0, 10)}... balance: ${accountBalance}, equity: ${equity}, accNum: ${accountNumber}, server: ${accountServer}, positions: ${Array.isArray(positions) ? positions.length : 0}, user: ${matchedUser ? matchedUser.username : 'none'}`);
+    console.log(`[MT5 EA Account Sync] Token: ${token.substring(0, 10)}... balance: ${accountBalance}, equity: ${equity}, accNum: ${accountNumber}, server: ${accountServer}, positions: ${Array.isArray(positions) ? positions.length : 0}, orders: ${Array.isArray(orders) ? orders.length : 0}, user: ${matchedUser ? matchedUser.username : 'none'}`);
   }
 
   if (matchedUser) {
     let didChange = false;
     let didBalanceChange = false;
     let didMetaChange = false;
+
+    // Detect pending limit orders that were cancelled/deleted directly from MT5 (e.g. user clicked X on Buy Limit / Sell Limit)
+    if (Array.isArray(orders)) {
+      const prevOrders = Array.isArray(matchedUser.mt5OpenOrders) ? matchedUser.mt5OpenOrders : [];
+      matchedUser.mt5OpenOrders = orders;
+      didChange = true;
+
+      const currentOrderSigIds = new Set(orders.map((o: any) => String(o?.signalId || '')));
+      const currentPosSigIds = new Set((positions || []).map((p: any) => String(p?.signalId || '')));
+
+      for (const oldO of prevOrders) {
+        if (!oldO || !oldO.signalId) continue;
+        const oldSigId = String(oldO.signalId);
+        // If pending order disappeared from active pending orders and was NOT filled into open positions, it was deleted/cancelled in MT5
+        if (!currentOrderSigIds.has(oldSigId) && !currentPosSigIds.has(oldSigId)) {
+          if (Array.isArray(matchedUser.signals)) {
+            const cancelledSig = matchedUser.signals.find((s: any) => String(s.id) === oldSigId || String(s.signal_id) === oldSigId);
+            if (cancelledSig && cancelledSig.status !== 'CANCELLED' && cancelledSig.status !== 'CLOSED') {
+              cancelledSig.status = 'CANCELLED';
+              cancelledSig.outcomeStatus = 'CANCELLED';
+              cancelledSig.isManualClose = true;
+              cancelledSig.closedManually = true;
+              cancelledSig.cancelReasonRo = 'Ordin pending anulat manual direct din MT5 ✋';
+              cancelledSig.closedAt = cancelledSig.closedAt || new Date().toISOString();
+              didChange = true;
+            }
+          }
+        }
+      }
+    }
 
     if (Array.isArray(positions)) {
       const prevPositions = Array.isArray(matchedUser.mt5OpenPositions) ? matchedUser.mt5OpenPositions : [];
@@ -7828,55 +7975,61 @@ app.post('/api/mt5/account', async (req, res) => {
               didChange = true;
 
               // Reconcile into Trade Journal
-              matchedUser.tradeJournal = matchedUser.tradeJournal || [];
-              const jEntry = matchedUser.tradeJournal.find((j: any) => j.linkedSignalId === closedSig.id || j.id === `sig_journal_${closedSig.id}`);
-              const finalJStatus: 'WIN' | 'LOSS' | 'BREAKEVEN' = closedSig.pnl > 0 ? 'WIN' : (closedSig.pnl < 0 ? 'LOSS' : 'BREAKEVEN');
-              const finalJLabel = closedSig.pnl > 0
-                ? `Închis manual cu profit: +$${closedSig.pnl.toFixed(2)} ✋`
-                : closedSig.pnl < 0
-                ? `Închis manual cu pierdere: -$${Math.abs(closedSig.pnl).toFixed(2)} ✋`
-                : 'Închis manual la BE ($0.00) ✋';
-              const finalJNotes = `Închis manual direct din MT5 (${accountNumber || matchedUser.mt5AccountNumber || ''}) cu ${closedSig.pnl >= 0 ? 'profit: +$' + closedSig.pnl.toFixed(2) : 'pierdere: -$' + Math.abs(closedSig.pnl).toFixed(2)}`;
+              const isClosedSigDeleted = (matchedUser.deletedJournalTradeIds || []).some(
+                (dId: string) => dId === closedSig.id || dId === `sig_journal_${closedSig.id}`
+              );
 
-              if (jEntry) {
-                jEntry.pnl = closedSig.pnl;
-                jEntry.status = finalJStatus;
-                jEntry.outcomeLabel = finalJLabel;
-                jEntry.notes = finalJNotes;
-                jEntry.isManualClose = true;
-                jEntry.closedManually = true;
-                jEntry.closedAt = closedSig.closedAt;
-              } else {
-                const isBuy = (closedSig.type || '').toUpperCase().includes('BUY');
-                const nowIso = new Date().toISOString();
-                matchedUser.tradeJournal.unshift({
-                  id: `sig_journal_${closedSig.id}`,
-                  date: (closedSig.createdAt || nowIso).split('T')[0],
-                  time: (closedSig.createdAt || nowIso).split('T')[1]?.substring(0, 5) || '12:00',
-                  instrumentId: closedSig.instrumentId,
-                  symbol: closedSig.symbol,
-                  instrumentName: closedSig.instrumentName,
-                  direction: isBuy ? 'BUY' : 'SELL',
-                  executionType: closedSig.executionType || (isBuy ? 'BUY MARKET' : 'SELL MARKET'),
-                  entryPrice: closedSig.entryPrice,
-                  stopLoss: closedSig.stopLoss,
-                  takeProfit: closedSig.targetPrice3 || closedSig.targetPrice2 || closedSig.targetPrice1,
-                  exitPrice: closedSig.exitPrice || closedSig.entryPrice,
-                  rrAchieved: closedSig.pnl > 0 ? 2.0 : (closedSig.pnl < 0 ? -1.0 : 0),
-                  pnl: closedSig.pnl,
-                  status: finalJStatus,
-                  outcomeLabel: finalJLabel,
-                  setup: closedSig.title || 'MT5 Execution',
-                  notes: finalJNotes,
-                  timeframe: closedSig.timeframe,
-                  linkedSignalId: closedSig.id,
-                  isManual: false,
-                  isManualClose: true,
-                  closedManually: true,
-                  generatedAt: closedSig.createdAt,
-                  closedAt: closedSig.closedAt,
-                  createdAt: closedSig.createdAt,
-                });
+              if (!isClosedSigDeleted) {
+                matchedUser.tradeJournal = matchedUser.tradeJournal || [];
+                const jEntry = matchedUser.tradeJournal.find((j: any) => j.linkedSignalId === closedSig.id || j.id === `sig_journal_${closedSig.id}`);
+                const finalJStatus: 'WIN' | 'LOSS' | 'BREAKEVEN' = closedSig.pnl > 0 ? 'WIN' : (closedSig.pnl < 0 ? 'LOSS' : 'BREAKEVEN');
+                const finalJLabel = closedSig.pnl > 0
+                  ? `Închis manual cu profit: +$${closedSig.pnl.toFixed(2)} ✋`
+                  : closedSig.pnl < 0
+                  ? `Închis manual cu pierdere: -$${Math.abs(closedSig.pnl).toFixed(2)} ✋`
+                  : 'Închis manual la BE ($0.00) ✋';
+                const finalJNotes = `Închis manual direct din MT5 (${accountNumber || matchedUser.mt5AccountNumber || ''}) cu ${closedSig.pnl >= 0 ? 'profit: +$' + closedSig.pnl.toFixed(2) : 'pierdere: -$' + Math.abs(closedSig.pnl).toFixed(2)}`;
+
+                if (jEntry) {
+                  jEntry.pnl = closedSig.pnl;
+                  jEntry.status = finalJStatus;
+                  jEntry.outcomeLabel = finalJLabel;
+                  jEntry.notes = finalJNotes;
+                  jEntry.isManualClose = true;
+                  jEntry.closedManually = true;
+                  jEntry.closedAt = closedSig.closedAt;
+                } else {
+                  const isBuy = (closedSig.type || '').toUpperCase().includes('BUY');
+                  const nowIso = new Date().toISOString();
+                  matchedUser.tradeJournal.unshift({
+                    id: `sig_journal_${closedSig.id}`,
+                    date: (closedSig.createdAt || nowIso).split('T')[0],
+                    time: (closedSig.createdAt || nowIso).split('T')[1]?.substring(0, 5) || '12:00',
+                    instrumentId: closedSig.instrumentId,
+                    symbol: closedSig.symbol,
+                    instrumentName: closedSig.instrumentName,
+                    direction: isBuy ? 'BUY' : 'SELL',
+                    executionType: closedSig.executionType || (isBuy ? 'BUY MARKET' : 'SELL MARKET'),
+                    entryPrice: closedSig.entryPrice,
+                    stopLoss: closedSig.stopLoss,
+                    takeProfit: closedSig.targetPrice3 || closedSig.targetPrice2 || closedSig.targetPrice1,
+                    exitPrice: closedSig.exitPrice || closedSig.entryPrice,
+                    rrAchieved: closedSig.pnl > 0 ? 2.0 : (closedSig.pnl < 0 ? -1.0 : 0),
+                    pnl: closedSig.pnl,
+                    status: finalJStatus,
+                    outcomeLabel: finalJLabel,
+                    setup: closedSig.title || 'MT5 Execution',
+                    notes: finalJNotes,
+                    timeframe: closedSig.timeframe,
+                    linkedSignalId: closedSig.id,
+                    isManual: false,
+                    isManualClose: true,
+                    closedManually: true,
+                    generatedAt: closedSig.createdAt,
+                    closedAt: closedSig.closedAt,
+                    createdAt: closedSig.createdAt,
+                  });
+                }
               }
             }
           }
@@ -8126,11 +8279,21 @@ app.post('/api/mt5/update', async (req, res) => {
               didChange = true;
             }
           }
+          const isTradeCancel = status === 'CANCELLED' || milestone === 'MANUAL_CANCEL';
           const isTradeManualClose = isManualClose === true || 
             milestone === 'MANUAL_CLOSE' || 
-            (typeof outcomeStatus === 'string' && outcomeStatus.startsWith('MANUAL_'));
+            (typeof outcomeStatus === 'string' && outcomeStatus.startsWith('MANUAL_')) ||
+            isTradeCancel;
 
-          if (isTradeManualClose) {
+          if (isTradeCancel) {
+            target.status = 'CANCELLED';
+            target.outcomeStatus = 'CANCELLED';
+            target.isManualClose = true;
+            target.closedManually = true;
+            target.cancelReasonRo = 'Ordin pending anulat manual direct din MT5 ✋';
+            target.closedAt = target.closedAt || new Date().toISOString();
+            didChange = true;
+          } else if (isTradeManualClose) {
             target.isManualClose = true;
             target.closedManually = true;
             if (target.status !== 'CLOSED') {
@@ -8146,14 +8309,16 @@ app.post('/api/mt5/update', async (req, res) => {
               target.closedAt = target.closedAt || new Date().toISOString();
               didChange = true;
             }
-          } else if (status && target.status !== status && !isTradeManualClose) {
+          } else if (status && target.status !== status && !isTradeManualClose && !isTradeCancel) {
             target.status = status;
             didChange = true;
           }
           const isMarket = target.executionType && target.executionType.toUpperCase().includes('MARKET');
           const fallbackOutcome = (isMarket || target.isEntryTriggered) ? 'RUNNING' : 'PENDING';
           let effOutcome = outcomeStatus || target.outcomeStatus;
-          if (isTradeManualClose) {
+          if (isTradeCancel) {
+            effOutcome = 'CANCELLED';
+          } else if (isTradeManualClose) {
             effOutcome = target.pnl !== undefined && target.pnl > 0 ? 'MANUAL_PROFIT' : (target.pnl !== undefined && target.pnl < 0 ? 'MANUAL_LOSS' : 'MANUAL_BE');
           } else if (!effOutcome) {
             effOutcome = (target.pnl !== undefined && target.pnl > 0 ? 'TP1_HIT' : target.pnl !== undefined && target.pnl < 0 ? 'SL_HIT' : fallbackOutcome);
@@ -8168,105 +8333,114 @@ app.post('/api/mt5/update', async (req, res) => {
             didChange = true;
           }
 
-          // Auto-sync into user's trade journal
-          if (!matchedUser.tradeJournal) matchedUser.tradeJournal = [];
-          const jEntry = matchedUser.tradeJournal.find(
-            (j: any) => j.linkedSignalId === target.id || j.id === `sig_journal_${target.id}`
+          // Auto-sync into user's trade journal if not permanently deleted by user
+          const isTargetJDeleted = (matchedUser.deletedJournalTradeIds || []).some(
+            (dId: string) => dId === target.id || dId === `sig_journal_${target.id}`
           );
-          const finalJStatus: 'WIN' | 'LOSS' | 'BREAKEVEN' = target.pnl !== undefined && target.pnl > 0 ? 'WIN' : (target.pnl !== undefined && target.pnl < 0 ? 'LOSS' : 'BREAKEVEN');
-          let finalJLabel = '';
-          let finalJNotes = '';
 
-          if (isTradeManualClose) {
-            if (target.pnl !== undefined && target.pnl > 0) {
-              finalJLabel = `Închis manual cu profit: +$${target.pnl.toFixed(2)} ✋`;
-              finalJNotes = `Închis manual direct din MT5 (${target.accountNumber || matchedUser.mt5AccountNumber || ''}) cu profit: +$${target.pnl.toFixed(2)}`;
-            } else if (target.pnl !== undefined && target.pnl < 0) {
-              finalJLabel = `Închis manual cu pierdere: -$${Math.abs(target.pnl).toFixed(2)} ✋`;
-              finalJNotes = `Închis manual direct din MT5 (${target.accountNumber || matchedUser.mt5AccountNumber || ''}) cu pierdere: -$${Math.abs(target.pnl).toFixed(2)}`;
+          if (!isTargetJDeleted) {
+            if (!matchedUser.tradeJournal) matchedUser.tradeJournal = [];
+            const jEntry = matchedUser.tradeJournal.find(
+              (j: any) => j.linkedSignalId === target.id || j.id === `sig_journal_${target.id}`
+            );
+            const finalJStatus: 'WIN' | 'LOSS' | 'BREAKEVEN' = isTradeCancel ? 'BREAKEVEN' : (target.pnl !== undefined && target.pnl > 0 ? 'WIN' : (target.pnl !== undefined && target.pnl < 0 ? 'LOSS' : 'BREAKEVEN'));
+            let finalJLabel = '';
+            let finalJNotes = '';
+
+            if (isTradeCancel) {
+              finalJLabel = 'Ordin Anulat Manual (MT5) ✋';
+              finalJNotes = `Ordin pending anulat manual direct din MT5 (${target.accountNumber || matchedUser.mt5AccountNumber || ''})`;
+            } else if (isTradeManualClose) {
+              if (target.pnl !== undefined && target.pnl > 0) {
+                finalJLabel = `Închis manual cu profit: +$${target.pnl.toFixed(2)} ✋`;
+                finalJNotes = `Închis manual direct din MT5 (${target.accountNumber || matchedUser.mt5AccountNumber || ''}) cu profit: +$${target.pnl.toFixed(2)}`;
+              } else if (target.pnl !== undefined && target.pnl < 0) {
+                finalJLabel = `Închis manual cu pierdere: -$${Math.abs(target.pnl).toFixed(2)} ✋`;
+                finalJNotes = `Închis manual direct din MT5 (${target.accountNumber || matchedUser.mt5AccountNumber || ''}) cu pierdere: -$${Math.abs(target.pnl).toFixed(2)}`;
+              } else {
+                finalJLabel = `Închis manual la BE ($0.00) ✋`;
+                finalJNotes = `Închis manual direct din MT5 (${target.accountNumber || matchedUser.mt5AccountNumber || ''}) la Break-Even ($0.00)`;
+              }
             } else {
-              finalJLabel = `Închis manual la BE ($0.00) ✋`;
-              finalJNotes = `Închis manual direct din MT5 (${target.accountNumber || matchedUser.mt5AccountNumber || ''}) la Break-Even ($0.00)`;
+              finalJLabel = target.outcomeStatus === 'TP3_HIT'
+                ? `TP3 Max Hit (+$${(target.pnl || 0).toFixed(2)}) 💎`
+                : target.outcomeStatus === 'TP2_HIT'
+                ? `TP2 Hit (+$${(target.pnl || 0).toFixed(2)}) 🚀`
+                : target.outcomeStatus === 'TP1_HIT'
+                ? `TP1 Securizat (+$${(target.pnl || 0).toFixed(2)}) 🎯`
+                : target.pnl !== undefined && target.pnl > 0
+                ? `MT5 Profit (+$${target.pnl.toFixed(2)})`
+                : target.pnl !== undefined && target.pnl < 0
+                ? `MT5 Pierdere (-$${Math.abs(target.pnl).toFixed(2)})`
+                : 'MT5 BE ($0.00)';
+              finalJNotes = `Actualizat prin conexiunea MT5 (${target.accountNumber || matchedUser.mt5AccountNumber || ''})`;
             }
-          } else {
-            finalJLabel = target.outcomeStatus === 'TP3_HIT'
-              ? `TP3 Max Hit (+$${(target.pnl || 0).toFixed(2)}) 💎`
-              : target.outcomeStatus === 'TP2_HIT'
-              ? `TP2 Hit (+$${(target.pnl || 0).toFixed(2)}) 🚀`
-              : target.outcomeStatus === 'TP1_HIT'
-              ? `TP1 Securizat (+$${(target.pnl || 0).toFixed(2)}) 🎯`
-              : target.pnl !== undefined && target.pnl > 0
-              ? `MT5 Profit (+$${target.pnl.toFixed(2)})`
-              : target.pnl !== undefined && target.pnl < 0
-              ? `MT5 Pierdere (-$${Math.abs(target.pnl).toFixed(2)})`
-              : 'MT5 BE ($0.00)';
-            finalJNotes = `Actualizat prin conexiunea MT5 (${target.accountNumber || matchedUser.mt5AccountNumber || ''})`;
-          }
 
-          if (jEntry) {
-            if (target.pnl !== undefined && jEntry.pnl !== target.pnl) {
-              jEntry.pnl = target.pnl;
-              jEntry.status = finalJStatus;
+            if (jEntry) {
+              if (target.pnl !== undefined && jEntry.pnl !== target.pnl) {
+                jEntry.pnl = target.pnl;
+                jEntry.status = finalJStatus;
+                didChange = true;
+              }
+              if (jEntry.outcomeLabel !== finalJLabel) {
+                jEntry.outcomeLabel = finalJLabel;
+                didChange = true;
+              }
+              if (finalJNotes && jEntry.notes !== finalJNotes) {
+                jEntry.notes = finalJNotes;
+                didChange = true;
+              }
+              if (isTradeManualClose) {
+                jEntry.isManualClose = true;
+                jEntry.closedManually = true;
+                didChange = true;
+              }
+              if (target.exitPrice !== undefined && jEntry.exitPrice !== target.exitPrice) {
+                jEntry.exitPrice = target.exitPrice;
+                didChange = true;
+              }
+              if (target.targetPrice3 && !jEntry.takeProfit) {
+                jEntry.takeProfit = target.targetPrice3 || target.targetPrice2;
+                didChange = true;
+              }
+              if ((target.status === 'CLOSED' || target.status === 'CANCELLED') && !jEntry.closedAt) {
+                jEntry.closedAt = target.closedAt || new Date().toISOString();
+                didChange = true;
+              }
+            } else {
+              const isBuy = (target.type || '').toUpperCase().includes('BUY');
+              const nowIso = new Date().toISOString();
+              const newJEntry = {
+                id: `sig_journal_${target.id}`,
+                date: (target.createdAt || nowIso).split('T')[0],
+                time: (target.createdAt || nowIso).split('T')[1]?.substring(0, 5) || '12:00',
+                instrumentId: target.instrumentId,
+                symbol: target.symbol,
+                instrumentName: target.instrumentName,
+                direction: isBuy ? 'BUY' : 'SELL',
+                executionType: target.executionType || (isBuy ? 'BUY MARKET' : 'SELL MARKET'),
+                entryPrice: target.entryPrice,
+                stopLoss: target.stopLoss,
+                takeProfit: target.targetPrice3 || target.targetPrice2 || target.targetPrice1,
+                exitPrice: target.exitPrice || target.entryPrice,
+                rrAchieved: target.pnl !== undefined && target.pnl > 0 ? 2.0 : (target.pnl !== undefined && target.pnl < 0 ? -1.0 : 0),
+                pnl: target.pnl || 0,
+                status: finalJStatus,
+                outcomeLabel: finalJLabel,
+                setup: target.title || 'MT5 Execution',
+                notes: finalJNotes,
+                timeframe: target.timeframe,
+                linkedSignalId: target.id,
+                isManual: false,
+                isManualClose: isTradeManualClose,
+                closedManually: isTradeManualClose,
+                generatedAt: target.createdAt,
+                closedAt: (target.status === 'CLOSED' || target.status === 'CANCELLED') ? (target.closedAt || nowIso) : undefined,
+                createdAt: target.createdAt,
+              };
+              matchedUser.tradeJournal.unshift(newJEntry);
               didChange = true;
             }
-            if (jEntry.outcomeLabel !== finalJLabel) {
-              jEntry.outcomeLabel = finalJLabel;
-              didChange = true;
-            }
-            if (finalJNotes && jEntry.notes !== finalJNotes) {
-              jEntry.notes = finalJNotes;
-              didChange = true;
-            }
-            if (isTradeManualClose) {
-              jEntry.isManualClose = true;
-              jEntry.closedManually = true;
-              didChange = true;
-            }
-            if (target.exitPrice !== undefined && jEntry.exitPrice !== target.exitPrice) {
-              jEntry.exitPrice = target.exitPrice;
-              didChange = true;
-            }
-            if (target.targetPrice3 && !jEntry.takeProfit) {
-              jEntry.takeProfit = target.targetPrice3 || target.targetPrice2;
-              didChange = true;
-            }
-            if (target.status === 'CLOSED' && !jEntry.closedAt) {
-              jEntry.closedAt = target.closedAt || new Date().toISOString();
-              didChange = true;
-            }
-          } else {
-            const isBuy = (target.type || '').toUpperCase().includes('BUY');
-            const nowIso = new Date().toISOString();
-            const newJEntry = {
-              id: `sig_journal_${target.id}`,
-              date: (target.createdAt || nowIso).split('T')[0],
-              time: (target.createdAt || nowIso).split('T')[1]?.substring(0, 5) || '12:00',
-              instrumentId: target.instrumentId,
-              symbol: target.symbol,
-              instrumentName: target.instrumentName,
-              direction: isBuy ? 'BUY' : 'SELL',
-              executionType: target.executionType || (isBuy ? 'BUY MARKET' : 'SELL MARKET'),
-              entryPrice: target.entryPrice,
-              stopLoss: target.stopLoss,
-              takeProfit: target.targetPrice3 || target.targetPrice2 || target.targetPrice1,
-              exitPrice: target.exitPrice || target.entryPrice,
-              rrAchieved: target.pnl !== undefined && target.pnl > 0 ? 2.0 : (target.pnl !== undefined && target.pnl < 0 ? -1.0 : 0),
-              pnl: target.pnl,
-              status: finalJStatus,
-              outcomeLabel: finalJLabel,
-              setup: target.title || 'MT5 Execution',
-              notes: finalJNotes,
-              timeframe: target.timeframe,
-              linkedSignalId: target.id,
-              isManual: false,
-              isManualClose: isTradeManualClose,
-              closedManually: isTradeManualClose,
-              generatedAt: target.createdAt,
-              closedAt: target.status === 'CLOSED' ? (target.closedAt || nowIso) : undefined,
-              createdAt: target.createdAt,
-            };
-            matchedUser.tradeJournal.unshift(newJEntry);
-            didChange = true;
           }
         }
       }
@@ -8831,35 +9005,40 @@ app.post(['/api/ninjatrader/update', '/api/nt8/update'], async (req, res) => {
               jEntry.closedAt = target.closedAt || new Date().toISOString();
             }
           } else {
-            const isBuy = (target.type || '').toUpperCase().includes('BUY');
-            const nowIso = new Date().toISOString();
-            const newJEntry = {
-              id: `sig_journal_${target.id}`,
-              date: (target.createdAt || nowIso).split('T')[0],
-              time: (target.createdAt || nowIso).split('T')[1]?.substring(0, 5) || '12:00',
-              instrumentId: target.instrumentId,
-              symbol: target.symbol,
-              instrumentName: target.instrumentName,
-              direction: isBuy ? 'BUY' : 'SELL',
-              executionType: target.executionType || (isBuy ? 'BUY MARKET' : 'SELL MARKET'),
-              entryPrice: target.entryPrice,
-              stopLoss: target.stopLoss,
-              takeProfit: target.targetPrice3 || target.targetPrice2 || target.targetPrice1,
-              exitPrice: target.exitPrice || target.entryPrice,
-              rrAchieved: target.pnl !== undefined && target.pnl > 0 ? 2.0 : (target.pnl !== undefined && target.pnl < 0 ? -1.0 : 0),
-              pnl: target.pnl,
-              status: finalNtStatus,
-              outcomeLabel: finalNtLabel,
-              setup: target.title || 'NinjaTrader Execution',
-              notes: `Actualizat prin NinjaTrader 8 (${target.accountNumber || matchedUser.ninjaTraderAccountNumber || ''})`,
-              timeframe: target.timeframe,
-              linkedSignalId: target.id,
-              isManual: false,
-              generatedAt: target.createdAt,
-              closedAt: target.status === 'CLOSED' ? (target.closedAt || nowIso) : undefined,
-              createdAt: target.createdAt,
-            };
-            matchedUser.tradeJournal.unshift(newJEntry);
+            const isNtJDeleted = (matchedUser.deletedJournalTradeIds || []).some(
+              (dId: string) => dId === target.id || dId === `sig_journal_${target.id}`
+            );
+            if (!isNtJDeleted) {
+              const isBuy = (target.type || '').toUpperCase().includes('BUY');
+              const nowIso = new Date().toISOString();
+              const newJEntry = {
+                id: `sig_journal_${target.id}`,
+                date: (target.createdAt || nowIso).split('T')[0],
+                time: (target.createdAt || nowIso).split('T')[1]?.substring(0, 5) || '12:00',
+                instrumentId: target.instrumentId,
+                symbol: target.symbol,
+                instrumentName: target.instrumentName,
+                direction: isBuy ? 'BUY' : 'SELL',
+                executionType: target.executionType || (isBuy ? 'BUY MARKET' : 'SELL MARKET'),
+                entryPrice: target.entryPrice,
+                stopLoss: target.stopLoss,
+                takeProfit: target.targetPrice3 || target.targetPrice2 || target.targetPrice1,
+                exitPrice: target.exitPrice || target.entryPrice,
+                rrAchieved: target.pnl !== undefined && target.pnl > 0 ? 2.0 : (target.pnl !== undefined && target.pnl < 0 ? -1.0 : 0),
+                pnl: target.pnl,
+                status: finalNtStatus,
+                outcomeLabel: finalNtLabel,
+                setup: target.title || 'NinjaTrader Execution',
+                notes: `Actualizat prin NinjaTrader 8 (${target.accountNumber || matchedUser.ninjaTraderAccountNumber || ''})`,
+                timeframe: target.timeframe,
+                linkedSignalId: target.id,
+                isManual: false,
+                generatedAt: target.createdAt,
+                closedAt: target.status === 'CLOSED' ? (target.closedAt || nowIso) : undefined,
+                createdAt: target.createdAt,
+              };
+              matchedUser.tradeJournal.unshift(newJEntry);
+            }
           }
         }
       }
@@ -8953,35 +9132,40 @@ app.post('/api/signals/update-pnl', async (req, res) => {
     if (exitPrice !== undefined && !isNaN(Number(exitPrice))) j.exitPrice = Number(exitPrice);
     if (status === 'CLOSED') j.closedAt = j.closedAt || new Date().toISOString();
   } else if (targetSig) {
-    const isBuy = (targetSig.type || '').toUpperCase().includes('BUY');
-    const nowIso = new Date().toISOString();
-    const newJEntry = {
-      id: `sig_journal_${targetSig.id}`,
-      date: (targetSig.createdAt || nowIso).split('T')[0],
-      time: (targetSig.createdAt || nowIso).split('T')[1]?.substring(0, 5) || '12:00',
-      instrumentId: targetSig.instrumentId,
-      symbol: targetSig.symbol,
-      instrumentName: targetSig.instrumentName,
-      direction: isBuy ? 'BUY' : 'SELL',
-      executionType: targetSig.executionType || (isBuy ? 'BUY MARKET' : 'SELL MARKET'),
-      entryPrice: targetSig.entryPrice,
-      stopLoss: targetSig.stopLoss,
-      takeProfit: targetSig.targetPrice3 || targetSig.targetPrice2 || targetSig.targetPrice1,
-      exitPrice: exitPrice !== undefined ? Number(exitPrice) : (targetSig.exitPrice || targetSig.entryPrice),
-      rrAchieved: pnlNum !== undefined && pnlNum > 0 ? 2.0 : (pnlNum !== undefined && pnlNum < 0 ? -1.0 : 0),
-      pnl: pnlNum,
-      status: finalStatus,
-      outcomeLabel: finalLabel,
-      setup: targetSig.title || 'Signal Execution',
-      notes: `Actualizat prin PnL Update (${targetSig.accountSource || 'Broker'})`,
-      timeframe: targetSig.timeframe,
-      linkedSignalId: targetSig.id,
-      isManual: false,
-      generatedAt: targetSig.createdAt,
-      closedAt: status === 'CLOSED' ? (targetSig.closedAt || nowIso) : undefined,
-      createdAt: targetSig.createdAt,
-    };
-    targetUser.tradeJournal.unshift(newJEntry);
+    const isTargetUserJDeleted = (targetUser.deletedJournalTradeIds || []).some(
+      (dId: string) => dId === targetSig.id || dId === `sig_journal_${targetSig.id}`
+    );
+    if (!isTargetUserJDeleted) {
+      const isBuy = (targetSig.type || '').toUpperCase().includes('BUY');
+      const nowIso = new Date().toISOString();
+      const newJEntry = {
+        id: `sig_journal_${targetSig.id}`,
+        date: (targetSig.createdAt || nowIso).split('T')[0],
+        time: (targetSig.createdAt || nowIso).split('T')[1]?.substring(0, 5) || '12:00',
+        instrumentId: targetSig.instrumentId,
+        symbol: targetSig.symbol,
+        instrumentName: targetSig.instrumentName,
+        direction: isBuy ? 'BUY' : 'SELL',
+        executionType: targetSig.executionType || (isBuy ? 'BUY MARKET' : 'SELL MARKET'),
+        entryPrice: targetSig.entryPrice,
+        stopLoss: targetSig.stopLoss,
+        takeProfit: targetSig.targetPrice3 || targetSig.targetPrice2 || targetSig.targetPrice1,
+        exitPrice: exitPrice !== undefined ? Number(exitPrice) : (targetSig.exitPrice || targetSig.entryPrice),
+        rrAchieved: pnlNum !== undefined && pnlNum > 0 ? 2.0 : (pnlNum !== undefined && pnlNum < 0 ? -1.0 : 0),
+        pnl: pnlNum,
+        status: finalStatus,
+        outcomeLabel: finalLabel,
+        setup: targetSig.title || 'Signal Execution',
+        notes: `Actualizat prin PnL Update (${targetSig.accountSource || 'Broker'})`,
+        timeframe: targetSig.timeframe,
+        linkedSignalId: targetSig.id,
+        isManual: false,
+        generatedAt: targetSig.createdAt,
+        closedAt: status === 'CLOSED' ? (targetSig.closedAt || nowIso) : undefined,
+        createdAt: targetSig.createdAt,
+      };
+      targetUser.tradeJournal.unshift(newJEntry);
+    }
   }
 
   // Update server active signals if applicable

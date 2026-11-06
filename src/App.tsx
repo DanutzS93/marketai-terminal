@@ -28,6 +28,7 @@ import { ShieldCheck, Info, Sparkles, BarChart2, Sliders, Newspaper, LayoutGrid,
 const LOCAL_STORAGE_SIGNALS_KEY = 'market_ai_signals_v2';
 const LOCAL_STORAGE_DELETED_SIGNALS_KEY = 'market_ai_deleted_signal_ids_v1';
 const LOCAL_STORAGE_MANUAL_TRADES_KEY = 'market_ai_trade_journal_v1';
+const LOCAL_STORAGE_DELETED_JOURNAL_KEY = 'market_ai_deleted_journal_ids_v1';
 
 /**
  * Strict Environment Isolation:
@@ -165,6 +166,26 @@ export default function App() {
     return [];
   });
 
+  const [deletedJournalTradeIds, setDeletedJournalTradeIds] = useState<string[]>(() => {
+    try {
+      const uid = (() => {
+        try {
+          const s = localStorage.getItem('market_ai_user_profile');
+          return s ? JSON.parse(s)?.id : null;
+        } catch (_) { return null; }
+      })();
+      if (!uid) return [];
+      const saved = localStorage.getItem(getUserStorageKey(LOCAL_STORAGE_DELETED_JOURNAL_KEY, uid));
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {
+      console.warn('Could not read deletedJournalTradeIds from localStorage:', e);
+    }
+    return [];
+  });
+
   const [manualTrades, setManualTrades] = useState<TradeJournalEntry[]>(() => {
     try {
       const uid = (() => {
@@ -174,11 +195,20 @@ export default function App() {
         } catch (_) { return null; }
       })();
       if (!uid) return [];
+      const savedDelJournal = localStorage.getItem(getUserStorageKey(LOCAL_STORAGE_DELETED_JOURNAL_KEY, uid));
+      const delJournalIds = savedDelJournal ? new Set<string>(JSON.parse(savedDelJournal)) : new Set<string>();
+
       const saved = localStorage.getItem(getUserStorageKey(LOCAL_STORAGE_MANUAL_TRADES_KEY, uid));
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          const clean = parsed.filter((t: any) => !isDemoOrSampleTrade(t));
+          const clean = parsed.filter((t: any) => {
+            if (!t || isDemoOrSampleTrade(t)) return false;
+            if (delJournalIds.has(t.id)) return false;
+            if (t.linkedSignalId && delJournalIds.has(t.linkedSignalId)) return false;
+            if (delJournalIds.has(`sig_journal_${t.id}`)) return false;
+            return true;
+          });
           return clean;
         }
       }
@@ -228,6 +258,13 @@ export default function App() {
                 localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_DELETED_SIGNALS_KEY, data.user.id), JSON.stringify(cloudDeleted));
               } catch (e) {}
 
+              const cloudDeletedJournal = Array.isArray(syncData.deletedJournalTradeIds) ? syncData.deletedJournalTradeIds : [];
+              setDeletedJournalTradeIds(cloudDeletedJournal);
+              try {
+                localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_DELETED_JOURNAL_KEY, data.user.id), JSON.stringify(cloudDeletedJournal));
+              } catch (e) {}
+              const cloudDeletedJournalSet = new Set(cloudDeletedJournal);
+
               if (Array.isArray(syncData.signals)) {
                 // Strict isolation: only load signals matching this user's ID
                 const userFiltered = filter30DaySignals(syncData.signals, cloudDeleted)
@@ -239,7 +276,13 @@ export default function App() {
                 } catch (e) {}
               }
               if (Array.isArray(syncData.tradeJournal)) {
-                const cleanCloud = syncData.tradeJournal.filter((t: any) => !isDemoOrSampleTrade(t));
+                const cleanCloud = syncData.tradeJournal.filter((t: any) => {
+                  if (!t || isDemoOrSampleTrade(t)) return false;
+                  if (cloudDeletedJournalSet.has(t.id)) return false;
+                  if (t.linkedSignalId && cloudDeletedJournalSet.has(t.linkedSignalId)) return false;
+                  if (cloudDeletedJournalSet.has(`sig_journal_${t.id}`)) return false;
+                  return true;
+                });
                 setManualTrades(cleanCloud);
                 try {
                   localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_MANUAL_TRADES_KEY, data.user.id), JSON.stringify(cleanCloud));
@@ -429,6 +472,7 @@ export default function App() {
           body: JSON.stringify({
             signals: clean,
             deletedSignalIds,
+            deletedJournalTradeIds,
             tradeJournal: manualTrades,
             apiKeys,
           }),
@@ -439,7 +483,7 @@ export default function App() {
     }, 1500);
 
     return () => clearTimeout(timer);
-  }, [signals, manualTrades, apiKeys, deletedSignalIds, user, authToken, isCloudSynced]);
+  }, [signals, manualTrades, apiKeys, deletedSignalIds, deletedJournalTradeIds, user, authToken, isCloudSynced]);
 
   // Sync active signals to MT5 & NinjaTrader bridge server endpoints (Debounced 1500ms)
   useEffect(() => {
@@ -500,6 +544,13 @@ export default function App() {
           localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_DELETED_SIGNALS_KEY, newUser.id), JSON.stringify(cloudDeleted));
         } catch (e) {}
 
+        const cloudDeletedJournal = Array.isArray(syncData.deletedJournalTradeIds) ? syncData.deletedJournalTradeIds : [];
+        setDeletedJournalTradeIds(cloudDeletedJournal);
+        try {
+          localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_DELETED_JOURNAL_KEY, newUser.id), JSON.stringify(cloudDeletedJournal));
+        } catch (e) {}
+        const cloudDeletedJournalSet = new Set(cloudDeletedJournal);
+
         if (Array.isArray(syncData.signals)) {
           const userFiltered = filter30DaySignals(syncData.signals, cloudDeleted)
             .filter((s) => !s.userId || s.userId === newUser.id)
@@ -510,7 +561,13 @@ export default function App() {
           } catch (e) {}
         }
         if (Array.isArray(syncData.tradeJournal)) {
-          const cleanCloud = syncData.tradeJournal.filter((t: any) => !isDemoOrSampleTrade(t));
+          const cleanCloud = syncData.tradeJournal.filter((t: any) => {
+            if (!t || isDemoOrSampleTrade(t)) return false;
+            if (cloudDeletedJournalSet.has(t.id)) return false;
+            if (t.linkedSignalId && cloudDeletedJournalSet.has(t.linkedSignalId)) return false;
+            if (cloudDeletedJournalSet.has(`sig_journal_${t.id}`)) return false;
+            return true;
+          });
           setManualTrades(cleanCloud);
           try {
             localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_MANUAL_TRADES_KEY, newUser.id), JSON.stringify(cleanCloud));
@@ -535,16 +592,19 @@ export default function App() {
     setIsCloudSynced(false);
     setSignals([]);
     setDeletedSignalIds([]);
+    setDeletedJournalTradeIds([]);
     setManualTrades([]);
     localStorage.removeItem('market_ai_auth_token');
     localStorage.removeItem('market_ai_user_profile');
     if (oldUserId) {
       localStorage.removeItem(getUserStorageKey(LOCAL_STORAGE_SIGNALS_KEY, oldUserId));
       localStorage.removeItem(getUserStorageKey(LOCAL_STORAGE_DELETED_SIGNALS_KEY, oldUserId));
+      localStorage.removeItem(getUserStorageKey(LOCAL_STORAGE_DELETED_JOURNAL_KEY, oldUserId));
       localStorage.removeItem(getUserStorageKey(LOCAL_STORAGE_MANUAL_TRADES_KEY, oldUserId));
     }
     localStorage.removeItem(LOCAL_STORAGE_SIGNALS_KEY);
     localStorage.removeItem(LOCAL_STORAGE_DELETED_SIGNALS_KEY);
+    localStorage.removeItem(LOCAL_STORAGE_DELETED_JOURNAL_KEY);
     localStorage.removeItem(LOCAL_STORAGE_MANUAL_TRADES_KEY);
     setIsAuthModalOpen(true);
 
@@ -882,6 +942,21 @@ export default function App() {
       console.warn('Could not save deletedSignalIds to localStorage:', e);
     }
 
+    const journalIdsToRemove = [signalId, `sig_journal_${signalId}`];
+    const newDelJournal = Array.from(new Set([...deletedJournalTradeIds, ...journalIdsToRemove]));
+    setDeletedJournalTradeIds(newDelJournal);
+    try {
+      localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_DELETED_JOURNAL_KEY, user?.id), JSON.stringify(newDelJournal));
+    } catch (e) {}
+
+    setManualTrades((prev) => {
+      const updated = prev.filter((t) => t.id !== signalId && t.id !== `sig_journal_${signalId}` && t.linkedSignalId !== signalId);
+      try {
+        localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_MANUAL_TRADES_KEY, user?.id), JSON.stringify(updated));
+      } catch (e) {}
+      return updated;
+    });
+
     if (user && authToken) {
       fetch('/api/user/delete-signal', {
         method: 'POST',
@@ -1201,44 +1276,139 @@ export default function App() {
   };
 
   const handleDeleteManualTrade = (tradeId: string) => {
+    const idsToDelete = new Set<string>([tradeId]);
+    if (tradeId.startsWith('sig_journal_')) {
+      idsToDelete.add(tradeId.replace('sig_journal_', ''));
+    } else {
+      idsToDelete.add(`sig_journal_${tradeId}`);
+    }
+
+    const foundInManual = manualTrades.find((t) => t.id === tradeId || t.linkedSignalId === tradeId);
+    if (foundInManual?.linkedSignalId) {
+      idsToDelete.add(foundInManual.linkedSignalId);
+      idsToDelete.add(`sig_journal_${foundInManual.linkedSignalId}`);
+    }
+
+    // Also search signals
+    const foundSignal = signals.find((s) => s.id === tradeId || `sig_journal_${s.id}` === tradeId || s.signal_id === tradeId);
+    if (foundSignal) {
+      idsToDelete.add(foundSignal.id);
+      idsToDelete.add(`sig_journal_${foundSignal.id}`);
+      if (foundSignal.signal_id) {
+        idsToDelete.add(foundSignal.signal_id);
+        idsToDelete.add(`sig_journal_${foundSignal.signal_id}`);
+      }
+    }
+
+    const newDeletedJournalIds = Array.from(new Set([...deletedJournalTradeIds, ...Array.from(idsToDelete)]));
+    setDeletedJournalTradeIds(newDeletedJournalIds);
+    try {
+      localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_DELETED_JOURNAL_KEY, user?.id), JSON.stringify(newDeletedJournalIds));
+    } catch (e) {}
+
+    // Update manual trades state
     setManualTrades((prev) => {
-      const updated = prev.filter((t) => t.id !== tradeId && !isDemoOrSampleTrade(t));
+      const updated = prev.filter((t) => !idsToDelete.has(t.id) && (!t.linkedSignalId || !idsToDelete.has(t.linkedSignalId)) && !isDemoOrSampleTrade(t));
       try {
         localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_MANUAL_TRADES_KEY, user?.id), JSON.stringify(updated));
       } catch (e) {}
-
-      // Sync to cloud
-      const token = authToken || localStorage.getItem('market_ai_auth_token');
-      if (token) {
-        fetch('/api/user/sync-data', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ tradeJournal: updated }),
-        }).catch((err) => console.warn('Cloud sync tradeJournal failed:', err));
-      }
-
       return updated;
     });
-  };
 
-  const handleClearAllManualTrades = () => {
-    setManualTrades([]);
-    try {
-      localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_MANUAL_TRADES_KEY, user?.id), JSON.stringify([]));
-    } catch (e) {}
+    // Also remove from signals if it was an AI signal
+    if (foundSignal || foundInManual?.linkedSignalId) {
+      const sigIdToRemove = foundSignal?.id || foundInManual?.linkedSignalId;
+      if (sigIdToRemove) {
+        setSignals((prev) => {
+          const updatedSignals = prev.filter((s) => s.id !== sigIdToRemove && !idsToDelete.has(s.id));
+          try {
+            localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_SIGNALS_KEY, user?.id), JSON.stringify(updatedSignals));
+          } catch (e) {}
+          return updatedSignals;
+        });
+        setDeletedSignalIds((prev) => {
+          const updated = Array.from(new Set([...prev, sigIdToRemove]));
+          try {
+            localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_DELETED_SIGNALS_KEY, user?.id), JSON.stringify(updated));
+          } catch (e) {}
+          return updated;
+        });
+      }
+    }
 
+    // Persist permanent deletion to backend
     const token = authToken || localStorage.getItem('market_ai_auth_token');
     if (token) {
+      fetch('/api/user/trade-journal/delete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ tradeIds: Array.from(idsToDelete) }),
+      }).catch((err) => console.warn('Backend delete trade failed:', err));
+
       fetch('/api/user/sync-data', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ tradeJournal: [] }),
+        body: JSON.stringify({
+          deletedJournalTradeIds: newDeletedJournalIds,
+        }),
+      }).catch((err) => console.warn('Cloud sync deletedJournalTradeIds failed:', err));
+    }
+  };
+
+  const handleClearAllManualTrades = () => {
+    const allIds = new Set<string>();
+    for (const t of manualTrades) {
+      if (t && t.id) {
+        allIds.add(t.id);
+        allIds.add(`sig_journal_${t.id}`);
+      }
+      if (t && t.linkedSignalId) {
+        allIds.add(t.linkedSignalId);
+        allIds.add(`sig_journal_${t.linkedSignalId}`);
+      }
+    }
+    for (const s of signals) {
+      if (s && s.id) {
+        allIds.add(s.id);
+        allIds.add(`sig_journal_${s.id}`);
+      }
+    }
+
+    const newDeletedJournalIds = Array.from(new Set([...deletedJournalTradeIds, ...Array.from(allIds)]));
+    setDeletedJournalTradeIds(newDeletedJournalIds);
+    setManualTrades([]);
+
+    try {
+      localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_DELETED_JOURNAL_KEY, user?.id), JSON.stringify(newDeletedJournalIds));
+      localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_MANUAL_TRADES_KEY, user?.id), JSON.stringify([]));
+    } catch (e) {}
+
+    const token = authToken || localStorage.getItem('market_ai_auth_token');
+    if (token) {
+      fetch('/api/user/trade-journal/clear-all', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+      }).catch((err) => console.warn('Backend clear all trades failed:', err));
+
+      fetch('/api/user/sync-data', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          tradeJournal: [],
+          deletedJournalTradeIds: newDeletedJournalIds,
+        }),
       }).catch((err) => console.warn('Cloud clear tradeJournal failed:', err));
     }
   };
@@ -2021,6 +2191,8 @@ export default function App() {
               manualTrades={manualTrades}
               quotes={quotes}
               lang={lang}
+              user={user}
+              deletedJournalTradeIds={deletedJournalTradeIds}
               onNavigateToJournal={() => setActiveTab('journal')}
             />
 
@@ -2121,6 +2293,7 @@ export default function App() {
               signals={signals}
               quotes={quotes}
               manualTrades={manualTrades}
+              deletedJournalTradeIds={deletedJournalTradeIds}
               onSaveManualTrade={handleSaveManualTrade}
               onDeleteManualTrade={handleDeleteManualTrade}
               onClearAllManualTrades={handleClearAllManualTrades}

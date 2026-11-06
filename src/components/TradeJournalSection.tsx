@@ -44,6 +44,7 @@ interface TradeJournalSectionProps {
   signals: TradingSignal[];
   quotes: Record<InstrumentId, MarketQuote>;
   manualTrades: TradeJournalEntry[];
+  deletedJournalTradeIds?: string[];
   onSaveManualTrade: (trade: TradeJournalEntry) => void;
   onDeleteManualTrade: (tradeId: string) => void;
   onClearAllManualTrades?: () => void;
@@ -56,6 +57,7 @@ export const TradeJournalSection: React.FC<TradeJournalSectionProps> = ({
   signals,
   quotes,
   manualTrades,
+  deletedJournalTradeIds,
   onSaveManualTrade,
   onDeleteManualTrade,
   onClearAllManualTrades,
@@ -81,14 +83,14 @@ export const TradeJournalSection: React.FC<TradeJournalSectionProps> = ({
 
   // Unify platform signals and manual trades
   const unifiedEntries = useMemo(() => {
-    let list = unifyJournalEntries(signals, manualTrades, quotes, user);
+    let list = unifyJournalEntries(signals, manualTrades, quotes, user, deletedJournalTradeIds);
     if (sourceFilter === 'SIGNALS') {
       list = list.filter((t) => !t.isManual);
     } else if (sourceFilter === 'MANUAL') {
       list = list.filter((t) => t.isManual);
     }
     return list;
-  }, [signals, manualTrades, quotes, sourceFilter, user]);
+  }, [signals, manualTrades, quotes, sourceFilter, user, deletedJournalTradeIds]);
 
   // Calendar cells for current year and month
   const calendarCells = useMemo(() => {
@@ -267,12 +269,12 @@ export const TradeJournalSection: React.FC<TradeJournalSectionProps> = ({
               </button>
             </div>
 
-            {/* Clear All Manual Trades Button (if manual trades exist) */}
-            {onClearAllManualTrades && manualTrades.length > 0 && (
+            {/* Clear All Trades Button (if manual trades or unified entries exist) */}
+            {onClearAllManualTrades && (manualTrades.length > 0 || unifiedEntries.length > 0) && (
               <button
                 onClick={() => setIsConfirmClearOpen(true)}
                 className="px-3 py-2 rounded-xl bg-white/5 hover:bg-rose-500/20 text-slate-400 hover:text-rose-300 border border-white/10 hover:border-rose-500/30 font-semibold text-xs transition flex items-center gap-1.5 cursor-pointer backdrop-blur-md"
-                title={lang === 'ro' ? 'Golește toate tranzacțiile din jurnal' : 'Clear all manual trades from journal'}
+                title={lang === 'ro' ? 'Golește toate tranzacțiile din jurnal' : 'Clear all trades from journal'}
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">{lang === 'ro' ? 'Golește Jurnal' : 'Clear Journal'}</span>
@@ -718,6 +720,13 @@ export const TradeJournalSection: React.FC<TradeJournalSectionProps> = ({
                       >
                         {lang === 'ro' ? 'Vezi Ziua' : 'View Day'}
                       </button>
+                      <button
+                        onClick={() => onDeleteManualTrade(trade.id)}
+                        className="p-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 hover:text-white border border-rose-500/30 text-xs transition cursor-pointer"
+                        title={lang === 'ro' ? 'Șterge definitiv tranzacția' : 'Delete trade permanently'}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
                   </div>
                 );
@@ -779,8 +788,8 @@ export const TradeJournalSection: React.FC<TradeJournalSectionProps> = ({
                 </h3>
                 <p className="text-xs text-slate-400 mt-0.5">
                   {lang === 'ro'
-                    ? 'Această acțiune va șterge toate tranzacțiile manuale salvate local și în cloud.'
-                    : 'This action will delete all manually saved trades locally and in the cloud.'}
+                    ? 'Această acțiune va șterge definitiv toate tranzacțiile din jurnal (atât manuale, cât și semnale AI). Ele vor rămâne șterse pe vecie și nu vor mai fi restaurate.'
+                    : 'This action will permanently delete all trades from the journal (both manual and AI signals). They will stay deleted forever and will not be restored.'}
                 </p>
               </div>
             </div>

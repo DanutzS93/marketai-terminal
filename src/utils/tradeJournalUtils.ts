@@ -230,11 +230,31 @@ export function unifyJournalEntries(
   signals: TradingSignal[],
   manualEntries: TradeJournalEntry[],
   quotes?: Record<string, MarketQuote>,
-  user?: any
+  user?: any,
+  deletedJournalIds?: string[]
 ): TradeJournalEntry[] {
-  // Strip out any demo or dummy sample entries
-  const cleanManual = (manualEntries || []).filter((m) => !isDemoOrSampleTrade(m));
-  const convertedSignals = (signals || []).map((s) => convertSignalToJournalEntry(s, quotes, user));
+  const deletedSet = new Set<string>([
+    ...(deletedJournalIds || []),
+    ...(user?.deletedJournalTradeIds || []),
+  ]);
+
+  // Strip out any demo or dummy sample entries and permanently deleted entries
+  const cleanManual = (manualEntries || []).filter((m) => {
+    if (!m || isDemoOrSampleTrade(m)) return false;
+    if (deletedSet.has(m.id)) return false;
+    if (m.linkedSignalId && deletedSet.has(m.linkedSignalId)) return false;
+    if (deletedSet.has(`sig_journal_${m.id}`)) return false;
+    return true;
+  });
+
+  // Filter out any signals that have been deleted from the journal
+  const convertedSignals = (signals || [])
+    .filter((s) => {
+      if (!s || !s.id) return false;
+      if (deletedSet.has(s.id) || deletedSet.has(`sig_journal_${s.id}`)) return false;
+      return true;
+    })
+    .map((s) => convertSignalToJournalEntry(s, quotes, user));
 
   const manualMap = new Map<string, TradeJournalEntry>();
   for (const m of cleanManual) {
@@ -247,6 +267,9 @@ export function unifyJournalEntries(
 
   for (const cs of convertedSignals) {
     const key = cs.linkedSignalId || cs.id;
+    if (deletedSet.has(cs.id) || (cs.linkedSignalId && deletedSet.has(cs.linkedSignalId))) {
+      continue;
+    }
     processedKeys.add(key);
     const existingManual = manualMap.get(key);
 
@@ -290,7 +313,9 @@ export function unifyJournalEntries(
   for (const m of cleanManual) {
     const key = m.linkedSignalId || m.id;
     if (!processedKeys.has(key)) {
-      result.push(m);
+      if (!deletedSet.has(m.id) && (!m.linkedSignalId || !deletedSet.has(m.linkedSignalId))) {
+        result.push(m);
+      }
     }
   }
 

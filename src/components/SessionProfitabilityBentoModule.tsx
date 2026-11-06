@@ -95,6 +95,8 @@ interface SessionProfitabilityBentoModuleProps {
   manualTrades: TradeJournalEntry[];
   quotes: Record<InstrumentId, MarketQuote>;
   lang: 'ro' | 'en';
+  user?: any;
+  deletedJournalTradeIds?: string[];
   onNavigateToJournal?: () => void;
   className?: string;
 }
@@ -104,6 +106,8 @@ export const SessionProfitabilityBentoModule: React.FC<SessionProfitabilityBento
   manualTrades,
   quotes,
   lang,
+  user,
+  deletedJournalTradeIds,
   onNavigateToJournal,
   className = '',
 }) => {
@@ -166,8 +170,8 @@ export const SessionProfitabilityBentoModule: React.FC<SessionProfitabilityBento
 
   // Unify all signals and manual journal entries
   const allEntries = useMemo(() => {
-    return unifyJournalEntries(signals, manualTrades, quotes);
-  }, [signals, manualTrades, quotes]);
+    return unifyJournalEntries(signals, manualTrades, quotes, user, deletedJournalTradeIds);
+  }, [signals, manualTrades, quotes, user, deletedJournalTradeIds]);
 
   // Apply filters
   const filteredEntries = useMemo(() => {
