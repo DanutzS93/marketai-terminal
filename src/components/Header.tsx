@@ -28,7 +28,7 @@ import {
 import { MarketQuote, InstrumentId, UserProfile } from '../types';
 import { getMarketScheduleStatus } from '../utils/marketSchedule';
 
-export type ActiveTab = 'overview' | 'signals' | 'journal' | 'rules' | 'risk' | 'macro';
+export type ActiveTab = 'overview' | 'signals' | 'scheduler' | 'journal' | 'rules' | 'risk' | 'macro';
 
 interface HeaderProps {
   quotes: Record<InstrumentId, MarketQuote>;
@@ -108,6 +108,14 @@ export const Header: React.FC<HeaderProps> = ({
       shortLabelEn: 'AI Signals',
       icon: <Sparkles className="w-4 h-4 text-amber-400" />,
       badge: signalsCount,
+    },
+    {
+      id: 'scheduler',
+      labelRo: 'Programare Trade-uri Automate',
+      labelEn: 'Automated Trade Scheduler',
+      shortLabelRo: 'Programare',
+      shortLabelEn: 'Scheduler',
+      icon: <Clock className="w-4 h-4 text-purple-400" />,
     },
     {
       id: 'journal',

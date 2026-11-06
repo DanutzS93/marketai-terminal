@@ -30,6 +30,7 @@ import {
 } from './src/utils/supabaseDb';
 import { filter30DaySignals, calculateDynamicInstrumentTimeframeSL } from './src/utils/signalUtils';
 import { isSignalExpiredByMarketClose, isMarketClosedUniversal } from './src/utils/marketSchedule';
+import { TradeSchedulerConfig, ScheduledTradeRow, ScheduledExecutionLog, InstrumentId, TimeFrame } from './src/types';
 
 dotenv.config();
 
@@ -379,6 +380,68 @@ function ensureUserBridgeAccounts(user: StoredUser): BridgeAccount[] {
   return currentAccounts;
 }
 
+function getDefaultTradeSchedulerConfig(): TradeSchedulerConfig {
+  return {
+    enabled: false,
+    timezone: 'Europe/Bucharest',
+    items: [
+      { instrumentId: 'GOLD', enabled: false, timeSlot1: '09:30', timeSlot2: '15:30', timeSlot3: '17:00', targetAccounts: ['all'], timeframe: '1h', strategy: 'Auto Smart Structure' },
+      { instrumentId: 'NASDAQ', enabled: false, timeSlot1: '09:30', timeSlot2: '15:30', timeSlot3: '17:00', targetAccounts: ['all'], timeframe: '1h', strategy: 'Auto Smart Structure' },
+      { instrumentId: 'SPX500', enabled: false, timeSlot1: '15:30', timeSlot2: '17:00', timeSlot3: '20:00', targetAccounts: ['all'], timeframe: '1h', strategy: 'Auto Smart Structure' },
+      { instrumentId: 'DOW_JONES', enabled: false, timeSlot1: '15:30', timeSlot2: '17:00', timeSlot3: '20:00', targetAccounts: ['all'], timeframe: '1h', strategy: 'Auto Smart Structure' },
+      { instrumentId: 'EURUSD', enabled: false, timeSlot1: '09:00', timeSlot2: '14:30', timeSlot3: '16:00', targetAccounts: ['all'], timeframe: '1h', strategy: 'Auto Smart Structure' },
+      { instrumentId: 'GBPUSD', enabled: false, timeSlot1: '09:00', timeSlot2: '14:30', timeSlot3: '16:00', targetAccounts: ['all'], timeframe: '1h', strategy: 'Auto Smart Structure' },
+      { instrumentId: 'USDJPY', enabled: false, timeSlot1: '08:00', timeSlot2: '15:30', timeSlot3: '23:00', targetAccounts: ['all'], timeframe: '1h', strategy: 'Auto Smart Structure' },
+      { instrumentId: 'NQ_F', enabled: false, timeSlot1: '15:30', timeSlot2: '17:00', timeSlot3: '19:00', targetAccounts: ['all'], timeframe: '1h', strategy: 'Auto Smart Structure' },
+      { instrumentId: 'ES_F', enabled: false, timeSlot1: '15:30', timeSlot2: '17:00', timeSlot3: '19:00', targetAccounts: ['all'], timeframe: '1h', strategy: 'Auto Smart Structure' },
+      { instrumentId: 'YM_F', enabled: false, timeSlot1: '15:30', timeSlot2: '17:00', timeSlot3: '19:00', targetAccounts: ['all'], timeframe: '1h', strategy: 'Auto Smart Structure' },
+      { instrumentId: 'GC_F', enabled: false, timeSlot1: '09:30', timeSlot2: '15:30', timeSlot3: '17:00', targetAccounts: ['all'], timeframe: '1h', strategy: 'Auto Smart Structure' },
+    ],
+    logs: [],
+  };
+}
+
+function ensureUserTradeScheduler(user: StoredUser): TradeSchedulerConfig {
+  const defaultConf = getDefaultTradeSchedulerConfig();
+  if (!user.tradeScheduler || typeof user.tradeScheduler !== 'object') {
+    user.tradeScheduler = defaultConf;
+    return user.tradeScheduler;
+  }
+  user.tradeScheduler.enabled = typeof user.tradeScheduler.enabled === 'boolean' ? user.tradeScheduler.enabled : false;
+  user.tradeScheduler.timezone = user.tradeScheduler.timezone || 'Europe/Bucharest';
+  user.tradeScheduler.logs = Array.isArray(user.tradeScheduler.logs) ? user.tradeScheduler.logs : [];
+
+  if (!Array.isArray(user.tradeScheduler.items)) {
+    user.tradeScheduler.items = defaultConf.items;
+  } else {
+    const existingMap = new Map<string, ScheduledTradeRow>();
+    for (const it of user.tradeScheduler.items) {
+      if (it && it.instrumentId) existingMap.set(it.instrumentId, it);
+    }
+    const merged: ScheduledTradeRow[] = [];
+    for (const def of defaultConf.items) {
+      const ex = existingMap.get(def.instrumentId);
+      if (ex) {
+        merged.push({
+          ...def,
+          ...ex,
+          enabled: typeof ex.enabled === 'boolean' ? ex.enabled : def.enabled,
+          timeSlot1: ex.timeSlot1 !== undefined ? ex.timeSlot1 : def.timeSlot1,
+          timeSlot2: ex.timeSlot2 !== undefined ? ex.timeSlot2 : def.timeSlot2,
+          timeSlot3: ex.timeSlot3 !== undefined ? ex.timeSlot3 : def.timeSlot3,
+          targetAccounts: Array.isArray(ex.targetAccounts) ? ex.targetAccounts : ['all'],
+          timeframe: ex.timeframe || def.timeframe,
+          strategy: ex.strategy || def.strategy,
+        });
+      } else {
+        merged.push(def);
+      }
+    }
+    user.tradeScheduler.items = merged;
+  }
+  return user.tradeScheduler;
+}
+
 function isDemoOrSampleTrade(trade: any): boolean {
   if (!trade || typeof trade !== 'object') return false;
   const id = String(trade.id || '');
@@ -459,6 +522,7 @@ function formatUserForClient(u: StoredUser) {
     mt5OpenPositions: u.mt5OpenPositions || [],
     signals: u.signals || [],
     bridgeAccounts: ensureUserBridgeAccounts(u),
+    tradeScheduler: ensureUserTradeScheduler(u),
   };
 }
 
@@ -5286,6 +5350,25 @@ app.get('/api/economic-calendar', async (req, res) => {
     ];
   }
 
+  // Ensure every event has epochMs and isToday accurately computed
+  formattedEvents = formattedEvents.map((e) => {
+    let epoch = e.epochMs;
+    if (!epoch) {
+      if (e.id && e.id.includes('mon')) epoch = monday.getTime();
+      else if (e.id && e.id.includes('tue')) epoch = tuesday.getTime();
+      else if (e.id && e.id.includes('wed')) epoch = wednesday.getTime();
+      else if (e.id && e.id.includes('thu')) epoch = thursday.getTime();
+      else if (e.id && e.id.includes('fri')) epoch = friday.getTime();
+      else epoch = now.getTime();
+    }
+    const isToday = e.isToday !== undefined ? e.isToday : (new Date(epoch).toDateString() === now.toDateString());
+    return {
+      ...e,
+      epochMs: epoch,
+      isToday,
+    };
+  });
+
   // Sort events chronologically by real timestamp
   formattedEvents.sort((a, b) => {
     const timeA = a.epochMs || 0;
@@ -6747,6 +6830,150 @@ app.post('/api/user/regenerate-bridge-key', async (req, res) => {
     bridgeAccounts: accounts,
     user: formatUserForClient(user),
   });
+});
+
+// GET /api/user/trade-schedule
+app.get('/api/user/trade-schedule', (req, res) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.replace(/^Bearer\s+/i, '').trim();
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const users = loadUsersDb();
+  const user = findUserByAuthToken(token, users);
+  if (!user) return res.status(401).json({ error: 'User not found' });
+
+  const sched = ensureUserTradeScheduler(user);
+  const now = new Date();
+  const serverTime = now.toLocaleTimeString('ro-RO', { timeZone: 'Europe/Bucharest', hour12: false, hour: '2-digit', minute: '2-digit' });
+  const serverDate = now.toLocaleDateString('ro-RO', { timeZone: 'Europe/Bucharest', year: 'numeric', month: '2-digit', day: '2-digit' });
+
+  return res.json({
+    success: true,
+    schedule: sched,
+    serverTime,
+    serverDate,
+    timezone: 'Europe/Bucharest',
+  });
+});
+
+// POST /api/user/trade-schedule
+app.post('/api/user/trade-schedule', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.replace(/^Bearer\s+/i, '').trim();
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const users = loadUsersDb();
+  const user = findUserByAuthToken(token, users);
+  if (!user) return res.status(401).json({ error: 'User not found' });
+
+  const { schedule } = req.body;
+  if (!schedule || typeof schedule !== 'object') {
+    return res.status(400).json({ error: 'Invalid schedule object' });
+  }
+
+  const current = ensureUserTradeScheduler(user);
+  if (typeof schedule.enabled === 'boolean') current.enabled = schedule.enabled;
+  if (Array.isArray(schedule.items)) {
+    for (const newItem of schedule.items) {
+      if (!newItem || !newItem.instrumentId) continue;
+      const target = current.items.find((it) => it.instrumentId === newItem.instrumentId);
+      if (target) {
+        if (typeof newItem.enabled === 'boolean') target.enabled = newItem.enabled;
+        if (newItem.timeSlot1 !== undefined) target.timeSlot1 = String(newItem.timeSlot1 || '').trim();
+        if (newItem.timeSlot2 !== undefined) target.timeSlot2 = String(newItem.timeSlot2 || '').trim();
+        if (newItem.timeSlot3 !== undefined) target.timeSlot3 = String(newItem.timeSlot3 || '').trim();
+        if (Array.isArray(newItem.targetAccounts)) target.targetAccounts = newItem.targetAccounts;
+        if (newItem.timeframe) target.timeframe = newItem.timeframe;
+        if (newItem.strategy) target.strategy = newItem.strategy;
+      }
+    }
+  }
+
+  user.tradeScheduler = current;
+  await saveUsersDb(users, user.id);
+
+  const now = new Date();
+  const serverTime = now.toLocaleTimeString('ro-RO', { timeZone: 'Europe/Bucharest', hour12: false, hour: '2-digit', minute: '2-digit' });
+  const serverDate = now.toLocaleDateString('ro-RO', { timeZone: 'Europe/Bucharest', year: 'numeric', month: '2-digit', day: '2-digit' });
+
+  return res.json({
+    success: true,
+    schedule: current,
+    serverTime,
+    serverDate,
+    user: formatUserForClient(user),
+  });
+});
+
+// POST /api/user/trade-schedule/test-trigger
+app.post('/api/user/trade-schedule/test-trigger', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.replace(/^Bearer\s+/i, '').trim();
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const users = loadUsersDb();
+  const user = findUserByAuthToken(token, users);
+  if (!user) return res.status(401).json({ error: 'User not found' });
+
+  const { instrumentId = 'GOLD', timeframe = '1h', strategy = 'Auto Smart Structure', targetAccounts = ['all'] } = req.body;
+
+  try {
+    const liveData = await getRealLiveMarketData();
+    const quoteKey = instrumentId === 'NASDAQ' ? 'nasdaq' :
+      instrumentId === 'SPX500' ? 'spx500' :
+      instrumentId === 'DOW_JONES' ? 'dow' :
+      instrumentId === 'GOLD' ? 'gold' :
+      instrumentId === 'NQ_F' ? 'nq_f' :
+      instrumentId === 'ES_F' ? 'es_f' :
+      instrumentId === 'YM_F' ? 'ym_f' :
+      instrumentId === 'GC_F' ? 'gc_f' :
+      instrumentId === 'EURUSD' ? 'eurusd' :
+      instrumentId === 'GBPUSD' ? 'gbpusd' : 'usdjpy';
+
+    const quote = liveData[quoteKey];
+    if (!quote || quote.price <= 0) {
+      return res.status(503).json({ error: 'Cotația de piață este indisponibilă momentan.' });
+    }
+
+    const rawSignal = buildDeterministicSignal(instrumentId, timeframe, quote, strategy, false);
+    const signal = validateAndFixSignalPrices(rawSignal, quote.price, quote.atr);
+    signal.userId = user.id;
+    signal.targetAccounts = Array.isArray(targetAccounts) && targetAccounts.length > 0 ? targetAccounts : ['all'];
+    signal.placedAccounts = {};
+
+    user.signals = user.signals || [];
+    user.signals.unshift(signal);
+    user.signals = filter30DaySignals(user.signals, user.deletedSignalIds);
+
+    const scheduler = ensureUserTradeScheduler(user);
+    scheduler.logs = scheduler.logs || [];
+    scheduler.logs.unshift({
+      id: `log_test_${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      timeSlot: 'TEST MANUAL',
+      instrumentId,
+      signalId: signal.id,
+      signalTitle: signal.titleRo || signal.title,
+      signalType: signal.type,
+      executionType: signal.executionType,
+      targetAccounts: signal.targetAccounts,
+      status: 'SUCCESS',
+      message: `[TEST MANUAL] Semnal ${signal.type} (${signal.executionType}) generat la ${signal.entryPrice} și trimis spre EA!`,
+    });
+    scheduler.logs = scheduler.logs.slice(0, 50);
+
+    await saveUsersDb(users, user.id);
+    invalidateMt5SignalsCache(user.id);
+
+    return res.json({
+      success: true,
+      signal,
+      message: `Semnal de test generat și trimis spre EA cu succes pentru ${instrumentId}!`,
+    });
+  } catch (err: any) {
+    console.error('Test trigger failed:', err);
+    return res.status(500).json({ error: 'Eroare la generarea semnalului de test' });
+  }
 });
 
 // Helper to extract MT5 API token from headers, query params or body
@@ -8706,6 +8933,127 @@ async function startServer() {
       }
     } catch (e) {}
   }, 30000);
+
+  // Deduplication cache for scheduled trade executions (prevents duplicate triggers in the same minute)
+  const scheduledExecutedKeys = new Set<string>();
+
+  // Automated Trade Scheduler background worker (runs every 20 seconds to catch scheduled minutes accurately)
+  setInterval(async () => {
+    try {
+      const now = new Date();
+      // Format Romanian local time (HH:MM and YYYY-MM-DD)
+      const roTimeStr = now.toLocaleTimeString('ro-RO', { timeZone: 'Europe/Bucharest', hour12: false, hour: '2-digit', minute: '2-digit' });
+      const roDateStr = now.toLocaleDateString('ro-RO', { timeZone: 'Europe/Bucharest', year: 'numeric', month: '2-digit', day: '2-digit' });
+
+      // Prune keys if large
+      if (scheduledExecutedKeys.size > 5000) {
+        scheduledExecutedKeys.clear();
+      }
+
+      const users = loadUsersDb();
+      for (const user of Object.values(users)) {
+        if (!user || user.status === 'blocked' || !isSubscriptionActive(user)) continue;
+        const scheduler = ensureUserTradeScheduler(user);
+        if (!scheduler || scheduler.enabled === false) continue;
+
+        for (const item of scheduler.items) {
+          if (!item || !item.enabled) continue;
+
+          // Check slots 1, 2, 3
+          const slots = [
+            { slot: 1, time: item.timeSlot1 },
+            { slot: 2, time: item.timeSlot2 },
+            { slot: 3, time: item.timeSlot3 },
+          ];
+
+          for (const s of slots) {
+            if (!s.time || s.time.trim() === '') continue;
+            const targetTime = s.time.trim();
+            if (targetTime === roTimeStr) {
+              const execKey = `${user.id}_${item.instrumentId}_${roDateStr}_${roTimeStr}_slot${s.slot}`;
+              if (scheduledExecutedKeys.has(execKey)) continue;
+              scheduledExecutedKeys.add(execKey);
+
+              console.log(`[Trade Scheduler] ⏰ Triggering scheduled trade for ${user.username} on ${item.instrumentId} (Slot ${s.slot}: ${s.time} EET)...`);
+
+              if (isMarketClosedServer()) {
+                console.log(`[Trade Scheduler] ⏸️ Skipped ${item.instrumentId} for ${user.username} because market is closed.`);
+                scheduler.logs = scheduler.logs || [];
+                scheduler.logs.unshift({
+                  id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+                  timestamp: new Date().toISOString(),
+                  timeSlot: s.time,
+                  instrumentId: item.instrumentId,
+                  status: 'MARKET_CLOSED',
+                  message: 'Piața este închisă (weekend). Semnalul nu a fost plasat.',
+                });
+                scheduler.logs = scheduler.logs.slice(0, 50);
+                await saveUsersDb(users, user.id);
+                continue;
+              }
+
+              try {
+                const liveData = await getRealLiveMarketData();
+                const quoteKey = item.instrumentId === 'NASDAQ' ? 'nasdaq' :
+                  item.instrumentId === 'SPX500' ? 'spx500' :
+                  item.instrumentId === 'DOW_JONES' ? 'dow' :
+                  item.instrumentId === 'GOLD' ? 'gold' :
+                  item.instrumentId === 'NQ_F' ? 'nq_f' :
+                  item.instrumentId === 'ES_F' ? 'es_f' :
+                  item.instrumentId === 'YM_F' ? 'ym_f' :
+                  item.instrumentId === 'GC_F' ? 'gc_f' :
+                  item.instrumentId === 'EURUSD' ? 'eurusd' :
+                  item.instrumentId === 'GBPUSD' ? 'gbpusd' : 'usdjpy';
+
+                const quote = liveData[quoteKey];
+                if (!quote || quote.price <= 0) {
+                  console.warn(`[Trade Scheduler] Quote unavailable for ${item.instrumentId}`);
+                  continue;
+                }
+
+                const tf = item.timeframe || '1h';
+                const strat = item.strategy || 'Auto Smart Structure';
+
+                const rawSignal = buildDeterministicSignal(item.instrumentId, tf, quote, strat, false);
+                const signal = validateAndFixSignalPrices(rawSignal, quote.price, quote.atr);
+                signal.userId = user.id;
+                signal.targetAccounts = Array.isArray(item.targetAccounts) && item.targetAccounts.length > 0 ? item.targetAccounts : ['all'];
+                signal.placedAccounts = {};
+
+                user.signals = user.signals || [];
+                user.signals.unshift(signal);
+                user.signals = filter30DaySignals(user.signals, user.deletedSignalIds);
+
+                scheduler.logs = scheduler.logs || [];
+                scheduler.logs.unshift({
+                  id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+                  timestamp: new Date().toISOString(),
+                  timeSlot: s.time,
+                  instrumentId: item.instrumentId,
+                  signalId: signal.id,
+                  signalTitle: signal.titleRo || signal.title,
+                  signalType: signal.type,
+                  executionType: signal.executionType,
+                  targetAccounts: signal.targetAccounts,
+                  status: 'SUCCESS',
+                  message: `Semnal programat ${signal.type} (${signal.executionType}) generat la ${signal.entryPrice} și trimis spre EA!`,
+                });
+                scheduler.logs = scheduler.logs.slice(0, 50);
+
+                await saveUsersDb(users, user.id);
+                invalidateMt5SignalsCache(user.id);
+                console.log(`[Trade Scheduler] ✅ Successfully generated and dispatched signal ${signal.id} for ${user.username} on ${item.instrumentId} (Slot ${s.slot})!`);
+              } catch (err: any) {
+                console.error(`[Trade Scheduler] ❌ Failed to execute scheduled trade:`, err);
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[Trade Scheduler] Background scheduler interval error:', e);
+    }
+  }, 20000);
 
   httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`Server MarketAI activ cu cotare REALĂ LSE și WebSocket la http://localhost:${PORT}`);

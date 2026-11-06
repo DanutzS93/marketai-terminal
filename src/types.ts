@@ -260,6 +260,39 @@ export interface UserProfile {
   tradeJournal?: TradeJournalEntry[];
   mt5OpenPositions?: any[];
   bridgeAccounts?: BridgeAccount[];
+  tradeScheduler?: TradeSchedulerConfig;
+}
+
+export interface ScheduledTradeRow {
+  instrumentId: InstrumentId;
+  enabled: boolean;
+  timeSlot1: string; // e.g. "09:30" or ""
+  timeSlot2: string; // e.g. "15:30" or ""
+  timeSlot3: string; // e.g. "17:00" or ""
+  targetAccounts?: string[]; // e.g. ['all'] or ['acc_1', 'acc_2']
+  timeframe?: TimeFrame; // default '1h'
+  strategy?: string; // default 'Auto Smart Structure'
+}
+
+export interface ScheduledExecutionLog {
+  id: string;
+  timestamp: string; // ISO string
+  timeSlot: string; // e.g. "15:30"
+  instrumentId: InstrumentId;
+  signalId?: string;
+  signalTitle?: string;
+  signalType?: string;
+  executionType?: string;
+  targetAccounts?: string[];
+  status: 'SUCCESS' | 'MARKET_CLOSED' | 'ERROR';
+  message?: string;
+}
+
+export interface TradeSchedulerConfig {
+  enabled: boolean;
+  timezone: string; // 'Europe/Bucharest'
+  items: ScheduledTradeRow[];
+  logs?: ScheduledExecutionLog[];
 }
 
 export interface TradeJournalEntry {

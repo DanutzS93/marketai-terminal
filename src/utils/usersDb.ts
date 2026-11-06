@@ -10,6 +10,7 @@ import {
   saveInviteCodeToSupabase,
   deleteInviteCodeFromSupabase,
 } from './supabaseDb';
+import { TradeSchedulerConfig } from '../types';
 
 /**
  * Secure password hashing using Node.js scrypt with cryptographic salt
@@ -100,6 +101,7 @@ export interface StoredUser {
   mt5ProcessedSignalIds?: string[];
   ninjaTraderProcessedSignalIds?: string[];
   bridgeAccounts?: BridgeAccount[];
+  tradeScheduler?: TradeSchedulerConfig;
 }
 
 export interface StoredInviteCode {

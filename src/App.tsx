@@ -16,6 +16,8 @@ import { ConfirmDeleteModal } from './components/ConfirmDeleteModal';
 import { Mt5IntegrationModal } from './components/Mt5IntegrationModal';
 import { NinjaTraderIntegrationModal } from './components/NinjaTraderIntegrationModal';
 import { TradeJournalSection } from './components/TradeJournalSection';
+import { AutomatedTradeSchedulerSection } from './components/AutomatedTradeSchedulerSection';
+import { UsdHighImpactWarningModal, EconomicNewsEvent } from './components/UsdHighImpactWarningModal';
 import { SessionProfitabilityBentoModule } from './components/SessionProfitabilityBentoModule';
 import { MarketQuote, TradingSignal, InstrumentId, TimeFrame, UserApiKeys, CustomSignalRule, UserProfile, TradeJournalEntry } from './types';
 import { evaluateSignalOutcome, filter30DaySignals, mergeSignals } from './utils/signalUtils';
@@ -98,6 +100,10 @@ export default function App() {
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [isMt5ModalOpen, setIsMt5ModalOpen] = useState(false);
   const [isNinjaTraderModalOpen, setIsNinjaTraderModalOpen] = useState(false);
+  const [isUsdWarningModalOpen, setIsUsdWarningModalOpen] = useState(false);
+  const [usdWarningEvents, setUsdWarningEvents] = useState<EconomicNewsEvent[]>([]);
+  const [usdWarningInstrument, setUsdWarningInstrument] = useState<InstrumentId>('NASDAQ');
+  const [pendingSignalAction, setPendingSignalAction] = useState<(() => void) | null>(null);
   const [inviteCopied, setInviteCopied] = useState(false);
   const [isCloudSynced, setIsCloudSynced] = useState(false);
 
@@ -1732,6 +1738,82 @@ export default function App() {
     };
   }, [fetchMarketQuotes, apiKeys]);
 
+  // Verify economic calendar for today's high-impact USD events before the first signal generation of the day
+  const checkUsdHighImpactNewsBeforeGeneration = async (
+    targetInstrument: InstrumentId,
+    action: () => void | Promise<any>
+  ): Promise<boolean> => {
+    try {
+      const todayKey = new Date().toLocaleDateString('ro-RO', { timeZone: 'Europe/Bucharest' });
+      const ackKey = getUserStorageKey(`market_ai_usd_news_ack_${todayKey}`, user?.id);
+      const hasAcknowledgedToday = localStorage.getItem(ackKey) === 'true';
+
+      // If user has already seen and confirmed the pop-up warning today, allow immediate generation
+      if (hasAcknowledgedToday) {
+        action();
+        return true;
+      }
+
+      // Query economic calendar endpoint
+      const res = await fetch(`/api/economic-calendar?lang=${lang}`);
+      if (!res.ok) {
+        // In case calendar endpoint is unreachable, fail-soft to allow generation
+        action();
+        return true;
+      }
+
+      const data = await res.json();
+      const allEvents: EconomicNewsEvent[] = (data.events && Array.isArray(data.events)) ? data.events : [];
+
+      // Filter for USD high-impact news today
+      const usdHighImpactToday = allEvents.filter((e) => {
+        const isUsd = (e.currency || '').toUpperCase() === 'USD';
+        const isHigh = (e.impact || '').toUpperCase() === 'HIGH';
+        const isToday = (e as any).isToday === true;
+        return isUsd && isHigh && isToday;
+      });
+
+      if (usdHighImpactToday.length > 0) {
+        setUsdWarningEvents(usdHighImpactToday);
+        setUsdWarningInstrument(targetInstrument);
+        setPendingSignalAction(() => () => { action(); });
+        setIsUsdWarningModalOpen(true);
+        return false;
+      }
+
+      // No high-impact USD news found today: mark as confirmed for today and proceed
+      try {
+        localStorage.setItem(ackKey, 'true');
+      } catch (_) {}
+      action();
+      return true;
+    } catch (err) {
+      console.warn('Could not verify USD news calendar before signal generation:', err);
+      action();
+      return true;
+    }
+  };
+
+  const handleConfirmUsdWarning = () => {
+    const todayKey = new Date().toLocaleDateString('ro-RO', { timeZone: 'Europe/Bucharest' });
+    const ackKey = getUserStorageKey(`market_ai_usd_news_ack_${todayKey}`, user?.id);
+    try {
+      localStorage.setItem(ackKey, 'true');
+    } catch (_) {}
+    setIsUsdWarningModalOpen(false);
+
+    if (pendingSignalAction) {
+      const pending = pendingSignalAction;
+      setPendingSignalAction(null);
+      pending();
+    }
+  };
+
+  const handleCancelUsdWarning = () => {
+    setIsUsdWarningModalOpen(false);
+    setPendingSignalAction(null);
+  };
+
   // Handle generating fresh AI signal via server Gemini 3.6 Flash
   const handleGenerateSignal = async (
     instrumentId: InstrumentId,
@@ -1757,41 +1839,45 @@ export default function App() {
       return;
     }
 
-    setIsGeneratingSignal(true);
-    try {
-      const res = await fetch('/api/generate-ai-signal', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-          ...(apiKeys.geminiApiKey ? { 'x-gemini-api-key': apiKeys.geminiApiKey } : {}),
-        },
-        body: JSON.stringify({
-          instrumentId,
-          timeframe,
-          strategy,
-          lang,
-          geminiApiKey: apiKeys.geminiApiKey,
-          targetAccounts,
-        }),
-      });
+    const executeSignalFetch = async () => {
+      setIsGeneratingSignal(true);
+      try {
+        const res = await fetch('/api/generate-ai-signal', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+            ...(apiKeys.geminiApiKey ? { 'x-gemini-api-key': apiKeys.geminiApiKey } : {}),
+          },
+          body: JSON.stringify({
+            instrumentId,
+            timeframe,
+            strategy,
+            lang,
+            geminiApiKey: apiKeys.geminiApiKey,
+            targetAccounts,
+          }),
+        });
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data.signal) {
-          setSignals((prev) => [data.signal, ...prev]);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.signal) {
+            setSignals((prev) => [data.signal, ...prev]);
+          }
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          if (errData.error === 'MISSING_GEMINI_API_KEY' && !isAdmin) {
+            setIsKeysModalOpen(true);
+          }
         }
-      } else {
-        const errData = await res.json().catch(() => ({}));
-        if (errData.error === 'MISSING_GEMINI_API_KEY' && !isAdmin) {
-          setIsKeysModalOpen(true);
-        }
+      } catch (err) {
+        console.error('Failed to generate AI signal:', err);
+      } finally {
+        setIsGeneratingSignal(false);
       }
-    } catch (err) {
-      console.error('Failed to generate AI signal:', err);
-    } finally {
-      setIsGeneratingSignal(false);
-    }
+    };
+
+    await checkUsdHighImpactNewsBeforeGeneration(instrumentId, executeSignalFetch);
   };
 
   // Handle generating custom rule signal via server Gemini 3.6 Flash & Real Live Data
@@ -1814,41 +1900,49 @@ export default function App() {
       return null;
     }
 
-    setIsGeneratingSignal(true);
-    try {
-      const res = await fetch('/api/generate-custom-rule-signal', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-          ...(apiKeys.geminiApiKey ? { 'x-gemini-api-key': apiKeys.geminiApiKey } : {}),
-        },
-        body: JSON.stringify({
-          rule,
-          lang,
-          geminiApiKey: apiKeys.geminiApiKey,
-        }),
-      });
+    const executeCustomFetch = async () => {
+      setIsGeneratingSignal(true);
+      try {
+        const res = await fetch('/api/generate-custom-rule-signal', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+            ...(apiKeys.geminiApiKey ? { 'x-gemini-api-key': apiKeys.geminiApiKey } : {}),
+          },
+          body: JSON.stringify({
+            rule,
+            lang,
+            geminiApiKey: apiKeys.geminiApiKey,
+          }),
+        });
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data.signal) {
-          setSignals((prev) => [data.signal, ...prev]);
-          return data.signal;
+        if (res.ok) {
+          const data = await res.json();
+          if (data.signal) {
+            setSignals((prev) => [data.signal, ...prev]);
+            return data.signal;
+          }
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          if (errData.error === 'MISSING_GEMINI_API_KEY' && !isAdmin) {
+            setIsKeysModalOpen(true);
+          }
         }
-      } else {
-        const errData = await res.json().catch(() => ({}));
-        if (errData.error === 'MISSING_GEMINI_API_KEY' && !isAdmin) {
-          setIsKeysModalOpen(true);
-        }
+        return null;
+      } catch (err) {
+        console.error('Failed to generate custom rule signal:', err);
+        return null;
+      } finally {
+        setIsGeneratingSignal(false);
       }
+    };
+
+    const allowed = await checkUsdHighImpactNewsBeforeGeneration(rule.instrumentId, executeCustomFetch);
+    if (!allowed) {
       return null;
-    } catch (err) {
-      console.error('Failed to generate custom rule signal:', err);
-      return null;
-    } finally {
-      setIsGeneratingSignal(false);
     }
+    return null;
   };
 
   return (
@@ -1963,6 +2057,24 @@ export default function App() {
               onUpdateSignalPnl={handleUpdateSignalPnl}
               user={user}
               quotes={quotes}
+            />
+          </div>
+        )}
+
+        {activeTab === 'scheduler' && (
+          <div>
+            <AutomatedTradeSchedulerSection
+              user={user}
+              authToken={authToken}
+              quotes={quotes}
+              lang={lang}
+              onUpdateUser={(updated) => {
+                setUser(updated);
+                try {
+                  localStorage.setItem('market_ai_user_profile', JSON.stringify(updated));
+                } catch (_) {}
+              }}
+              onNavigateToSignals={() => setActiveTab('signals')}
             />
           </div>
         )}
@@ -2103,6 +2215,15 @@ export default function App() {
         onClose={() => setIsConfirmDeleteModalOpen(false)}
         onConfirm={executeDeleteAllSignals}
         signalCount={signals.length}
+        lang={lang}
+      />
+
+      <UsdHighImpactWarningModal
+        isOpen={isUsdWarningModalOpen}
+        onClose={handleCancelUsdWarning}
+        onConfirm={handleConfirmUsdWarning}
+        events={usdWarningEvents}
+        selectedInstrument={usdWarningInstrument}
         lang={lang}
       />
 
