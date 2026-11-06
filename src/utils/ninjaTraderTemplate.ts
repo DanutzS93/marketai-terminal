@@ -166,8 +166,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 // Start polling timer
                 pollTimer = new System.Threading.Timer(OnPollTimerCallback, null, 1000, PollIntervalSeconds * 1000);
 
-                // Start account sync timer (every 5 seconds)
-                accountTimer = new System.Threading.Timer(OnAccountSyncTimerCallback, null, 2000, 5000);
+                // Start account sync timer (every 2 seconds for responsive PnL updates)
+                accountTimer = new System.Threading.Timer(OnAccountSyncTimerCallback, null, 1000, 2000);
             }
             else if (State == State.Terminated)
             {

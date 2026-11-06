@@ -806,7 +806,23 @@ app.post('/api/user/sync-data', async (req, res) => {
     }
     for (const s of validIncoming) {
       if (s && s.id) {
-        existingMap.set(String(s.id), s);
+        const existing = existingMap.get(String(s.id));
+        if (existing) {
+          existingMap.set(String(s.id), {
+            ...existing,
+            ...s,
+            // Retain live server MT5/NT8 broker profit and states if server already has fresher values
+            liveProfit: existing.liveProfit !== undefined ? existing.liveProfit : s.liveProfit,
+            pnl: existing.pnl !== undefined ? existing.pnl : s.pnl,
+            realizedProfit: existing.realizedProfit !== undefined ? existing.realizedProfit : s.realizedProfit,
+            currentMarketPrice: (existing.currentMarketPrice && existing.currentMarketPrice > 0) ? existing.currentMarketPrice : s.currentMarketPrice,
+            status: (existing.status === 'RUNNING' || existing.status === 'CLOSED') ? existing.status : (s.status || existing.status),
+            outcomeStatus: (existing.outcomeStatus && existing.outcomeStatus !== 'PENDING') ? existing.outcomeStatus : (s.outcomeStatus || existing.outcomeStatus),
+            placedAccounts: { ...(s.placedAccounts || {}), ...(existing.placedAccounts || {}) },
+          });
+        } else {
+          existingMap.set(String(s.id), s);
+        }
       }
     }
     user.signals = filter30DaySignals(Array.from(existingMap.values()), user.deletedSignalIds);
@@ -7461,7 +7477,23 @@ app.post('/api/mt5/signals/sync', async (req, res) => {
     }
     for (const s of validIncoming) {
       if (s && s.id) {
-        existingMap.set(String(s.id), s);
+        const existing = existingMap.get(String(s.id));
+        if (existing) {
+          existingMap.set(String(s.id), {
+            ...existing,
+            ...s,
+            // Retain live server MT5/NT8 broker profit and states if server already has fresher values
+            liveProfit: existing.liveProfit !== undefined ? existing.liveProfit : s.liveProfit,
+            pnl: existing.pnl !== undefined ? existing.pnl : s.pnl,
+            realizedProfit: existing.realizedProfit !== undefined ? existing.realizedProfit : s.realizedProfit,
+            currentMarketPrice: (existing.currentMarketPrice && existing.currentMarketPrice > 0) ? existing.currentMarketPrice : s.currentMarketPrice,
+            status: (existing.status === 'RUNNING' || existing.status === 'CLOSED') ? existing.status : (s.status || existing.status),
+            outcomeStatus: (existing.outcomeStatus && existing.outcomeStatus !== 'PENDING') ? existing.outcomeStatus : (s.outcomeStatus || existing.outcomeStatus),
+            placedAccounts: { ...(s.placedAccounts || {}), ...(existing.placedAccounts || {}) },
+          });
+        } else {
+          existingMap.set(String(s.id), s);
+        }
       }
     }
 
@@ -8038,7 +8070,23 @@ app.post(['/api/ninjatrader/signals/sync', '/api/nt8/signals/sync'], async (req,
     }
     for (const s of validIncoming) {
       if (s && s.id) {
-        existingMap.set(String(s.id), s);
+        const existing = existingMap.get(String(s.id));
+        if (existing) {
+          existingMap.set(String(s.id), {
+            ...existing,
+            ...s,
+            // Retain live server MT5/NT8 broker profit and states if server already has fresher values
+            liveProfit: existing.liveProfit !== undefined ? existing.liveProfit : s.liveProfit,
+            pnl: existing.pnl !== undefined ? existing.pnl : s.pnl,
+            realizedProfit: existing.realizedProfit !== undefined ? existing.realizedProfit : s.realizedProfit,
+            currentMarketPrice: (existing.currentMarketPrice && existing.currentMarketPrice > 0) ? existing.currentMarketPrice : s.currentMarketPrice,
+            status: (existing.status === 'RUNNING' || existing.status === 'CLOSED') ? existing.status : (s.status || existing.status),
+            outcomeStatus: (existing.outcomeStatus && existing.outcomeStatus !== 'PENDING') ? existing.outcomeStatus : (s.outcomeStatus || existing.outcomeStatus),
+            placedAccounts: { ...(s.placedAccounts || {}), ...(existing.placedAccounts || {}) },
+          });
+        } else {
+          existingMap.set(String(s.id), s);
+        }
       }
     }
 

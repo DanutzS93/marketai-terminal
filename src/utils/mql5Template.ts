@@ -30,7 +30,7 @@ input string   InpApiKey                = "${apiKey}"; // Cheia MT5 API Personal
 input string   InpAccountSlotName       = "${accountName}"; // Identificator slot cont (ex: Cont 1, Cont 2)
 input string   InpBrokerSymbol          = "";             // Custom broker symbol (e.g. EURUSD.pro, XAUUSD, NAS100, leave blank for chart symbol)
 input int      InpMagicNumber           = 26082026;       // EA Magic Number
-input int      InpCheckInterval         = 5;              // Check interval in seconds (5s recommended to avoid socket pileup)
+input int      InpCheckInterval         = 2;              // Fast polling & sync interval in seconds (2s for ultra-fast live PnL updates)
 
 input group "=== [2] Dynamic Web Risk Synchronization ==="
 input bool     InpSyncRiskRulesFromWeb  = true;           // Auto-sync risk rules dynamically from MarketAI Web Panel
@@ -904,6 +904,24 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
 }
 
 //+------------------------------------------------------------------+
+//| Expert tick function: fast floating PnL synchronization on ticks |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   if(PositionsTotal() > 0)
+   {
+      static ulong lastTickSyncTime = 0;
+      ulong nowTick = GetTickCount64();
+      // Sync live floating PnL on price ticks at most once per second
+      if(nowTick - lastTickSyncTime >= 1000)
+      {
+         lastTickSyncTime = nowTick;
+         SendAccountSync();
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
 //| Expert timer function (polls Web API and manages positions)      |
 //+------------------------------------------------------------------+
 void OnTimer()
@@ -926,14 +944,16 @@ void OnTimer()
    ManageActivePositions();
    CheckAndReportTrackedTrades();
 
-   // Sync historical closed trades periodically every ~3 minutes (every 36 timer ticks = 180s)
-   if(syncCounter % 36 == 0)
+   // Sync historical closed trades periodically every ~3 minutes (every 90 timer ticks = 180s when interval=2)
+   if(syncCounter % 90 == 0)
    {
       SyncClosedHistoricalTrades();
    }
 
-   // Sync account balance periodically (every 3 timer ticks = ~15s)
-   if(syncCounter % 3 == 0)
+   // Sync account and open positions:
+   // - Every timer tick (every 2s) if there are open positions, to ensure real-time PnL
+   // - Every 5 timer ticks (~10s) when idle, to minimize network bandwidth
+   if(PositionsTotal() > 0 || (syncCounter % 5 == 0))
    {
       SendAccountSync();
    }
@@ -1030,20 +1050,40 @@ void SendAccountSync()
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
    
-   // Smart throttle: if balance & equity haven't changed, sync at most once every 12 seconds per chart
-   // If equity changed (open positions moving), throttle to at most once every 3 seconds
-   static datetime lastAccSyncTime = 0;
+   // Smart throttle:
+   // If there are open positions, sync as fast as every 1 second when equity or floating profit moves
+   // If idle (no open positions), sync every 10 seconds to keep connection alive
+   static ulong lastAccSyncTick = 0;
    static double lastSyncedBalance = 0;
    static double lastSyncedEquity = 0;
-   if(TimeCurrent() - lastAccSyncTime < 3)
+   ulong nowTick = GetTickCount64();
+
+   if(PositionsTotal() > 0)
    {
-      return;
+      // Allow syncing at most once every 1000ms
+      if(nowTick - lastAccSyncTick < 1000)
+      {
+         return;
+      }
+      // If equity & balance haven't changed at all, throttle to once every 3000ms
+      if(nowTick - lastAccSyncTick < 3000 && MathAbs(equity - lastSyncedEquity) < 0.01 && MathAbs(balance - lastSyncedBalance) < 0.01)
+      {
+         return;
+      }
    }
-   if(TimeCurrent() - lastAccSyncTime < 12 && MathAbs(balance - lastSyncedBalance) < 0.01 && MathAbs(equity - lastSyncedEquity) < 0.01)
+   else
    {
-      return;
+      // Idle mode: throttle to once every 10 seconds if balance and equity are unchanged
+      if(nowTick - lastAccSyncTick < 3000)
+      {
+         return;
+      }
+      if(nowTick - lastAccSyncTick < 10000 && MathAbs(balance - lastSyncedBalance) < 0.01 && MathAbs(equity - lastSyncedEquity) < 0.01)
+      {
+         return;
+      }
    }
-   lastAccSyncTime = TimeCurrent();
+   lastAccSyncTick = nowTick;
    lastSyncedBalance = balance;
    lastSyncedEquity = equity;
    

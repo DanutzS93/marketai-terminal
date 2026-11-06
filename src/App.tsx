@@ -277,8 +277,17 @@ export default function App() {
   }, []);
 
   // Poll auth/me every 3 seconds to sync live MT5 account balance, equity, and account number
+  // Dynamic auth & live broker trade synchronization
+  // Uses high-speed 1000ms polling during active trades, 3000ms in idle mode
+  const hasActiveTrades = Boolean(
+    (user?.mt5OpenPositions && user.mt5OpenPositions.length > 0) ||
+    signals.some((s) => s.status === 'ACTIVE' || s.outcomeStatus === 'RUNNING' || s.isEntryTriggered)
+  );
+
   useEffect(() => {
     if (!authToken) return;
+    const pollIntervalMs = hasActiveTrades ? 1000 : 3000;
+
     const interval = setInterval(async () => {
       try {
         const res = await fetch('/api/auth/me', {
@@ -326,7 +335,22 @@ export default function App() {
                 const updated = prevSignals.map((s) => {
                   const srv = data.user.signals.find((sig: any) => String(sig.id) === String(s.id));
                   if (!srv) return s;
-                  const newLiveProfit = srv.liveProfit;
+
+                  // Extract latest floating profit from open positions or signal snapshot
+                  let posProfit: number | undefined = undefined;
+                  if (Array.isArray(data.user.mt5OpenPositions)) {
+                    const p = data.user.mt5OpenPositions.find((pos: any) =>
+                      pos && (
+                        (pos.signalId && (String(pos.signalId) === String(s.id) || String(pos.signalId) === String(s.signal_id))) ||
+                        (pos.symbol && s.symbol && pos.symbol.toUpperCase().replace(/[^A-Z0-9]/g, '').includes(s.symbol.toUpperCase().replace(/[^A-Z0-9]/g, '')))
+                      )
+                    );
+                    if (p && typeof p.profit === 'number') {
+                      posProfit = p.profit;
+                    }
+                  }
+
+                  const newLiveProfit = posProfit !== undefined ? posProfit : srv.liveProfit;
                   const newPnl = srv.pnl;
                   const newStatus = srv.status;
                   const newOutcome = srv.outcomeStatus;
@@ -376,9 +400,9 @@ export default function App() {
       } catch (e) {
         // silent
       }
-    }, 3000);
+    }, pollIntervalMs);
     return () => clearInterval(interval);
-  }, [authToken]);
+  }, [authToken, hasActiveTrades]);
 
   // Save Cloud Data to Server whenever signals, apiKeys or deletedSignalIds update (Debounced 1500ms to eliminate burst requests)
   useEffect(() => {

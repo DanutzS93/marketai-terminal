@@ -1469,18 +1469,26 @@ export function calculateTradePnLMetrics(
     pnl = Math.round(dollarRisk * rr * 100) / 100;
     statusLabel = 'TP3 MAX Atins';
   } else if (status === 'RUNNING' || status === 'ACTIVE' || (signal.liveProfit !== undefined && !isClosed)) {
-    // 1. Direct MT5 broker floating profit if reported live
-    let liveProf = signal.liveProfit;
-    if (liveProf === undefined && !isClosed && Array.isArray(user?.mt5OpenPositions)) {
+    // 1. Check direct open positions reported by MT5 terminal first for fresh live PnL
+    let liveProf: number | undefined = undefined;
+    if (!isClosed && Array.isArray(user?.mt5OpenPositions) && user.mt5OpenPositions.length > 0) {
       const p = user.mt5OpenPositions.find((pos: any) =>
         pos && (
           (pos.signalId && (String(pos.signalId) === String(signal.id) || String(pos.signalId) === String(signal.signal_id))) ||
-          (pos.symbol && signal.symbol && pos.symbol.toUpperCase().replace(/[^A-Z0-9]/g, '').includes(signal.symbol.toUpperCase().replace(/[^A-Z0-9]/g, '')))
+          (pos.symbol && signal.symbol && (
+            pos.symbol.toUpperCase().replace(/[^A-Z0-9]/g, '').includes(signal.symbol.toUpperCase().replace(/[^A-Z0-9]/g, '')) ||
+            signal.symbol.toUpperCase().replace(/[^A-Z0-9]/g, '').includes(pos.symbol.toUpperCase().replace(/[^A-Z0-9]/g, ''))
+          ))
         )
       );
       if (p && typeof p.profit === 'number') {
         liveProf = p.profit;
       }
+    }
+
+    // 2. Fallback to signal's cached live profit from broker if not found in current open positions list
+    if (liveProf === undefined && signal.liveProfit !== undefined && typeof signal.liveProfit === 'number') {
+      liveProf = signal.liveProfit;
     }
 
     if (liveProf !== undefined && typeof liveProf === 'number') {
