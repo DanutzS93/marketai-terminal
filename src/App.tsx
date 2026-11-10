@@ -1540,9 +1540,10 @@ export default function App() {
         if (isClosedSignal) {
           if (sig.outcomeStatus === 'PENDING' || sig.outcomeStatus === 'RUNNING' || !sig.outcomeStatus) {
             hasChanges = true;
+            const effectivePnl = sig.pnl !== undefined ? sig.pnl : sig.realizedProfit;
             const termOutcome: NonNullable<TradingSignal['outcomeStatus']> = sig.status === 'CANCELLED'
               ? 'CANCELLED'
-              : (sig.pnl !== undefined && sig.pnl > 0 ? 'MANUAL_PROFIT' : (sig.pnl !== undefined && sig.pnl < 0 ? 'MANUAL_LOSS' : 'MANUAL_BE'));
+              : (effectivePnl !== undefined && effectivePnl > 0 ? 'MANUAL_PROFIT' : (effectivePnl !== undefined && effectivePnl < 0 ? 'MANUAL_LOSS' : 'MANUAL_BE'));
             return {
               ...sig,
               status: (sig.status === 'CANCELLED' ? 'CANCELLED' : 'CLOSED') as TradingSignal['status'],

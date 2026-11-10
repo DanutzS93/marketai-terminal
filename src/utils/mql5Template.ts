@@ -81,6 +81,7 @@ struct TrackedTrade {
    bool   isClosed;
    double finalPnl;
    datetime openTime;
+   datetime lastCloseAttempt;
 };
 TrackedTrade trackedTrades[];
 
@@ -864,6 +865,11 @@ int OnInit()
 
    string targetSymbol = (InpBrokerSymbol != "") ? InpBrokerSymbol : _Symbol;
    SetupTradeFillingMode(targetSymbol);
+
+   if(StringFind(InpUpdateURL, "fly.dev") >= 0 || StringFind(InpEndpointURL, "fly.dev") >= 0)
+   {
+      Print("[MarketAI] InpUpdateURL / InpEndpointURL contineau vechiul domeniu fly.dev. Redirectionare automata garantata la: ", "${currentOrigin}");
+   }
    
    long login = AccountInfoInteger(ACCOUNT_LOGIN);
    string serverName = AccountInfoString(ACCOUNT_SERVER);
@@ -1071,6 +1077,10 @@ string ForceHttps(string rawUrl)
    if(StringFind(u, "http://") == 0)
    {
       u = "https://" + StringSubstr(u, 7);
+   }
+   if(StringFind(u, "fly.dev") >= 0)
+   {
+      u = "${currentOrigin}";
    }
    return u;
 }
@@ -1396,7 +1406,11 @@ bool SendTradeUpdate(string signalId, string status, string outcome, string mile
    ArrayResize(result, 0);
    ResetLastError();
    
-   string updateURL = (InpUpdateURL != "") ? InpUpdateURL : "${mt5UpdateEndpoint}";
+   string updateURL = "${mt5UpdateEndpoint}";
+   if(InpUpdateURL != "" && StringFind(InpUpdateURL, "fly.dev") < 0)
+   {
+      updateURL = InpUpdateURL;
+   }
    updateURL = ForceHttps(updateURL);
    // API key is sent only via Authorization header (never in URL / logs)
 
@@ -1520,6 +1534,10 @@ void CheckAndReportTrackedTrades()
       
       if(!stillOpen)
       {
+         // Throttle retries: don't hammer the server on every timer tick if update is in flight
+         if(TimeCurrent() - trackedTrades[i].lastCloseAttempt < 10) continue;
+         trackedTrades[i].lastCloseAttempt = TimeCurrent();
+
          // Position is closed in MT5!
          double exitPrice = 0.0;
          bool isManualClose = false;

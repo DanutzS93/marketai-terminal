@@ -8214,6 +8214,7 @@ app.post('/api/mt5/account', async (req, res) => {
 });
 
 app.post('/api/mt5/update', async (req, res) => {
+  res.setHeader('Connection', 'close');
   const token = extractMt5Token(req);
   if (!token) {
     return res.status(401).json({ error: 'Unauthorized MT5 API Token' });
@@ -8431,10 +8432,29 @@ app.post('/api/mt5/update', async (req, res) => {
               finalJNotes = `Actualizat prin conexiunea MT5 (${target.accountNumber || matchedUser.mt5AccountNumber || ''})`;
             }
 
+            const riskDist = Math.max(0.0001, Math.abs((target.entryPrice || 1) - (target.stopLoss || 1)));
+            const dollarRisk = Math.max(10, Math.round((matchedUser.accountBalance || 100000) * ((matchedUser.riskSettings?.riskPerTrade ?? 1.0) / 100)));
+            let calculatedRr = 0;
+            if (target.pnl !== undefined) {
+              calculatedRr = Math.round((target.pnl / dollarRisk) * 10) / 10;
+            } else if (target.exitPrice && target.entryPrice && target.isEntryTriggered) {
+              const isBuy = (target.type || '').toUpperCase().includes('BUY');
+              const move = isBuy ? (target.exitPrice - target.entryPrice) : (target.entryPrice - target.exitPrice);
+              calculatedRr = Math.round((move / riskDist) * 10) / 10;
+            }
+            if (finalJStatus === 'WIN') calculatedRr = Math.max(0.1, calculatedRr > 0 ? calculatedRr : 1.5);
+            else if (finalJStatus === 'LOSS') calculatedRr = Math.min(-0.1, calculatedRr < 0 ? calculatedRr : -1.0);
+            else if (finalJStatus === 'BREAKEVEN') calculatedRr = 0;
+
             if (jEntry) {
               if (target.pnl !== undefined && jEntry.pnl !== target.pnl) {
                 jEntry.pnl = target.pnl;
                 jEntry.status = finalJStatus;
+                jEntry.rrAchieved = calculatedRr;
+                didChange = true;
+              } else if (finalJStatus !== jEntry.status) {
+                jEntry.status = finalJStatus;
+                jEntry.rrAchieved = calculatedRr;
                 didChange = true;
               }
               if (jEntry.outcomeLabel !== finalJLabel) {
@@ -8478,7 +8498,7 @@ app.post('/api/mt5/update', async (req, res) => {
                 stopLoss: target.stopLoss,
                 takeProfit: target.targetPrice3 || target.targetPrice2 || target.targetPrice1,
                 exitPrice: target.exitPrice || target.entryPrice,
-                rrAchieved: target.pnl !== undefined && target.pnl > 0 ? 2.0 : (target.pnl !== undefined && target.pnl < 0 ? -1.0 : 0),
+                rrAchieved: calculatedRr,
                 pnl: target.pnl || 0,
                 status: finalJStatus,
                 outcomeLabel: finalJLabel,
@@ -9125,7 +9145,7 @@ app.post('/api/signals/update-pnl', async (req, res) => {
 
   // Whitelist validation for status and outcomeStatus values
   const ALLOWED_STATUSES = new Set(['ACTIVE', 'PENDING', 'CLOSED', 'CANCELLED']);
-  const ALLOWED_OUTCOME_STATUSES = new Set(['PENDING', 'ACTIVE', 'RUNNING', 'TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT', 'CANCELLED']);
+  const ALLOWED_OUTCOME_STATUSES = new Set(['PENDING', 'ACTIVE', 'RUNNING', 'TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT', 'CANCELLED', 'MANUAL_PROFIT', 'MANUAL_LOSS', 'MANUAL_BE', 'MANUAL_CLOSED', 'POSITION_CLOSED', 'CLOSED', 'BREAKEVEN']);
 
   if (status && !ALLOWED_STATUSES.has(status)) {
     return res.status(400).json({ error: `Invalid status: ${status}. Allowed values: ${Array.from(ALLOWED_STATUSES).join(', ')}` });

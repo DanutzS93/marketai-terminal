@@ -22,10 +22,16 @@ export function formatTimeFromDate(dateInput?: Date | string | number): string {
 
 export function calculateSignalAchievedRR(
   signal: TradingSignal,
-  currentPrice?: number
+  currentPrice?: number,
+  user?: any
 ): { rr: number; status: 'WIN' | 'LOSS' | 'BREAKEVEN' | 'RUNNING'; label: string } {
-  const isBuy = signal.type.toUpperCase().includes('BUY');
+  const typeStr = (signal.type || (signal as any).direction || signal.executionType || '').toUpperCase();
+  const isBuy = typeStr.includes('BUY');
   const riskDist = Math.max(0.0001, Math.abs(signal.entryPrice - signal.stopLoss));
+  const accountBalance = user?.accountBalance || 100000;
+  const riskPerTrade = user?.riskSettings?.riskPerTrade ?? 1.0;
+  const dollarRisk = Math.max(10, Math.round(accountBalance * (riskPerTrade / 100)));
+  const effectivePnl = signal.pnl !== undefined ? signal.pnl : signal.realizedProfit;
 
   switch (signal.outcomeStatus) {
     case 'TP3_HIT': {
@@ -55,32 +61,63 @@ export function calculateSignalAchievedRR(
     case 'SL_HIT':
       return { rr: -1.0, status: 'LOSS', label: 'Stop Loss Hit 🛑' };
 
-    case 'CANCELLED': {
+    case 'MANUAL_PROFIT': {
       const finalExit = signal.exitPrice || (currentPrice && currentPrice > 0 ? currentPrice : signal.entryPrice);
       const move = isBuy ? (finalExit - signal.entryPrice) : (signal.entryPrice - finalExit);
-      const rawRr = Math.round((move / riskDist) * 10) / 10;
+      const priceRr = Math.round((move / riskDist) * 10) / 10;
+      let rr = priceRr > 0 ? priceRr : 1.5;
+      if (typeof effectivePnl === 'number' && dollarRisk > 0) {
+        rr = Math.max(0.1, Math.round((effectivePnl / dollarRisk) * 10) / 10);
+      }
+      return {
+        rr,
+        status: 'WIN',
+        label: typeof effectivePnl === 'number' ? `Închis Manual Profit (+$${effectivePnl.toFixed(2)}) ✋` : `Închis Manual Profit (+${rr}R) ✋`,
+      };
+    }
 
-      if (signal.pnl !== undefined) {
-        if (signal.pnl > 0) {
-          return { rr: Math.max(0.1, rawRr), status: 'WIN', label: `Închis Manual (+$${signal.pnl.toFixed(2)})` };
-        } else if (signal.pnl < 0) {
-          return { rr: Math.min(-0.1, rawRr), status: 'LOSS', label: `Închis Manual (-$${Math.abs(signal.pnl).toFixed(2)})` };
+    case 'MANUAL_LOSS': {
+      const finalExit = signal.exitPrice || (currentPrice && currentPrice > 0 ? currentPrice : signal.entryPrice);
+      const move = isBuy ? (finalExit - signal.entryPrice) : (signal.entryPrice - finalExit);
+      const priceRr = Math.round((move / riskDist) * 10) / 10;
+      let rr = priceRr < 0 ? priceRr : -1.0;
+      if (typeof effectivePnl === 'number' && dollarRisk > 0) {
+        rr = Math.min(-0.1, Math.round((effectivePnl / dollarRisk) * 10) / 10);
+      }
+      return {
+        rr,
+        status: 'LOSS',
+        label: typeof effectivePnl === 'number' ? `Închis Manual Pierdere (-$${Math.abs(effectivePnl).toFixed(2)}) ✋` : `Închis Manual Pierdere (${rr}R) ✋`,
+      };
+    }
+
+    case 'MANUAL_BE':
+    case 'MANUAL_CLOSED':
+      return { rr: 0, status: 'BREAKEVEN', label: 'Închis Manual (BE) 🛡️' };
+
+    case 'CANCELLED': {
+      // If entry was never triggered, this order was never executed in the market!
+      if (!signal.isEntryTriggered) {
+        return { rr: 0, status: 'BREAKEVEN', label: 'Ordin Anulat 🚫' };
+      }
+      if (typeof effectivePnl === 'number') {
+        if (effectivePnl > 0) {
+          const rr = dollarRisk > 0 ? Math.max(0.1, Math.round((effectivePnl / dollarRisk) * 10) / 10) : 0.5;
+          return { rr, status: 'WIN', label: `Închis Manual (+$${effectivePnl.toFixed(2)}) ✋` };
+        } else if (effectivePnl < 0) {
+          const rr = dollarRisk > 0 ? Math.min(-0.1, Math.round((effectivePnl / dollarRisk) * 10) / 10) : -0.5;
+          return { rr, status: 'LOSS', label: `Închis Manual (-$${Math.abs(effectivePnl).toFixed(2)}) ✋` };
         } else {
-          return { rr: 0, status: 'BREAKEVEN', label: 'Închis Manual (BE)' };
+          return { rr: 0, status: 'BREAKEVEN', label: 'Închis Manual (BE) 🛡️' };
         }
       }
-
-      if (signal.isEntryTriggered || (finalExit && finalExit !== signal.entryPrice)) {
-        if (move > 0) {
-          return { rr: Math.max(0.1, rawRr), status: 'WIN', label: `Închis Manual Profit (+${rawRr}R)` };
-        } else if (move < 0) {
-          return { rr: Math.min(-0.1, rawRr), status: 'LOSS', label: `Închis Manual Pierdere (${rawRr}R)` };
-        } else {
-          return { rr: 0, status: 'BREAKEVEN', label: 'Închis Manual (BE)' };
-        }
+      if (signal.exitPrice && signal.exitPrice !== signal.entryPrice) {
+        const move = isBuy ? (signal.exitPrice - signal.entryPrice) : (signal.entryPrice - signal.exitPrice);
+        const rawRr = Math.round((move / riskDist) * 10) / 10;
+        if (move > 0) return { rr: Math.max(0.1, rawRr), status: 'WIN', label: `Închis Manual Profit (+${rawRr}R) ✋` };
+        if (move < 0) return { rr: Math.min(-0.1, rawRr), status: 'LOSS', label: `Închis Manual Pierdere (${rawRr}R) ✋` };
       }
-
-      return { rr: 0, status: 'BREAKEVEN', label: 'Ordin Anulat' };
+      return { rr: 0, status: 'BREAKEVEN', label: 'Ordin Anulat 🚫' };
     }
 
     case 'RUNNING': {
@@ -99,8 +136,29 @@ export function calculateSignalAchievedRR(
       return { rr: 0, status: 'RUNNING', label: 'Activ / În Rulare' };
     }
 
-    default:
+    default: {
+      if (signal.status === 'CLOSED') {
+        if (typeof effectivePnl === 'number') {
+          if (effectivePnl > 0) {
+            const rr = dollarRisk > 0 ? Math.max(0.1, Math.round((effectivePnl / dollarRisk) * 10) / 10) : 1.5;
+            return { rr, status: 'WIN', label: `Închis Profit (+$${effectivePnl.toFixed(2)})` };
+          } else if (effectivePnl < 0) {
+            const rr = dollarRisk > 0 ? Math.min(-0.1, Math.round((effectivePnl / dollarRisk) * 10) / 10) : -1.0;
+            return { rr, status: 'LOSS', label: `Închis Pierdere (-$${Math.abs(effectivePnl).toFixed(2)})` };
+          } else {
+            return { rr: 0, status: 'BREAKEVEN', label: 'Închis BE ($0.00)' };
+          }
+        }
+        if (signal.exitPrice && signal.isEntryTriggered) {
+          const move = isBuy ? (signal.exitPrice - signal.entryPrice) : (signal.entryPrice - signal.exitPrice);
+          const rawRr = Math.round((move / riskDist) * 10) / 10;
+          if (rawRr > 0) return { rr: rawRr, status: 'WIN', label: `Închis Profit (+${rawRr}R)` };
+          if (rawRr < 0) return { rr: rawRr, status: 'LOSS', label: `Închis Pierdere (${rawRr}R)` };
+          return { rr: 0, status: 'BREAKEVEN', label: 'Închis BE' };
+        }
+      }
       return { rr: 0, status: 'RUNNING', label: 'În Așteptare' };
+    }
   }
 }
 
@@ -111,9 +169,10 @@ export function convertSignalToJournalEntry(
 ): TradeJournalEntry {
   const currentQuote = quotes ? quotes[signal.instrumentId] : undefined;
   const currPrice = currentQuote?.price ?? signal.currentMarketPrice;
-  const { rr, status, label } = calculateSignalAchievedRR(signal, currPrice);
+  const { rr, status, label } = calculateSignalAchievedRR(signal, currPrice, user);
 
-  const isBuy = signal.type.toUpperCase().includes('BUY');
+  const typeStr = (signal.type || (signal as any).direction || signal.executionType || '').toUpperCase();
+  const isBuy = typeStr.includes('BUY');
   const dKey = getLocalDateKey(signal.createdAt);
   const timeStr = formatTimeFromDate(signal.createdAt);
 
@@ -121,18 +180,30 @@ export function convertSignalToJournalEntry(
   const riskPerTrade = user?.riskSettings?.riskPerTrade ?? 1.0;
   const dollarRisk = Math.max(10, Math.round(accountBalance * (riskPerTrade / 100)));
 
-  const hasRealPnl = signal.pnl !== undefined && typeof signal.pnl === 'number';
+  const effectivePnl = (signal.pnl !== undefined && typeof signal.pnl === 'number')
+    ? signal.pnl
+    : (signal.realizedProfit !== undefined && typeof signal.realizedProfit === 'number')
+    ? signal.realizedProfit
+    : undefined;
+
+  const hasRealPnl = effectivePnl !== undefined;
   let realPnl: number;
+  let finalRr = rr;
+
   if (hasRealPnl) {
-    realPnl = Math.round(signal.pnl! * 100) / 100;
+    realPnl = Math.round(effectivePnl! * 100) / 100;
+    if (dollarRisk > 0 && finalRr === 0) {
+      if (realPnl > 0) finalRr = Math.max(0.1, Math.round((realPnl / dollarRisk) * 10) / 10);
+      else if (realPnl < 0) finalRr = Math.min(-0.1, Math.round((realPnl / dollarRisk) * 10) / 10);
+    }
   } else if (status === 'WIN') {
-    realPnl = Math.round(dollarRisk * rr * 100) / 100;
+    realPnl = Math.round(dollarRisk * (finalRr > 0 ? finalRr : 1.5) * 100) / 100;
   } else if (status === 'LOSS') {
-    realPnl = rr === -1.0 ? -dollarRisk : Math.round(dollarRisk * rr * 100) / 100;
+    realPnl = finalRr === -1.0 ? -dollarRisk : Math.round(dollarRisk * finalRr * 100) / 100;
   } else if (status === 'BREAKEVEN') {
     realPnl = 0;
   } else {
-    realPnl = Math.round(dollarRisk * rr * 100) / 100;
+    realPnl = Math.round(dollarRisk * finalRr * 100) / 100;
   }
 
   let finalStatus = status;
@@ -140,16 +211,23 @@ export function convertSignalToJournalEntry(
   if (hasRealPnl && realPnl !== undefined) {
     if (realPnl > 0) {
       finalStatus = 'WIN';
+      if (finalRr <= 0) finalRr = dollarRisk > 0 ? Math.max(0.1, Math.round((realPnl / dollarRisk) * 10) / 10) : 1.5;
       finalLabel = signal.outcomeStatus === 'TP3_HIT'
-        ? `TP3 Realizat (+$${realPnl.toFixed(2)})`
+        ? `TP3 Realizat (+$${realPnl.toFixed(2)}) 💎`
         : signal.outcomeStatus === 'TP2_HIT'
-        ? `TP2 Realizat (+$${realPnl.toFixed(2)})`
+        ? `TP2 Realizat (+$${realPnl.toFixed(2)}) 🚀`
+        : signal.outcomeStatus === 'TP1_HIT'
+        ? `TP1 Realizat (+$${realPnl.toFixed(2)}) 🎯`
         : `Profit Realizat (+$${realPnl.toFixed(2)})`;
     } else if (realPnl < 0) {
       finalStatus = 'LOSS';
-      finalLabel = `Pierdere Realizată (-$${Math.abs(realPnl).toFixed(2)})`;
+      if (finalRr >= 0) finalRr = dollarRisk > 0 ? Math.min(-0.1, Math.round((realPnl / dollarRisk) * 10) / 10) : -1.0;
+      finalLabel = signal.outcomeStatus === 'SL_HIT'
+        ? `Stop Loss (-$${Math.abs(realPnl).toFixed(2)}) 🛑`
+        : `Pierdere Realizată (-$${Math.abs(realPnl).toFixed(2)})`;
     } else {
       finalStatus = 'BREAKEVEN';
+      finalRr = 0;
       finalLabel = 'BE Realizat ($0.00)';
     }
   } else if (status === 'WIN') {
@@ -193,7 +271,7 @@ export function convertSignalToJournalEntry(
     stopLoss: signal.stopLoss,
     takeProfit: takeProfit,
     exitPrice: exitPrice,
-    rrAchieved: rr,
+    rrAchieved: finalRr,
     pnl: realPnl,
     status: finalStatus,
     outcomeLabel: finalLabel,
@@ -274,34 +352,44 @@ export function unifyJournalEntries(
     const existingManual = manualMap.get(key);
 
     if (existingManual) {
+      // Sanitize inverted signs (e.g. positive pnl on a LOSS trade)
+      let cleanExisting = existingManual;
+      if (cleanExisting.status === 'LOSS' && typeof cleanExisting.pnl === 'number' && cleanExisting.pnl > 0) {
+        cleanExisting = {
+          ...cleanExisting,
+          pnl: -Math.abs(cleanExisting.pnl),
+          rrAchieved: cleanExisting.rrAchieved !== undefined ? -Math.abs(cleanExisting.rrAchieved) : -1,
+        };
+      }
+
       // If signal reached a milestone (TP1, TP2, TP3, SL) or has higher achieved RR / profit:
       // Always update the journal entry to reflect the latest status, TP3 milestone, and profit!
       const csRr = cs.rrAchieved || 0;
-      const exRr = existingManual.rrAchieved || 0;
+      const exRr = cleanExisting.rrAchieved || 0;
       const isProgressed = cs.status === 'WIN' && (csRr > exRr || cs.outcomeLabel.includes('TP3') || cs.outcomeLabel.includes('TP2'));
-      const isTerminalUpdate = (cs.status === 'WIN' || cs.status === 'LOSS') && existingManual.status === 'RUNNING';
+      const isTerminalUpdate = (cs.status === 'WIN' || cs.status === 'LOSS') && cleanExisting.status === 'RUNNING';
 
       if (isProgressed || isTerminalUpdate) {
         result.push({
-          ...existingManual,
+          ...cleanExisting,
           status: cs.status,
           outcomeLabel: cs.outcomeLabel,
           rrAchieved: cs.rrAchieved,
           pnl: cs.pnl,
           exitPrice: cs.exitPrice,
           takeProfit: cs.takeProfit,
-          closedAt: cs.closedAt || existingManual.closedAt,
+          closedAt: cs.closedAt || cleanExisting.closedAt,
         });
       } else {
         // Keep existing manual details, ensuring pnl is not lost
-        if (existingManual.pnl === undefined && cs.pnl !== undefined) {
+        if (cleanExisting.pnl === undefined && cs.pnl !== undefined) {
           result.push({
-            ...existingManual,
+            ...cleanExisting,
             pnl: cs.pnl,
-            rrAchieved: existingManual.rrAchieved || cs.rrAchieved,
+            rrAchieved: cleanExisting.rrAchieved || cs.rrAchieved,
           });
         } else {
-          result.push(existingManual);
+          result.push(cleanExisting);
         }
       }
     } else {
@@ -314,7 +402,15 @@ export function unifyJournalEntries(
     const key = m.linkedSignalId || m.id;
     if (!processedKeys.has(key)) {
       if (!deletedSet.has(m.id) && (!m.linkedSignalId || !deletedSet.has(m.linkedSignalId))) {
-        result.push(m);
+        let cleanEntry = m;
+        if (cleanEntry.status === 'LOSS' && typeof cleanEntry.pnl === 'number' && cleanEntry.pnl > 0) {
+          cleanEntry = {
+            ...cleanEntry,
+            pnl: -Math.abs(cleanEntry.pnl),
+            rrAchieved: cleanEntry.rrAchieved !== undefined ? -Math.abs(cleanEntry.rrAchieved) : -1,
+          };
+        }
+        result.push(cleanEntry);
       }
     }
   }

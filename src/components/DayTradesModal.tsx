@@ -70,10 +70,10 @@ export const DayTradesModal: React.FC<DayTradesModalProps> = ({
   for (const t of trades) {
     if (t.status === 'WIN') {
       winCount++;
-      netRR += t.rrAchieved || 0;
+      netRR += (typeof t.rrAchieved === 'number' && !isNaN(t.rrAchieved) && t.rrAchieved > 0) ? t.rrAchieved : 1;
     } else if (t.status === 'LOSS') {
       lossCount++;
-      netRR += t.rrAchieved || -1;
+      netRR += (typeof t.rrAchieved === 'number' && !isNaN(t.rrAchieved) && t.rrAchieved !== 0) ? -Math.abs(t.rrAchieved) : -1;
     } else if (t.status === 'BREAKEVEN') {
       beCount++;
     } else if (t.status === 'RUNNING') {
@@ -86,6 +86,7 @@ export const DayTradesModal: React.FC<DayTradesModalProps> = ({
   }
 
   netRR = Math.round(netRR * 10) / 10;
+  totalPnl = Math.round(totalPnl * 100) / 100;
   const closedCount = winCount + lossCount;
   const winRate = closedCount > 0 ? Math.round((winCount / closedCount) * 100) : 0;
 
@@ -200,7 +201,7 @@ export const DayTradesModal: React.FC<DayTradesModalProps> = ({
                   totalPnl > 0 ? 'text-emerald-400' : totalPnl < 0 ? 'text-rose-400' : 'text-slate-400'
                 }`}
               >
-                {totalPnl !== 0 ? (totalPnl > 0 ? `+$${totalPnl}` : `-$${Math.abs(totalPnl)}`) : '$0.00'}
+                {totalPnl !== 0 ? (totalPnl > 0 ? `+$${totalPnl.toFixed(2)}` : `-$${Math.abs(totalPnl).toFixed(2)}`) : '$0.00'}
               </span>
             </div>
             <div className="text-[10px] text-slate-400 font-mono">USD</div>
