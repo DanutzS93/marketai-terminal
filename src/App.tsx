@@ -467,11 +467,16 @@ export default function App() {
                     s.status !== newStatus &&
                     (srvIsClosed || !(isPendingOrder && newStatus === 'RUNNING'));
 
+                  const triggerNeedsReset = isMt5PendingOrder && s.isEntryTriggered;
+                  const triggerNeedsSet = isMt5OpenPos && !s.isEntryTriggered;
+
                   if (
                     (newLiveProfit !== undefined && s.liveProfit !== newLiveProfit) ||
                     (newPnl !== undefined && s.pnl !== newPnl) ||
                     canAcceptStatus ||
                     canAcceptOutcome ||
+                    triggerNeedsReset ||
+                    triggerNeedsSet ||
                     (srv.exitPrice !== undefined && s.exitPrice !== srv.exitPrice) ||
                     (srv.realizedProfit !== undefined && s.realizedProfit !== srv.realizedProfit)
                   ) {
@@ -484,6 +489,7 @@ export default function App() {
                       outcomeStatus: canAcceptOutcome ? newOutcome : s.outcomeStatus,
                       exitPrice: srv.exitPrice ?? s.exitPrice,
                       realizedProfit: srv.realizedProfit ?? s.realizedProfit,
+                      isEntryTriggered: isMt5PendingOrder ? false : (isMt5OpenPos ? true : (srv.isEntryTriggered ?? s.isEntryTriggered)),
                     };
                   }
                   return s;
@@ -1582,6 +1588,34 @@ export default function App() {
 
         const liveQuote = quotes[sig.instrumentId];
         const evalPrice = liveQuote && liveQuote.price > 0 ? liveQuote.price : (sig.currentMarketPrice || sig.entryPrice || 0);
+
+        // MT5 PENDING ORDER CHECK:
+        // When a trade is placed in MT5 and waiting as a pending limit/stop order, its status must be taken strictly from MT5.
+        // It only becomes RUNNING when MT5 actually executes it into an open position.
+        const isMt5Pending = Array.isArray(user?.mt5OpenOrders) && user.mt5OpenOrders.some((o: any) =>
+          o && (String(o.signalId) === String(sig.id) || String(o.signalId) === String(sig.signal_id))
+        );
+        const isMt5Running = Array.isArray(user?.mt5OpenPositions) && user.mt5OpenPositions.some((p: any) =>
+          p && (String(p.signalId) === String(sig.id) || String(p.signalId) === String(sig.signal_id))
+        );
+        const isPendingType = Boolean(sig.executionType?.includes('LIMIT') || sig.executionType?.includes('STOP'));
+        const isWaitingMt5Entry = (isMt5Pending || ((sig.mt5Placed || sig.accountSource === 'MT5') && isPendingType && !sig.isEntryTriggered)) && !isMt5Running;
+
+        if (isWaitingMt5Entry) {
+          const priceNeedsUpdate = liveQuote && liveQuote.price > 0 && sig.currentMarketPrice !== liveQuote.price;
+          const statusNeedsCorrection = sig.status !== 'ACTIVE' || sig.outcomeStatus !== 'PENDING' || sig.isEntryTriggered;
+          if (priceNeedsUpdate || statusNeedsCorrection) {
+            hasChanges = true;
+            return {
+              ...sig,
+              status: 'ACTIVE' as const,
+              outcomeStatus: 'PENDING' as const,
+              isEntryTriggered: false,
+              currentMarketPrice: (liveQuote && liveQuote.price) || sig.currentMarketPrice,
+            };
+          }
+          return sig;
+        }
 
         const evalResult = evaluateSignalOutcome(sig, evalPrice);
 

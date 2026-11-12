@@ -736,7 +736,9 @@ export function evaluateSignalOutcome(
     sig.firstHitMilestone === 'TP2' ||
     sig.firstHitMilestone === 'TP3';
 
-  if (!isTriggered) {
+  const isMt5Trade = Boolean(sig.mt5Placed || sig.accountSource === 'MT5' || (sig.placedAccounts && Object.keys(sig.placedAccounts).length > 0));
+
+  if (!isTriggered && !isMt5Trade) {
     if (isBuyLimit && livePrice <= sig.entryPrice) isTriggered = true;
     else if (isBuyStop && livePrice >= sig.entryPrice) isTriggered = true;
     else if (isSellLimit && livePrice >= sig.entryPrice) isTriggered = true;
