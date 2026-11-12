@@ -285,14 +285,17 @@ export const Header: React.FC<HeaderProps> = ({
             {/* Backdrop for click-outside dismissal */}
             {isMenuOpen && (
               <div
-                className="fixed inset-0 z-40"
+                className="fixed inset-0 z-40 bg-black/40 backdrop-blur-xs"
                 onClick={() => setIsMenuOpen(false)}
               />
             )}
 
-            {/* Dropdown Menu Panel (Opens Downward) */}
+            {/* Dropdown Menu Panel (Opens Downward Over Page) */}
             {isMenuOpen && (
-              <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 bg-[#0A1224]/95 backdrop-blur-3xl border border-white/15 rounded-2xl shadow-[0_25px_60px_rgba(0,0,0,0.85)] p-3.5 space-y-3 z-50 animate-in fade-in-50 zoom-in-95 duration-150 max-h-[calc(100vh-80px)] overflow-y-auto no-scrollbar glass-specular-top text-white">
+              <div
+                style={{ position: 'absolute' }}
+                className="absolute right-0 top-full mt-2 w-80 sm:w-96 bg-[#0A1224]/95 backdrop-blur-3xl border border-white/15 rounded-2xl shadow-[0_25px_60px_rgba(0,0,0,0.85)] p-3.5 space-y-3 z-50 animate-in fade-in slide-in-from-top-2 duration-200 max-h-[calc(100vh-80px)] overflow-y-auto no-scrollbar text-white"
+              >
                 {/* 1. User Profile Header */}
                 <div className="bg-slate-900/80 p-3 rounded-xl border border-white/10 flex items-center justify-between backdrop-blur-md">
                   {user ? (
