@@ -30,7 +30,8 @@ import {
 } from './src/utils/supabaseDb';
 import { filter30DaySignals, calculateDynamicInstrumentTimeframeSL } from './src/utils/signalUtils';
 import { isSignalExpiredByMarketClose, isMarketClosedUniversal } from './src/utils/marketSchedule';
-import { TradeSchedulerConfig, ScheduledTradeRow, ScheduledExecutionLog, InstrumentId, TimeFrame } from './src/types';
+import { TradeSchedulerConfig, ScheduledTradeRow, ScheduledExecutionLog, InstrumentId, TimeFrame, DailyMacroBriefing } from './src/types';
+import { getDailyMacroBriefingWithCache } from './src/utils/dailyMacroBriefingService';
 
 dotenv.config();
 
@@ -5187,13 +5188,9 @@ function translateForexFactoryTitle(title: string, country: string): { titleRo: 
   };
 }
 
-// Economic News Calendar Endpoint (Forex Factory Integration)
-app.get('/api/economic-calendar', async (req, res) => {
-  const isEn = req.query.lang === 'en';
-  const now = new Date();
+// Helper to fetch and format full economic calendar events (shared between Calendar and Daily Briefing)
+async function getFullEconomicCalendarEvents(isEn = false, now = new Date()): Promise<any[]> {
   const day = now.getDay();
-  const isWeekend = day === 6 || day === 0 || req.query.weekend === 'true';
-
   // Calculate current week days starting Monday
   const diffToMonday = day === 0 ? -6 : 1 - day;
   const monday = new Date(now);
@@ -5554,6 +5551,18 @@ app.get('/api/economic-calendar', async (req, res) => {
     return timeA - timeB;
   });
 
+  return formattedEvents;
+}
+
+// Economic News Calendar Endpoint (Forex Factory Integration)
+app.get('/api/economic-calendar', async (req, res) => {
+  const isEn = req.query.lang === 'en';
+  const now = new Date();
+  const day = now.getDay();
+  const isWeekend = day === 6 || day === 0 || req.query.weekend === 'true';
+
+  const formattedEvents = await getFullEconomicCalendarEvents(isEn, now);
+
   // Extract USD High Impact events for quick spotlight / highlights
   const usdHighImpactEvents = formattedEvents.filter(
     (e) => e.currency === 'USD' && (
@@ -5578,6 +5587,32 @@ app.get('/api/economic-calendar', async (req, res) => {
     usdHighImpactEvents,
     events: formattedEvents,
   });
+});
+
+// Daily Macro Briefing Endpoint (Rezumatul Zilei Anterioare + Mișcări Așteptate Astăzi + Catalizatori)
+app.get('/api/daily-macro-briefing', async (req, res) => {
+  try {
+    const forceRefresh = req.query.refresh === 'true' || req.query.force === 'true';
+    const marketData = getRealLiveMarketDataSync();
+    const calendarEvents = await getFullEconomicCalendarEvents(false);
+    const briefing = await getDailyMacroBriefingWithCache(
+      {
+        nasdaq: marketData.nasdaq,
+        spx500: marketData.spx500,
+        dow: marketData.dow,
+        gold: marketData.gold,
+        eurusd: marketData.eurusd,
+        gbpusd: marketData.gbpusd,
+        usdjpy: marketData.usdjpy,
+      },
+      calendarEvents,
+      forceRefresh
+    );
+    return res.json({ success: true, briefing });
+  } catch (err: any) {
+    console.error('[DailyMacroBriefing] API error:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Server error' });
+  }
 });
 
 // Helper function to check market open/closed schedule

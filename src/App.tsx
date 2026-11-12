@@ -18,8 +18,9 @@ import { NinjaTraderIntegrationModal } from './components/NinjaTraderIntegration
 import { TradeJournalSection } from './components/TradeJournalSection';
 import { AutomatedTradeSchedulerSection } from './components/AutomatedTradeSchedulerSection';
 import { UsdHighImpactWarningModal, EconomicNewsEvent } from './components/UsdHighImpactWarningModal';
+import { DailyMacroBriefingModal } from './components/DailyMacroBriefingModal';
 import { SessionProfitabilityBentoModule } from './components/SessionProfitabilityBentoModule';
-import { MarketQuote, TradingSignal, InstrumentId, TimeFrame, UserApiKeys, CustomSignalRule, UserProfile, TradeJournalEntry } from './types';
+import { MarketQuote, TradingSignal, InstrumentId, TimeFrame, UserApiKeys, CustomSignalRule, UserProfile, TradeJournalEntry, DailyMacroBriefing } from './types';
 import { evaluateSignalOutcome, filter30DaySignals, mergeSignals } from './utils/signalUtils';
 import { getMarketScheduleStatus, isSignalExpiredByMarketClose } from './utils/marketSchedule';
 import { INITIAL_SAMPLE_TRADES, isDemoOrSampleTrade, getLocalDateKey, formatTimeFromDate } from './utils/tradeJournalUtils';
@@ -104,6 +105,11 @@ export default function App() {
   const [isUsdWarningModalOpen, setIsUsdWarningModalOpen] = useState(false);
   const [usdWarningEvents, setUsdWarningEvents] = useState<EconomicNewsEvent[]>([]);
   const [usdWarningInstrument, setUsdWarningInstrument] = useState<InstrumentId>('NASDAQ');
+  
+  // Daily Macro Briefing Pop-up State
+  const [dailyBriefing, setDailyBriefing] = useState<DailyMacroBriefing | null>(null);
+  const [isLoadingDailyBriefing, setIsLoadingDailyBriefing] = useState<boolean>(false);
+  const [isDailyBriefingModalOpen, setIsDailyBriefingModalOpen] = useState<boolean>(false);
   const [pendingSignalAction, setPendingSignalAction] = useState<(() => void) | null>(null);
   const [inviteCopied, setInviteCopied] = useState(false);
   const [isCloudSynced, setIsCloudSynced] = useState(false);
@@ -572,6 +578,62 @@ export default function App() {
 
     return () => clearTimeout(timer);
   }, [signals, deletedSignalIds, user, authToken, isCloudSynced]);
+
+  // Fetch daily macro briefing from server
+  const fetchDailyBriefing = useCallback(async (force = false) => {
+    setIsLoadingDailyBriefing(true);
+    try {
+      const res = await fetch(`/api/daily-macro-briefing${force ? '?refresh=true' : ''}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.briefing) {
+          setDailyBriefing(data.briefing);
+        }
+      }
+    } catch (e) {
+      console.warn('Could not fetch daily macro briefing:', e);
+    } finally {
+      setIsLoadingDailyBriefing(false);
+    }
+  }, []);
+
+  // First-time daily pop-up logic: triggers once per calendar day
+  useEffect(() => {
+    fetchDailyBriefing();
+
+    try {
+      const todayKey = new Date().toISOString().split('T')[0];
+      const seenKey = `market_ai_daily_briefing_seen_${todayKey}`;
+      const hasSeenToday = localStorage.getItem(seenKey);
+
+      if (!hasSeenToday) {
+        // Trigger modal smoothly after 900ms delay on first site visit of the day
+        const timer = setTimeout(() => {
+          setIsDailyBriefingModalOpen(true);
+        }, 900);
+        return () => clearTimeout(timer);
+      }
+    } catch (e) {
+      // localStorage may fail in restricted sandbox
+    }
+  }, [fetchDailyBriefing]);
+
+  const handleCloseDailyBriefingModal = () => {
+    try {
+      const todayKey = new Date().toISOString().split('T')[0];
+      localStorage.setItem(`market_ai_daily_briefing_seen_${todayKey}`, 'true');
+    } catch (e) {}
+    setIsDailyBriefingModalOpen(false);
+  };
+
+  const handleNavigateToMacroFromModal = () => {
+    try {
+      const todayKey = new Date().toISOString().split('T')[0];
+      localStorage.setItem(`market_ai_daily_briefing_seen_${todayKey}`, 'true');
+    } catch (e) {}
+    setActiveTab('macro');
+    setIsDailyBriefingModalOpen(false);
+  };
 
   const handleAuthSuccess = async (newUser: UserProfile, newAuthToken: string) => {
     setUser(newUser);
@@ -2246,6 +2308,7 @@ export default function App() {
         onOpenMt5Modal={() => setIsMt5ModalOpen(true)}
         onOpenNinjaTraderModal={() => setIsNinjaTraderModalOpen(true)}
         onOpenAdminCrmModal={() => setIsAdminCrmModalOpen(true)}
+        onOpenDailyBriefingModal={() => setIsDailyBriefingModalOpen(true)}
         lang={lang}
         onToggleLang={() => setLang((prev) => (prev === 'ro' ? 'en' : 'ro'))}
         activeTab={activeTab}
@@ -2395,7 +2458,14 @@ export default function App() {
 
         {activeTab === 'macro' && (
           <div>
-            <MacroNewsSection selectedInstrument={selectedInstrument} lang={lang} />
+            <MacroNewsSection
+              selectedInstrument={selectedInstrument}
+              lang={lang}
+              briefing={dailyBriefing}
+              isLoadingBriefing={isLoadingDailyBriefing}
+              onRefreshBriefing={() => fetchDailyBriefing(true)}
+              onOpenBriefingModal={() => setIsDailyBriefingModalOpen(true)}
+            />
           </div>
         )}
 
@@ -2510,6 +2580,16 @@ export default function App() {
         events={usdWarningEvents}
         selectedInstrument={usdWarningInstrument}
         lang={lang}
+      />
+
+      <DailyMacroBriefingModal
+        isOpen={isDailyBriefingModalOpen}
+        onClose={handleCloseDailyBriefingModal}
+        lang={lang}
+        briefing={dailyBriefing}
+        isLoading={isLoadingDailyBriefing}
+        onRefresh={() => fetchDailyBriefing(true)}
+        onNavigateToMacro={handleNavigateToMacroFromModal}
       />
 
       {/* Footer */}

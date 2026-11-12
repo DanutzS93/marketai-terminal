@@ -368,3 +368,110 @@ export interface AuthState {
   isAuthenticated: boolean;
 }
 
+export interface DailyMacroBriefing {
+  date: string; // "YYYY-MM-DD"
+  timestamp: string; // ISO
+  titleRo: string;
+  titleEn: string;
+  source: string;
+  marketSentiment: 'RISK_ON' | 'RISK_OFF' | 'NEUTRAL';
+  yesterdayRecap: {
+    summaryRo: string;
+    summaryEn: string;
+    keyEventsYesterday: {
+      titleRo: string;
+      titleEn: string;
+      currency: string;
+      impact: 'HIGH' | 'MEDIUM' | 'LOW';
+      actual?: string;
+      forecast?: string;
+      previous?: string;
+      effectRo: string;
+      effectEn: string;
+    }[];
+    marketReactionRo: string;
+    marketReactionEn: string;
+  };
+  indicesOutlook: {
+    bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+    summaryRo: string;
+    summaryEn: string;
+    nasdaq: {
+      currentPrice?: number;
+      expectedMoveRo: string;
+      expectedMoveEn: string;
+      supportLevel: string;
+      resistanceLevel: string;
+      keyFocusRo: string;
+      keyFocusEn: string;
+    };
+    spx500: {
+      currentPrice?: number;
+      expectedMoveRo: string;
+      expectedMoveEn: string;
+      supportLevel: string;
+      resistanceLevel: string;
+      keyFocusRo: string;
+      keyFocusEn: string;
+    };
+    dowJones: {
+      currentPrice?: number;
+      expectedMoveRo: string;
+      expectedMoveEn: string;
+      supportLevel: string;
+      resistanceLevel: string;
+      keyFocusRo: string;
+      keyFocusEn: string;
+    };
+  };
+  goldOutlook: {
+    bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+    currentPrice?: number;
+    summaryRo: string;
+    summaryEn: string;
+    supportLevel: string;
+    resistanceLevel: string;
+    macroDriversRo: string;
+    macroDriversEn: string;
+    expectedMoveRo: string;
+    expectedMoveEn: string;
+  };
+  forexOutlook: {
+    bias: string;
+    dxySummaryRo: string;
+    dxySummaryEn: string;
+    eurusd: {
+      currentPrice?: number;
+      expectedMoveRo: string;
+      expectedMoveEn: string;
+      supportLevel: string;
+      resistanceLevel: string;
+    };
+    gbpusd: {
+      currentPrice?: number;
+      expectedMoveRo: string;
+      expectedMoveEn: string;
+      supportLevel: string;
+      resistanceLevel: string;
+    };
+    usdjpy: {
+      currentPrice?: number;
+      expectedMoveRo: string;
+      expectedMoveEn: string;
+      supportLevel: string;
+      resistanceLevel: string;
+    };
+  };
+  todayCatalysts: {
+    time: string;
+    currency: string;
+    titleRo: string;
+    titleEn: string;
+    impact: 'HIGH' | 'MEDIUM' | 'LOW';
+    forecast?: string;
+    previous?: string;
+    whatToExpectRo: string;
+    whatToExpectEn: string;
+  }[];
+}
+

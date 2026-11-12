@@ -1,10 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { Newspaper, Calendar, Sparkles, Brain, ArrowUpRight, ArrowDownRight, Clock, RefreshCw, Send, CheckCircle2, ShieldAlert, Lightbulb, BookOpen, ShieldCheck, HelpCircle, Globe } from 'lucide-react';
-import { InstrumentId } from '../types';
+import { InstrumentId, DailyMacroBriefing } from '../types';
+import { DailyMacroBriefingCard } from './DailyMacroBriefingCard';
 
 interface MacroNewsSectionProps {
   selectedInstrument: InstrumentId;
   lang: 'ro' | 'en';
+  briefing?: DailyMacroBriefing | null;
+  isLoadingBriefing?: boolean;
+  onRefreshBriefing?: () => void;
+  onOpenBriefingModal?: () => void;
 }
 
 interface FinbertResult {
@@ -155,7 +160,50 @@ interface EconomicEvent {
   isToday?: boolean;
 }
 
-export const MacroNewsSection: React.FC<MacroNewsSectionProps> = ({ selectedInstrument, lang }) => {
+export const MacroNewsSection: React.FC<MacroNewsSectionProps> = ({
+  selectedInstrument,
+  lang,
+  briefing: propBriefing,
+  isLoadingBriefing: propIsLoadingBriefing,
+  onRefreshBriefing: propOnRefreshBriefing,
+  onOpenBriefingModal,
+}) => {
+  const [internalBriefing, setInternalBriefing] = useState<DailyMacroBriefing | null>(null);
+  const [internalLoadingBriefing, setInternalLoadingBriefing] = useState(false);
+
+  const briefing = propBriefing !== undefined ? propBriefing : internalBriefing;
+  const isLoadingBriefing = propIsLoadingBriefing !== undefined ? propIsLoadingBriefing : internalLoadingBriefing;
+
+  const fetchBriefing = async (force = false) => {
+    if (propBriefing !== undefined && !force) return;
+    setInternalLoadingBriefing(true);
+    try {
+      const res = await fetch(`/api/daily-macro-briefing${force ? '?refresh=true' : ''}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.briefing) setInternalBriefing(data.briefing);
+      }
+    } catch (e) {
+      console.warn('Failed to load daily macro briefing', e);
+    } finally {
+      setInternalLoadingBriefing(false);
+    }
+  };
+
+  useEffect(() => {
+    if (propBriefing === undefined) {
+      fetchBriefing();
+    }
+  }, [propBriefing]);
+
+  const handleRefreshBriefing = () => {
+    if (propOnRefreshBriefing) {
+      propOnRefreshBriefing();
+    } else {
+      fetchBriefing(true);
+    }
+  };
+
   const [activeTab, setActiveTab] = useState<'calendar' | 'finbert'>('calendar');
   const [calendarEvents, setCalendarEvents] = useState<EconomicEvent[]>([]);
   const [usdHighImpactEvents, setUsdHighImpactEvents] = useState<EconomicEvent[]>([]);
@@ -263,7 +311,18 @@ export const MacroNewsSection: React.FC<MacroNewsSectionProps> = ({ selectedInst
   };
 
   return (
-    <div className="bg-gradient-to-b from-[#0A1224]/85 to-[#070D1A]/90 backdrop-blur-2xl rounded-2xl border border-white/10 p-4 sm:p-6 shadow-2xl mb-8 w-full overflow-hidden relative glass-specular-top">
+    <div className="space-y-6">
+      {/* 1. Prominent Daily Macro Briefing Card at Top of Page */}
+      <DailyMacroBriefingCard
+        briefing={briefing}
+        isLoading={isLoadingBriefing}
+        lang={lang}
+        onRefresh={handleRefreshBriefing}
+        onOpenModal={onOpenBriefingModal}
+      />
+
+      {/* 2. Economic News Calendar & FinBERT AI Analysis */}
+      <div className="bg-gradient-to-b from-[#0A1224]/85 to-[#070D1A]/90 backdrop-blur-2xl rounded-2xl border border-white/10 p-4 sm:p-6 shadow-2xl mb-8 w-full overflow-hidden relative glass-specular-top">
       {/* Top Header & Tab Selector */}
       <div className="flex flex-col md:flex-row md:items-center justify-between pb-4 border-b border-white/10 mb-6 gap-4">
         <div className="flex items-center gap-3">
@@ -1180,6 +1239,7 @@ export const MacroNewsSection: React.FC<MacroNewsSectionProps> = ({ selectedInst
           )}
         </div>
       )}
+      </div>
     </div>
   );
 };

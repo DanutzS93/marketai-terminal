@@ -41,6 +41,7 @@ interface HeaderProps {
   onOpenMt5Modal: () => void;
   onOpenNinjaTraderModal?: () => void;
   onOpenAdminCrmModal?: () => void;
+  onOpenDailyBriefingModal?: () => void;
   lang: 'ro' | 'en';
   onToggleLang: () => void;
   activeTab: ActiveTab;
@@ -64,6 +65,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenMt5Modal,
   onOpenNinjaTraderModal,
   onOpenAdminCrmModal,
+  onOpenDailyBriefingModal,
   lang,
   onToggleLang,
   activeTab,
@@ -306,6 +308,18 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
             )}
 
+            {/* Daily Macro Briefing Button */}
+            {onOpenDailyBriefingModal && (
+              <button
+                onClick={onOpenDailyBriefingModal}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-indigo-500/20 via-cyan-500/20 to-indigo-500/20 hover:from-indigo-500/30 hover:to-cyan-500/30 text-cyan-200 hover:text-white font-semibold text-xs transition border border-cyan-400/30 shadow-[0_0_15px_rgba(6,182,212,0.2)] cursor-pointer"
+                title={lang === 'ro' ? 'Deschide Raportul Macro Zilnic' : 'Open Daily Macro Briefing'}
+              >
+                <Sparkles className="w-3.5 h-3.5 text-cyan-300" />
+                <span className="hidden xl:inline">{lang === 'ro' ? 'Raport Zilnic' : 'Daily Briefing'}</span>
+              </button>
+            )}
+
             {/* Refresh Data */}
             <button
               onClick={onRefresh}
@@ -449,6 +463,20 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <ShieldCheck className="w-4 h-4 text-amber-400" />
               <span>ADMIN CRM DASHBOARD</span>
+            </button>
+          )}
+
+          {/* Mobile Daily Macro Briefing Quick Access */}
+          {onOpenDailyBriefingModal && (
+            <button
+              onClick={() => {
+                setIsMobileMenuOpen(false);
+                onOpenDailyBriefingModal();
+              }}
+              className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-indigo-500/25 via-cyan-500/20 to-indigo-500/25 border border-cyan-400/40 text-xs font-black text-cyan-200 flex items-center justify-center gap-2 shadow-lg shadow-cyan-950/40 cursor-pointer"
+            >
+              <Sparkles className="w-4 h-4 text-cyan-300" />
+              <span>{lang === 'ro' ? 'Raport Macro Zilnic 📰' : 'Daily Macro Briefing 📰'}</span>
             </button>
           )}
 
