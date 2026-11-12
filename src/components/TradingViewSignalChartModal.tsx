@@ -919,14 +919,14 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
             <button
               onClick={() => setIsFullscreen(!isFullscreen)}
               className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
-              title={isFullscreen ? 'Ieșire Fullscreen' : 'Ecran Complet (Fullscreen)'}
+              title={isFullscreen ? (lang === 'ro' ? 'Ieșire Fullscreen' : 'Exit Fullscreen') : (lang === 'ro' ? 'Ecran Complet (Fullscreen)' : 'Enter Fullscreen')}
             >
               {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
             </button>
             <button
               onClick={onClose}
               className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition cursor-pointer"
-              title="Închide fereastra"
+              title={lang === 'ro' ? 'Închide fereastra' : 'Close window'}
             >
               <X className="w-5 h-5" />
             </button>
@@ -1013,7 +1013,7 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
                     ? 'bg-amber-950/60 text-amber-300 border-amber-700/60'
                     : 'bg-slate-900 text-slate-500 border-slate-800'
                 }`}
-                title="Activează / Dezactivează EMA 20 (albastru) și SMA 50 (galben)"
+                title={lang === 'ro' ? 'Activează / Dezactivează EMA 20 (albastru) și SMA 50 (galben)' : 'Toggle EMA 20 (blue) and SMA 50 (yellow)'}
               >
                 <Activity className="w-3 h-3 text-amber-400" />
                 <span>EMA 20 & SMA 50</span>
@@ -1027,7 +1027,7 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
                     ? 'bg-purple-950/60 text-purple-300 border-purple-700/60'
                     : 'bg-slate-900 text-slate-500 border-slate-800'
                 }`}
-                title="Afișează POC și Nivelurile Cheie de Suport / Rezistență"
+                title={lang === 'ro' ? 'Afișează POC și Nivelurile Cheie de Suport / Rezistență' : 'Show POC and Key Support / Resistance Levels'}
               >
                 <Layers className="w-3 h-3 text-purple-400" />
                 <span>POC & S/R</span>
@@ -1037,7 +1037,7 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
               <button
                 onClick={handleResetZoom}
                 className="p-1 rounded-md text-slate-400 hover:text-white bg-slate-900 hover:bg-slate-800 border border-slate-800 transition cursor-pointer"
-                title="Re-centrează graficul"
+                title={lang === 'ro' ? 'Re-centrează graficul' : 'Reset chart zoom'}
               >
                 <RefreshCw className="w-3.5 h-3.5" />
               </button>
@@ -1075,11 +1075,11 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
               <div className="absolute top-2 left-3 z-10 flex flex-wrap items-center gap-3 pointer-events-none bg-slate-950/80 px-2.5 py-1 rounded-md border border-slate-800/80 text-[10px] font-mono">
                 <div className="flex items-center gap-1 text-slate-300 font-bold">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>
-                  <span>Cumpărare</span>
+                  <span>{lang === 'ro' ? 'Cumpărare' : 'Buy'}</span>
                 </div>
                 <div className="flex items-center gap-1 text-slate-300 font-bold">
                   <span className="w-2 h-2 rounded-full bg-rose-500 inline-block"></span>
-                  <span>Vânzare</span>
+                  <span>{lang === 'ro' ? 'Vânzare' : 'Sell'}</span>
                 </div>
                 {showMovingAverages && (
                   <>
@@ -1095,7 +1095,7 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
                 )}
                 {showTradeLevels && (
                   <div className="flex items-center gap-2">
-                    <span className="text-blue-400 font-bold">● Intrare: ${formatSignalPrice(entryPrice, signal.instrumentId, signal.symbol)}</span>
+                    <span className="text-blue-400 font-bold">● {lang === 'ro' ? 'Intrare' : 'Entry'}: ${formatSignalPrice(entryPrice, signal.instrumentId, signal.symbol)}</span>
                     <span className="text-rose-400 font-bold">● SL: ${formatSignalPrice(slPrice, signal.instrumentId, signal.symbol)}</span>
                     <span className="text-emerald-400 font-bold">● TP1: ${formatSignalPrice(tp1Price, signal.instrumentId, signal.symbol)}</span>
                   </div>
@@ -1163,7 +1163,7 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
                   <div className="grid grid-cols-2 gap-2">
                     <div className="bg-slate-900/90 p-2.5 rounded-lg border border-slate-800">
                       <span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wider">
-                        Risc / Recompensă
+                        {lang === 'ro' ? 'Risc / Recompensă' : 'Risk / Reward'}
                       </span>
                       <span className="text-sm font-black text-amber-400 font-mono">
                         {signal.riskRewardRatio || '1:2.5'}
@@ -1172,7 +1172,7 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
 
                     <div className="bg-slate-900/90 p-2.5 rounded-lg border border-slate-800">
                       <span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wider">
-                        Încredere Model AI
+                        {lang === 'ro' ? 'Încredere Model AI' : 'AI Confidence'}
                       </span>
                       <span className="text-sm font-black text-indigo-400 font-mono">
                         {signal.confidencePercent}%
@@ -1181,7 +1181,7 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
 
                     <div className="bg-slate-900/90 p-2.5 rounded-lg border border-slate-800">
                       <span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wider">
-                        Distanță Risc (SL)
+                        {lang === 'ro' ? 'Distanță Risc (SL)' : 'Risk Distance (SL)'}
                       </span>
                       <span className="text-xs font-black text-rose-400 font-mono">
                         -{displayRiskDistance} {distanceUnit} ({riskPercent}%)
@@ -1190,7 +1190,7 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
 
                     <div className="bg-slate-900/90 p-2.5 rounded-lg border border-slate-800">
                       <span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wider">
-                        Țintă Principală (TP1)
+                        {lang === 'ro' ? 'Țintă Principală (TP1)' : 'Main Target (TP1)'}
                       </span>
                       <span className="text-xs font-black text-emerald-400 font-mono">
                         +{displayTp1Distance} {distanceUnit}
@@ -1228,15 +1228,23 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
                         </span>
                       </div>
                       <div className="flex items-center justify-between border-b border-slate-800 pb-1">
-                        <span className="text-slate-400">Volatilitate:</span>
+                        <span className="text-slate-400">{lang === 'ro' ? 'Volatilitate:' : 'Volatility:'}</span>
                         <span className="font-bold text-slate-200">
-                          {signal.indicators?.volatility || 'Normală'}
+                          {signal.indicators?.volatility
+                            ? (lang === 'ro'
+                                ? signal.indicators.volatility
+                                : signal.indicators.volatility.replace('Normală', 'Normal').replace('Ridicată', 'High').replace('Scăzută', 'Low'))
+                            : (lang === 'ro' ? 'Normală' : 'Normal')}
                         </span>
                       </div>
                       <div className="flex items-center justify-between">
-                        <span className="text-slate-400">Medii Mobile:</span>
+                        <span className="text-slate-400">{lang === 'ro' ? 'Medii Mobile:' : 'Moving Averages:'}</span>
                         <span className="font-bold text-slate-200">
-                          {signal.indicators?.movingAverages || 'Peste EMA 20'}
+                          {signal.indicators?.movingAverages
+                            ? (lang === 'ro'
+                                ? signal.indicators.movingAverages
+                                : signal.indicators.movingAverages.replace('Peste', 'Above').replace('Sub', 'Below'))
+                            : (lang === 'ro' ? 'Peste EMA 20' : 'Above EMA 20')}
                         </span>
                       </div>
                     </div>
@@ -1261,10 +1269,10 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
                     <div>
                       <div className="flex justify-between text-[11px] mb-1">
                         <span className="text-emerald-400 font-bold">
-                          Cumpărători: {signal.orderFlow?.buyVolumePercent || 64}%
+                          {lang === 'ro' ? 'Cumpărători' : 'Buyers'}: {signal.orderFlow?.buyVolumePercent || 64}%
                         </span>
                         <span className="text-rose-400 font-bold">
-                          Vânzători: {signal.orderFlow?.sellVolumePercent || 36}%
+                          {lang === 'ro' ? 'Vânzători' : 'Sellers'}: {signal.orderFlow?.sellVolumePercent || 36}%
                         </span>
                       </div>
                       <div className="h-2 w-full bg-rose-950 rounded-full overflow-hidden flex">
@@ -1284,17 +1292,17 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
                           }`}
                         >
                           {(signal.orderFlow?.delta || 0) >= 0 ? '+' : ''}
-                          {signal.orderFlow?.delta || 1420} loturi
+                          {signal.orderFlow?.delta || 1420} {lang === 'ro' ? 'loturi' : 'lots'}
                         </span>
                       </div>
                       <div className="flex items-center justify-between border-b border-slate-800 pb-1">
-                        <span className="text-slate-400">Presiune Instituțională:</span>
+                        <span className="text-slate-400">{lang === 'ro' ? 'Presiune Instituțională:' : 'Institutional Pressure:'}</span>
                         <span className="font-bold text-slate-200">
                           {signal.orderFlow?.institutionalPressure || 'HIGH_BUYING'}
                         </span>
                       </div>
                       <div className="flex items-center justify-between">
-                        <span className="text-slate-400">Tip Dezechilibru:</span>
+                        <span className="text-slate-400">{lang === 'ro' ? 'Tip Dezechilibru:' : 'Imbalance Type:'}</span>
                         <span className="font-bold text-slate-200">
                           {signal.orderFlow?.imbalanceType || 'BUY_SIDE_STACKED'}
                         </span>
@@ -1313,7 +1321,7 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
                     </span>
                     <div className="space-y-2 text-xs font-mono">
                       <div className="flex items-center justify-between p-2 rounded bg-blue-950/40 border border-blue-800/40">
-                        <span className="text-blue-300 font-bold">🎯 INTRARE (ENTRY):</span>
+                        <span className="text-blue-300 font-bold">🎯 {lang === 'ro' ? 'INTRARE (ENTRY)' : 'ENTRY'}:</span>
                         <span className="text-white font-black">${formatSignalPrice(entryPrice, signal.instrumentId, signal.symbol)}</span>
                       </div>
 
@@ -1323,17 +1331,17 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
                       </div>
 
                       <div className="flex items-center justify-between p-2 rounded bg-emerald-950/40 border border-emerald-800/40">
-                        <span className="text-emerald-300 font-bold">🎯 TP1 (Principal):</span>
+                        <span className="text-emerald-300 font-bold">🎯 TP1 ({lang === 'ro' ? 'Principal' : 'Main'}):</span>
                         <span className="text-emerald-400 font-black">${formatSignalPrice(tp1Price, signal.instrumentId, signal.symbol)}</span>
                       </div>
 
                       <div className="flex items-center justify-between p-2 rounded bg-teal-950/40 border border-teal-800/40">
-                        <span className="text-teal-300 font-bold">🎯 TP2 (Extins):</span>
+                        <span className="text-teal-300 font-bold">🎯 TP2 ({lang === 'ro' ? 'Extins' : 'Extended'}):</span>
                         <span className="text-teal-400 font-black">${formatSignalPrice(tp2Price, signal.instrumentId, signal.symbol)}</span>
                       </div>
 
                       <div className="flex items-center justify-between p-2 rounded bg-green-950/40 border border-green-800/40">
-                        <span className="text-green-300 font-bold">🎯 TP3 (Maxim):</span>
+                        <span className="text-green-300 font-bold">🎯 TP3 ({lang === 'ro' ? 'Maxim' : 'Maximum'}):</span>
                         <span className="text-green-400 font-black">${formatSignalPrice(tp3Price, signal.instrumentId, signal.symbol)}</span>
                       </div>
 
@@ -1367,7 +1375,7 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
             <div className="bg-[#090D16] border-t border-slate-800 px-3 py-2 flex items-center justify-between text-[10px] text-slate-500 shrink-0 font-mono">
               <div className="flex items-center gap-1.5">
                 <Clock className="w-3 h-3 text-slate-400" />
-                <span>Semnal creat: {formatFullDateTime(signal.createdAt, lang)}</span>
+                <span>{lang === 'ro' ? 'Semnal creat:' : 'Signal created:'} {formatFullDateTime(signal.createdAt, lang)}</span>
               </div>
               {lastUpdatedTime && <span>Act: {lastUpdatedTime}</span>}
             </div>
@@ -1379,7 +1387,7 @@ export const TradingViewSignalChartModal: React.FC<TradingViewSignalChartModalPr
           <button
             onClick={isScrolledDown ? scrollToTop : scrollToDetails}
             className="bg-indigo-600/90 hover:bg-indigo-500 active:scale-95 text-white text-[11px] font-bold px-3 py-1.5 rounded-full shadow-xl backdrop-blur-md border border-indigo-400/40 flex items-center gap-1.5 transition-all cursor-pointer"
-            title={isScrolledDown ? 'Derulează la grafic' : 'Derulează la detalii și strategie'}
+            title={isScrolledDown ? (lang === 'ro' ? 'Derulează la grafic' : 'Scroll to chart') : (lang === 'ro' ? 'Derulează la detalii și strategie' : 'Scroll to details & strategy')}
           >
             {isScrolledDown ? (
               <>

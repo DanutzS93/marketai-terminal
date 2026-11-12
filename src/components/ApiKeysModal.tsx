@@ -221,9 +221,13 @@ export const ApiKeysModal: React.FC<ApiKeysModalProps> = ({
                 {lang === 'ro' ? 'Configurare Chei API' : 'API Keys Configuration'}
               </h3>
               <p className="text-[11px] sm:text-xs text-slate-400 font-mono">
-                {lang === 'ro'
-                  ? 'Gemini AI • LSE Live Feed • Twelve Data (Indici CFD)'
-                  : 'Gemini AI • LSE Live Feed • Twelve Data (CFD Indices)'}
+                {isAdmin
+                  ? (lang === 'ro'
+                      ? 'Gemini AI • LSE Live Feed • Twelve Data (Indici CFD)'
+                      : 'Gemini AI • LSE Live Feed • Twelve Data (CFD Indices)')
+                  : (lang === 'ro'
+                      ? 'Gemini AI Studio (Generare Semnale & Analiză SMC)'
+                      : 'Gemini AI Studio (Signal Generation & SMC Analysis)')}
               </p>
             </div>
           </div>
@@ -347,7 +351,13 @@ export const ApiKeysModal: React.FC<ApiKeysModalProps> = ({
             <div className="space-y-2">
               <input
                 type="password"
-                placeholder={isAdmin ? 'Cheie master integrată pe server (Opțional personală)' : 'AIzaSy...'}
+                placeholder={
+                  isAdmin
+                    ? (lang === 'ro'
+                        ? 'Cheie master integrată pe server (Opțional personală)'
+                        : 'Server master key integrated (Optional personal)')
+                    : 'AIzaSy...'
+                }
                 value={geminiApiKey}
                 onChange={(e) => {
                   setGeminiApiKey(e.target.value);
@@ -417,7 +427,10 @@ export const ApiKeysModal: React.FC<ApiKeysModalProps> = ({
             )}
           </div>
 
-          {/* London Strategic Edge Live Market Feed Configuration */}
+          {/* London Strategic Edge & Twelve Data (Admin-Only Platform Data Infrastructure) */}
+          {isAdmin && (
+            <>
+              {/* London Strategic Edge Live Market Feed Configuration */}
           <div className="bg-[#080E1E]/80 border border-white/10 p-4 rounded-xl space-y-3 backdrop-blur-md">
             <div className="flex items-center justify-between">
               <label className="text-emerald-300 font-semibold flex items-center gap-1.5 text-sm">
@@ -431,7 +444,7 @@ export const ApiKeysModal: React.FC<ApiKeysModalProps> = ({
               <div className="flex items-center gap-1.5">
                 <span className="text-[10px] font-bold font-mono uppercase tracking-wider text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30 flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  <span>50 GB / LUNĂ</span>
+                  <span>{lang === 'ro' ? '50 GB / LUNĂ' : '50 GB / MONTH'}</span>
                 </span>
                 <a
                   href="https://www.londonstrategicedge.com"
@@ -634,6 +647,8 @@ export const ApiKeysModal: React.FC<ApiKeysModalProps> = ({
               </div>
             )}
           </div>
+            </>
+          )}
 
           {/* Save & Close Action Buttons */}
           <div className="pt-2 flex items-center gap-3">
@@ -654,7 +669,11 @@ export const ApiKeysModal: React.FC<ApiKeysModalProps> = ({
                   <span>{lang === 'ro' ? 'Chei Salvate cu Succes!' : 'Keys Saved Successfully!'}</span>
                 </>
               ) : (
-                <span>{lang === 'ro' ? 'Salvează Cheile API' : 'Save API Keys'}</span>
+                <span>
+                  {isAdmin
+                    ? (lang === 'ro' ? 'Salvează Cheile API' : 'Save API Keys')
+                    : (lang === 'ro' ? 'Salvează Cheia Gemini AI' : 'Save Gemini AI Key')}
+                </span>
               )}
             </button>
           </div>

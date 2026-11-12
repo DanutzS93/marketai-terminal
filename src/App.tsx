@@ -1112,11 +1112,17 @@ export default function App() {
       ? Math.round(targetSig.pnl * 100) / 100
       : Math.round(dollarRisk * rr * 100) / 100;
     const finalStatus: 'WIN' | 'LOSS' | 'BREAKEVEN' = finalPnl > 0 ? 'WIN' : finalPnl < 0 ? 'LOSS' : 'BREAKEVEN';
-    const outcomeLabel = finalPnl > 0
-      ? `Închis Manual Profit (+$${finalPnl.toFixed(2)})`
-      : finalPnl < 0
-      ? `Închis Manual Pierdere (-$${Math.abs(finalPnl).toFixed(2)})`
-      : 'Închis Manual (BE)';
+    const outcomeLabel = lang === 'ro'
+      ? (finalPnl > 0
+          ? `Închis Manual Profit (+$${finalPnl.toFixed(2)})`
+          : finalPnl < 0
+          ? `Închis Manual Pierdere (-$${Math.abs(finalPnl).toFixed(2)})`
+          : 'Închis Manual (BE)')
+      : (finalPnl > 0
+          ? `Closed Manually Profit (+$${finalPnl.toFixed(2)})`
+          : finalPnl < 0
+          ? `Closed Manually Loss (-$${Math.abs(finalPnl).toFixed(2)})`
+          : 'Closed Manually (BE)');
 
     const nowIso = new Date().toISOString();
     const dKey = getLocalDateKey(targetSig.createdAt);
@@ -1141,7 +1147,9 @@ export default function App() {
       status: finalStatus,
       outcomeLabel: outcomeLabel,
       setup: targetSig.title || 'Manual Closed Trade',
-      notes: `Închis manual la prețul de $${exitPrice} (${finalPnl >= 0 ? '+' : ''}$${finalPnl.toFixed(2)})`,
+      notes: lang === 'ro'
+        ? `Închis manual la prețul de $${exitPrice} (${finalPnl >= 0 ? '+' : ''}$${finalPnl.toFixed(2)})`
+        : `Closed manually at price $${exitPrice} (${finalPnl >= 0 ? '+' : ''}$${finalPnl.toFixed(2)})`,
       timeframe: targetSig.timeframe,
       linkedSignalId: targetSig.id,
       isManual: true,
@@ -1235,11 +1243,17 @@ export default function App() {
             ? Math.round(s.pnl * 100) / 100
             : Math.round(dollarRisk * rr * 100) / 100;
           const finalStatus: 'WIN' | 'LOSS' | 'BREAKEVEN' = finalPnl > 0 ? 'WIN' : finalPnl < 0 ? 'LOSS' : 'BREAKEVEN';
-          const outcomeLabel = finalPnl > 0
-            ? `Închis Manual Profit (+$${finalPnl.toFixed(2)})`
-            : finalPnl < 0
-            ? `Închis Manual Pierdere (-$${Math.abs(finalPnl).toFixed(2)})`
-            : 'Închis Manual (BE)';
+          const outcomeLabel = lang === 'ro'
+            ? (finalPnl > 0
+                ? `Închis Manual Profit (+$${finalPnl.toFixed(2)})`
+                : finalPnl < 0
+                ? `Închis Manual Pierdere (-$${Math.abs(finalPnl).toFixed(2)})`
+                : 'Închis Manual (BE)')
+            : (finalPnl > 0
+                ? `Closed Manually Profit (+$${finalPnl.toFixed(2)})`
+                : finalPnl < 0
+                ? `Closed Manually Loss (-$${Math.abs(finalPnl).toFixed(2)})`
+                : 'Closed Manually (BE)');
 
           const dKey = getLocalDateKey(s.createdAt);
           const timeStr = formatTimeFromDate(s.createdAt);
@@ -1261,8 +1275,10 @@ export default function App() {
             pnl: finalPnl,
             status: finalStatus,
             outcomeLabel: outcomeLabel,
-            setup: s.title || 'Manual Closed Trade (Close All)',
-            notes: `Închis manual la comanda Închidere Totală ($${exitPrice})`,
+            setup: s.title || (lang === 'ro' ? 'Tranzacție Închisă Manual' : 'Manual Closed Trade'),
+            notes: lang === 'ro'
+              ? `Închis manual la comanda Închidere Totală ($${exitPrice})`
+              : `Closed manually via Close All command ($${exitPrice})`,
             timeframe: s.timeframe,
             linkedSignalId: s.id,
             isManual: true,
@@ -2356,7 +2372,7 @@ export default function App() {
               </div>
               <div>
                 <span className="font-bold text-sm text-white block mb-0.5">
-                  Atenție: Conexiune LSE Feed Live
+                  {lang === 'ro' ? 'Atenție: Conexiune LSE Feed Live' : 'Notice: Live LSE Feed Connection'}
                 </span>
                 <p className="text-rose-200 text-xs mt-1">
                   <strong className="text-white">LSE Feed:</strong> {apiErrors.londonStrategicEdge}
@@ -2367,7 +2383,7 @@ export default function App() {
               onClick={() => setIsKeysModalOpen(true)}
               className="px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs transition shadow-lg shadow-rose-600/30 shrink-0 flex items-center gap-1.5 cursor-pointer"
             >
-              <span>Verifică Conexiunea LSE</span>
+              <span>{lang === 'ro' ? 'Verifică Conexiunea LSE' : 'Check LSE Connection'}</span>
             </button>
           </div>
         </div>

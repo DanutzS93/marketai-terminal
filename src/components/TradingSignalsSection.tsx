@@ -398,7 +398,7 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
                         : 'bg-orange-500/20 border-orange-400/50 text-orange-200 shadow-sm'
                       : 'bg-slate-900/40 border-white/5 text-slate-500 hover:text-slate-300 hover:border-white/15'
                   }`}
-                  title={`${acc.name} (${acc.platform}) - ${isConnected ? 'Conectat' : 'Offline'}`}
+                  title={`${acc.name} (${acc.platform}) - ${isConnected ? (lang === 'ro' ? 'Conectat' : 'Connected') : 'Offline'}`}
                 >
                   <div
                     className={`w-3.5 h-3.5 rounded flex items-center justify-center border text-[9px] font-bold ${
@@ -657,7 +657,7 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
 
               {/* Rubrică PNL Curent sincronizat din MT5 / NinjaTrader */}
               {(() => {
-                const featPnl = calculateTradePnLMetrics(featuredSignal, user, quotes);
+                const featPnl = calculateTradePnLMetrics(featuredSignal, user, quotes, lang);
                 const isPos = featPnl.pnl > 0;
                 const isNeg = featPnl.pnl < 0;
                 return (
@@ -759,7 +759,7 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
                       ⚡ {effectiveExecType}
                     </span>
                     {(() => {
-                      const featPnl = calculateTradePnLMetrics(featuredSignal, user, quotes);
+                      const featPnl = calculateTradePnLMetrics(featuredSignal, user, quotes, lang);
                       const isPos = featPnl.pnl > 0;
                       const isNeg = featPnl.pnl < 0;
                       return (
@@ -1317,7 +1317,7 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
 
                 {/* PNL Curent Row for Mobile */}
                 {(() => {
-                  const pnlData = calculateTradePnLMetrics(sig, user, quotes);
+                  const pnlData = calculateTradePnLMetrics(sig, user, quotes, lang);
                   const isPos = pnlData.pnl > 0;
                   const isNeg = pnlData.pnl < 0;
                   return (
@@ -1629,7 +1629,7 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
                     {/* Rubrică PNL Curent sincronizat din MT5 / NinjaTrader */}
                     <td className="px-2 py-2 text-center whitespace-nowrap">
                       {(() => {
-                        const pnlData = calculateTradePnLMetrics(sig, user, quotes);
+                        const pnlData = calculateTradePnLMetrics(sig, user, quotes, lang);
                         const isPos = pnlData.pnl > 0;
                         const isNeg = pnlData.pnl < 0;
                         return (
@@ -1821,7 +1821,7 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
                     {lang === 'ro' ? 'P&L Curent Estimat:' : 'Current Estimated P&L:'}
                   </span>
                   {(() => {
-                    const pnlMetrics = calculateTradePnLMetrics(signalToClose, user, quotes);
+                    const pnlMetrics = calculateTradePnLMetrics(signalToClose, user, quotes, lang);
                     const isPos = pnlMetrics.pnl > 0;
                     return (
                       <span className={`text-sm font-bold font-mono ${isPos ? 'text-emerald-400' : 'text-rose-400'}`}>

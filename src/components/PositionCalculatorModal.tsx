@@ -249,30 +249,30 @@ export const PositionCalculatorModal: React.FC<PositionCalculatorModalProps> = (
               {lang === 'ro' ? 'Mărime Poziție Calculată:' : 'Calculated Position Size:'}
             </span>
             <span className="text-base font-extrabold text-cyan-300">
-              {calculation.roundedLots.toFixed(2)} Loturi
+              {calculation.roundedLots.toFixed(2)} {lang === 'ro' ? 'Loturi' : 'Lots'}
             </span>
           </div>
 
           <div className="grid grid-cols-2 gap-2 text-xs pt-1">
             <div className="flex justify-between items-center">
-              <span className="text-slate-400 font-sans">Distanță SL:</span>
+              <span className="text-slate-400 font-sans">{lang === 'ro' ? 'Distanță SL:' : 'SL Distance:'}</span>
               <span className="font-semibold text-slate-200">
                 {calculation.distanceInPips.toFixed(1)} {currentSpec.pipLabel}
               </span>
             </div>
             <div className="flex justify-between items-center">
-              <span className="text-slate-400 font-sans">Marjă Necesară:</span>
+              <span className="text-slate-400 font-sans">{lang === 'ro' ? 'Marjă Necesară:' : 'Required Margin:'}</span>
               <span className="font-semibold text-amber-300">${calculation.requiredMargin.toFixed(2)}</span>
             </div>
           </div>
 
           <div className="pt-2 border-t border-white/10 space-y-1 text-xs">
             <div className="flex justify-between items-center">
-              <span className="text-slate-400 font-sans">Profit la TP1 (1:1.5) [{calculation.tp1Price}]:</span>
+              <span className="text-slate-400 font-sans">{lang === 'ro' ? 'Profit la TP1' : 'Profit at TP1'} (1:1.5) [{calculation.tp1Price}]:</span>
               <span className="font-bold text-emerald-400">+${calculation.tp1Profit.toFixed(2)}</span>
             </div>
             <div className="flex justify-between items-center">
-              <span className="text-slate-400 font-sans">Profit la TP2 (1:2.5) [{calculation.tp2Price}]:</span>
+              <span className="text-slate-400 font-sans">{lang === 'ro' ? 'Profit la TP2' : 'Profit at TP2'} (1:2.5) [{calculation.tp2Price}]:</span>
               <span className="font-bold text-emerald-300">+${calculation.tp2Profit.toFixed(2)}</span>
             </div>
           </div>

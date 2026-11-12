@@ -36,6 +36,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
   lang,
   onUserUpdated,
 }) => {
+  const isRo = lang === 'ro';
   const [activeTab, setActiveTab] = useState<'users' | 'invites' | 'database'>('users');
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [inviteCodes, setInviteCodes] = useState<InviteCodeItem[]>([]);
@@ -88,13 +89,13 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        setSuccessMsg(data.message || 'Migrare finalizată cu succes!');
+        setSuccessMsg(data.message || (isRo ? 'Migrare finalizată cu succes!' : 'Migration completed successfully!'));
         fetchSupabaseStatus();
       } else {
-        setErrorMsg(data.error || 'Migrarea a eșuat. Asigurați-vă că ați creat tabelele în Supabase.');
+        setErrorMsg(data.error || (isRo ? 'Migrarea a eșuat. Asigurați-vă că ați creat tabelele în Supabase.' : 'Migration failed. Make sure tables are created in Supabase.'));
       }
     } catch (e) {
-      setErrorMsg('Eroare de rețea la migrare.');
+      setErrorMsg(isRo ? 'Eroare de rețea la migrare.' : 'Network error during migration.');
     } finally {
       setMigrating(false);
     }
@@ -137,14 +138,14 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
         if (data.user && onUserUpdated) {
           onUserUpdated(data.user);
         }
-        setSuccessMsg(`Pachetul de acces a fost actualizat la ${newTier.toUpperCase()}!`);
+        setSuccessMsg(isRo ? `Pachetul de acces a fost actualizat la ${newTier.toUpperCase()}!` : `Access tier updated to ${newTier.toUpperCase()}!`);
         setTimeout(() => setSuccessMsg(''), 3000);
       } else {
         const err = await res.json();
-        alert(err.error || 'Eroare la modificarea pachetului.');
+        alert(err.error || (isRo ? 'Eroare la modificarea pachetului.' : 'Error changing package tier.'));
       }
     } catch (e) {
-      alert('Eroare de rețea la actualizarea pachetului.');
+      alert(isRo ? 'Eroare de rețea la actualizarea pachetului.' : 'Network error updating tier.');
     }
   };
 
@@ -172,17 +173,17 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
 
       const data = await res.json();
       if (res.ok) {
-        setSuccessMsg(data.message || 'Cont creat / restabilit cu succes în Cloud Firestore!');
+        setSuccessMsg(data.message || (isRo ? 'Cont creat / restabilit cu succes în Cloud Database!' : 'Account created / restored successfully in Cloud Database!'));
         setShowAddUserModal(false);
         setAddUsername('');
         setAddPassword('');
         fetchAdminData();
         setTimeout(() => setSuccessMsg(''), 4000);
       } else {
-        setErrorMsg(data.error || 'Eroare la crearea utilizatorului.');
+        setErrorMsg(data.error || (isRo ? 'Eroare la crearea utilizatorului.' : 'Error creating user.'));
       }
     } catch (err) {
-      setErrorMsg('Eroare de rețea.');
+      setErrorMsg(isRo ? 'Eroare de rețea.' : 'Network error.');
     } finally {
       setLoading(false);
     }
@@ -210,7 +211,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
         if (Array.isArray(uData.users)) setUsers(uData.users);
       } else {
         const err = await usersRes.json();
-        setErrorMsg(err.error || 'Nu s-au putut încărca utilizatorii.');
+        setErrorMsg(err.error || (isRo ? 'Nu s-au putut încărca utilizatorii.' : 'Could not load users.'));
       }
 
       if (invitesRes.ok) {
@@ -218,7 +219,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
         if (Array.isArray(iData.inviteCodes)) setInviteCodes(iData.inviteCodes);
       }
     } catch (err) {
-      setErrorMsg('Eroare la conectarea cu serverul admin.');
+      setErrorMsg(isRo ? 'Eroare la conectarea cu serverul admin.' : 'Error connecting to admin server.');
     } finally {
       setLoading(false);
     }
@@ -247,22 +248,22 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
 
       if (res.ok) {
         const data = await res.json();
-        setSuccessMsg(`Abonamentul utilizatorului a fost prelungit cu ${days} zile!`);
+        setSuccessMsg(isRo ? `Abonamentul utilizatorului a fost prelungit cu ${days} zile!` : `User subscription extended by ${days} days!`);
         setTimeout(() => setSuccessMsg(''), 3000);
         fetchAdminData();
       } else {
         const err = await res.json();
-        alert(err.error || 'Eroare la prelungirea abonamentului.');
+        alert(err.error || (isRo ? 'Eroare la prelungirea abonamentului.' : 'Error extending subscription.'));
       }
     } catch (err) {
-      alert('Eroare de rețea.');
+      alert(isRo ? 'Eroare de rețea.' : 'Network error.');
     }
   };
 
   // Handle Toggle Block User Status
   const handleToggleBlockUser = async (userId: string, username: string) => {
     if (!authToken) return;
-    const confirmText = lang === 'ro'
+    const confirmText = isRo
       ? `Sigur doriți să schimbați statusul accesului pentru ${username}?`
       : `Are you sure you want to toggle access status for ${username}?`;
     if (!window.confirm(confirmText)) return;
@@ -277,17 +278,20 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
         fetchAdminData();
       } else {
         const err = await res.json();
-        alert(err.error || 'Eroare la modificarea statusului.');
+        alert(err.error || (isRo ? 'Eroare la modificarea statusului.' : 'Error changing status.'));
       }
     } catch (err) {
-      alert('Eroare de rețea.');
+      alert(isRo ? 'Eroare de rețea.' : 'Network error.');
     }
   };
 
   // Handle Delete User
   const handleDeleteUser = async (userId: string, username: string) => {
     if (!authToken) return;
-    if (!window.confirm(`Sunteți sigur că doriți ștergerea definitivă a utilizatorului ${username}?`)) return;
+    const confirmDelete = isRo
+      ? `Sunteți sigur că doriți ștergerea definitivă a utilizatorului ${username}?`
+      : `Are you sure you want to permanently delete user ${username}?`;
+    if (!window.confirm(confirmDelete)) return;
 
     try {
       const res = await fetch(`/api/admin/users/${userId}`, {
@@ -296,15 +300,15 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
       });
 
       if (res.ok) {
-        setSuccessMsg(`Utilizatorul ${username} a fost șters.`);
+        setSuccessMsg(isRo ? `Utilizatorul ${username} a fost șters.` : `User ${username} has been deleted.`);
         setTimeout(() => setSuccessMsg(''), 3000);
         fetchAdminData();
       } else {
         const err = await res.json();
-        alert(err.error || 'Eroare la ștergere.');
+        alert(err.error || (isRo ? 'Eroare la ștergere.' : 'Error deleting user.'));
       }
     } catch (err) {
-      alert('Eroare de rețea.');
+      alert(isRo ? 'Eroare de rețea.' : 'Network error.');
     }
   };
 
@@ -356,15 +360,15 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
         setCodeNote('');
         setMaxUses('');
         setCustomDays('');
-        setSuccessMsg('Codul de invitație a fost creat cu succes!');
+        setSuccessMsg(isRo ? 'Codul de invitație a fost creat cu succes!' : 'Invite code created successfully!');
         setTimeout(() => setSuccessMsg(''), 3000);
         fetchAdminData();
       } else {
         const err = await res.json();
-        alert(err.error || 'Eroare la crearea codului de invitație.');
+        alert(err.error || (isRo ? 'Eroare la crearea codului de invitație.' : 'Error creating invite code.'));
       }
     } catch (e) {
-      alert('Eroare de rețea.');
+      alert(isRo ? 'Eroare de rețea.' : 'Network error.');
     }
   };
 
@@ -378,16 +382,19 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
       if (res.ok) {
         fetchAdminData();
       } else {
-        alert('Eroare la schimbarea statusului codului.');
+        alert(isRo ? 'Eroare la schimbarea statusului codului.' : 'Error changing code status.');
       }
     } catch (e) {
-      alert('Eroare de rețea.');
+      alert(isRo ? 'Eroare de rețea.' : 'Network error.');
     }
   };
 
   // Delete Invite Code
   const handleDeleteCode = async (code: string) => {
-    if (!window.confirm(`Dorești să ștergi codul de invitație ${code}?`)) return;
+    const confirmDelete = isRo
+      ? `Dorești să ștergi codul de invitație ${code}?`
+      : `Are you sure you want to delete invite code ${code}?`;
+    if (!window.confirm(confirmDelete)) return;
     setInviteCodes((prev) => prev.filter((item) => item.code !== code));
     try {
       const res = await fetch(`/api/admin/invite-codes/${encodeURIComponent(code)}`, {
@@ -397,11 +404,11 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
       if (res.ok) {
         fetchAdminData();
       } else {
-        alert('Eroare la ștergerea codului.');
+        alert(isRo ? 'Eroare la ștergerea codului.' : 'Error deleting code.');
         fetchAdminData();
       }
     } catch (e) {
-      alert('Eroare de rețea.');
+      alert(isRo ? 'Eroare de rețea.' : 'Network error.');
       fetchAdminData();
     }
   };
@@ -440,13 +447,17 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-lg font-black text-white tracking-wide">ADMIN CRM & CONTROL SUBSCRIPȚII</h2>
+                <h2 className="text-lg font-black text-white tracking-wide">
+                  {isRo ? 'ADMIN CRM & CONTROL SUBSCRIPȚII' : 'ADMIN CRM & SUBSCRIPTION CONTROL'}
+                </h2>
                 <span className="bg-amber-500/20 text-amber-300 text-[10px] font-bold px-2 py-0.5 rounded border border-amber-500/30 uppercase tracking-wider">
                   MASTER PANEL
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
-                Gestiune utilizatori, reînnoire abonamente lunare (30 zile), blocare acces neplată și generare coduri de invitație.
+                {isRo
+                  ? 'Gestiune utilizatori, reînnoire abonamente lunare (30 zile), blocare acces neplată și generare coduri de invitație.'
+                  : 'User management, monthly renewal (30 days), payment access lock, and invite codes generation.'}
               </p>
             </div>
           </div>
@@ -463,7 +474,9 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 bg-slate-950/60 border-b border-slate-800 shrink-0">
           <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 flex items-center justify-between">
             <div>
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Abonați</span>
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                {isRo ? 'Total Abonați' : 'Total Users'}
+              </span>
               <span className="text-xl font-black text-white">{totalUsers}</span>
             </div>
             <Users className="w-6 h-6 text-indigo-400" />
@@ -471,7 +484,9 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
 
           <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 flex items-center justify-between">
             <div>
-              <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider block">Abonamente Active</span>
+              <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider block">
+                {isRo ? 'Abonamente Active' : 'Active Subs'}
+              </span>
               <span className="text-xl font-black text-emerald-400">{activeSubs}</span>
             </div>
             <CheckCircle2 className="w-6 h-6 text-emerald-400" />
@@ -479,7 +494,9 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
 
           <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 flex items-center justify-between">
             <div>
-              <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider block">Abonamente Expirate</span>
+              <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider block">
+                {isRo ? 'Abonamente Expirate' : 'Expired Subs'}
+              </span>
               <span className="text-xl font-black text-amber-400">{expiredSubs}</span>
             </div>
             <Clock className="w-6 h-6 text-amber-400" />
@@ -487,7 +504,9 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
 
           <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 flex items-center justify-between">
             <div>
-              <span className="text-[10px] font-bold text-rose-400 uppercase tracking-wider block">Acces Blocat</span>
+              <span className="text-[10px] font-bold text-rose-400 uppercase tracking-wider block">
+                {isRo ? 'Acces Blocat' : 'Blocked Access'}
+              </span>
               <span className="text-xl font-black text-rose-400">{blockedUsers}</span>
             </div>
             <Ban className="w-6 h-6 text-rose-400" />
@@ -506,7 +525,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
               }`}
             >
               <Users className="w-4 h-4" />
-              <span>Gestiune Utilizatori & Subscripții ({users.length})</span>
+              <span>{isRo ? 'Gestiune Utilizatori & Subscripții' : 'Users & Subscriptions'} ({users.length})</span>
             </button>
 
             <button
@@ -518,7 +537,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
               }`}
             >
               <KeyRound className="w-4 h-4" />
-              <span>Coduri Invitație ({inviteCodes.length})</span>
+              <span>{isRo ? 'Coduri Invitație' : 'Invite Codes'} ({inviteCodes.length})</span>
             </button>
 
             <button
@@ -533,7 +552,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
               }`}
             >
               <Sparkles className="w-4 h-4 text-emerald-400" />
-              <span>Bază de Date Supabase</span>
+              <span>{isRo ? 'Bază de Date Supabase' : 'Supabase Database'}</span>
             </button>
           </div>
 
@@ -541,10 +560,10 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
             onClick={fetchAdminData}
             disabled={loading}
             className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition flex items-center gap-1.5 text-xs font-bold"
-            title="Reîmprospătează datele"
+            title={isRo ? 'Reîmprospătează datele' : 'Refresh data'}
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            <span className="hidden sm:inline">Actualizează</span>
+            <span className="hidden sm:inline">{isRo ? 'Actualizează' : 'Refresh'}</span>
           </button>
         </div>
 
@@ -572,7 +591,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
                 <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
                 <input
                   type="text"
-                  placeholder="Caută utilizator după nume sau cod de invitație..."
+                  placeholder={isRo ? 'Caută utilizator după nume sau cod de invitație...' : 'Search user by name or invite code...'}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2.5 pl-10 pr-4 text-xs font-medium text-white focus:outline-none focus:border-indigo-500"
@@ -584,7 +603,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
                 className="w-full sm:w-auto px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 shadow-lg shrink-0"
               >
                 <PlusCircle className="w-4 h-4" />
-                <span>Adaugă / Restabilește Cont</span>
+                <span>{isRo ? 'Adaugă / Restabilește Cont' : 'Add / Restore Account'}</span>
               </button>
             </div>
 
@@ -594,20 +613,20 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
                     <tr className="bg-slate-900 border-b border-slate-800 text-slate-400 uppercase text-[10px] tracking-wider font-bold">
-                      <th className="p-3.5">Utilizator</th>
-                      <th className="p-3.5">Data Înregistrării</th>
-                      <th className="p-3.5">Cod Invitație</th>
-                      <th className="p-3.5 text-center">Zile Rămase</th>
-                      <th className="p-3.5 text-center">Status Acces</th>
-                      <th className="p-3.5 text-center">Pachet Platformă</th>
-                      <th className="p-3.5 text-right">Acțiuni CRM Admin</th>
+                      <th className="p-3.5">{isRo ? 'Utilizator' : 'User'}</th>
+                      <th className="p-3.5">{isRo ? 'Data Înregistrării' : 'Registration Date'}</th>
+                      <th className="p-3.5">{isRo ? 'Cod Invitație' : 'Invite Code'}</th>
+                      <th className="p-3.5 text-center">{isRo ? 'Zile Rămase' : 'Days Left'}</th>
+                      <th className="p-3.5 text-center">{isRo ? 'Status Acces' : 'Access Status'}</th>
+                      <th className="p-3.5 text-center">{isRo ? 'Pachet Platformă' : 'Platform Tier'}</th>
+                      <th className="p-3.5 text-right">{isRo ? 'Acțiuni CRM Admin' : 'Admin Actions'}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 font-sans">
                     {filteredUsers.length === 0 ? (
                       <tr>
                         <td colSpan={7} className="p-8 text-center text-slate-500">
-                          Nu au fost găsiți utilizatori conform căutării.
+                          {isRo ? 'Nu au fost găsiți utilizatori conform căutării.' : 'No users found matching search query.'}
                         </td>
                       </tr>
                     ) : (
@@ -644,7 +663,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
 
                             {/* Registered Date */}
                             <td className="p-3.5 text-slate-400 font-mono text-[11px]">
-                              {new Date(u.createdAt).toLocaleDateString('ro-RO', {
+                              {new Date(u.createdAt).toLocaleDateString(isRo ? 'ro-RO' : 'en-US', {
                                 day: '2-digit',
                                 month: 'short',
                                 year: 'numeric',
@@ -661,7 +680,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
                             {/* Days Left */}
                             <td className="p-3.5 text-center">
                               {u.role === 'admin' ? (
-                                <span className="text-emerald-400 font-bold">Nelimitat</span>
+                                <span className="text-emerald-400 font-bold">{isRo ? 'Nelimitat' : 'Unlimited'}</span>
                               ) : (
                                 <span
                                   className={`inline-flex items-center gap-1 font-extrabold px-2.5 py-1 rounded-full text-[11px] ${
@@ -673,7 +692,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
                                   }`}
                                 >
                                   <Clock className="w-3 h-3" />
-                                  <span>{daysLeft} zile</span>
+                                  <span>{daysLeft} {isRo ? 'zile' : 'days'}</span>
                                 </span>
                               )}
                             </td>
@@ -683,17 +702,17 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
                               {isBlocked ? (
                                 <span className="bg-rose-500/10 text-rose-400 border border-rose-500/30 font-bold px-2.5 py-1 rounded-lg text-[10px] uppercase flex items-center justify-center gap-1">
                                   <Ban className="w-3 h-3" />
-                                  <span>BLOCAT NEPLATĂ</span>
+                                  <span>{isRo ? 'BLOCAT NEPLATĂ' : 'BLOCKED'}</span>
                                 </span>
                               ) : isExpired ? (
                                 <span className="bg-amber-500/10 text-amber-400 border border-amber-500/30 font-bold px-2.5 py-1 rounded-lg text-[10px] uppercase flex items-center justify-center gap-1">
                                   <Clock className="w-3 h-3" />
-                                  <span>EXPIRAT</span>
+                                  <span>{isRo ? 'EXPIRAT' : 'EXPIRED'}</span>
                                 </span>
                               ) : (
                                 <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-bold px-2.5 py-1 rounded-lg text-[10px] uppercase flex items-center justify-center gap-1">
                                   <CheckCircle2 className="w-3 h-3" />
-                                  <span>ACTIV 30 ZILE</span>
+                                  <span>{isRo ? 'ACTIV 30 ZILE' : 'ACTIVE 30 DAYS'}</span>
                                 </span>
                               )}
                             </td>
@@ -708,7 +727,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
                                       ? 'bg-slate-700 text-white shadow-sm border border-slate-500 font-extrabold'
                                       : 'text-slate-500 hover:text-slate-300'
                                   }`}
-                                  title="Pachet Basic (Doar semnale, jurnal, cotații, știri)"
+                                  title={isRo ? 'Pachet Basic (Doar semnale, jurnal, cotații, știri)' : 'Basic Package (Signals, journal, quotes, news only)'}
                                 >
                                   <span>🛡️</span>
                                   <span>Basic</span>
@@ -720,7 +739,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
                                       ? 'bg-amber-500/25 text-amber-300 shadow-sm border border-amber-400/40 font-extrabold'
                                       : 'text-slate-500 hover:text-slate-300'
                                   }`}
-                                  title="Pachet Gold (Include MT5/Ninja EA, fără Scheduler)"
+                                  title={isRo ? 'Pachet Gold (Include MT5/Ninja EA, fără Scheduler)' : 'Gold Package (Includes MT5/Ninja EA, no Scheduler)'}
                                 >
                                   <span>🥇</span>
                                   <span>Gold</span>
@@ -732,7 +751,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
                                       ? 'bg-gradient-to-r from-cyan-500/25 to-indigo-500/25 text-cyan-200 shadow-sm border border-cyan-400/40 font-black'
                                       : 'text-slate-500 hover:text-slate-300'
                                   }`}
-                                  title="Pachet Diamond (Acces complet la toate funcțiile)"
+                                  title={isRo ? 'Pachet Diamond (Acces complet la toate funcțiile)' : 'Diamond Package (Full access to all features)'}
                                 >
                                   <span>💎</span>
                                   <span>Diamond</span>
@@ -748,10 +767,10 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
                                   <button
                                     onClick={() => handleExtendSubscription(u.id, 30)}
                                     className="bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition flex items-center gap-1"
-                                    title="Adaugă 30 de zile la abonament"
+                                    title={isRo ? 'Adaugă 30 de zile la abonament' : 'Add 30 days to subscription'}
                                   >
                                     <PlusCircle className="w-3.5 h-3.5 text-emerald-400" />
-                                    <span>+30 Zile</span>
+                                    <span>{isRo ? '+30 Zile' : '+30 Days'}</span>
                                   </button>
 
                                   {/* Block / Unblock Toggle */}
@@ -762,17 +781,17 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
                                         ? 'bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border-blue-500/40'
                                         : 'bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border-rose-500/40'
                                     }`}
-                                    title={isBlocked ? 'Deblochează accesul' : 'Blochează accesul în caz de neplată'}
+                                    title={isBlocked ? (isRo ? 'Deblochează accesul' : 'Unblock access') : (isRo ? 'Blochează accesul în caz de neplată' : 'Block access')}
                                   >
                                     {isBlocked ? (
                                       <>
                                         <UserCheck className="w-3.5 h-3.5 text-blue-400" />
-                                        <span>Deblochează</span>
+                                        <span>{isRo ? 'Deblochează' : 'Unblock'}</span>
                                       </>
                                     ) : (
                                       <>
                                         <Ban className="w-3.5 h-3.5 text-rose-400" />
-                                        <span>Blochează</span>
+                                        <span>{isRo ? 'Blochează' : 'Block'}</span>
                                       </>
                                     )}
                                   </button>
@@ -781,7 +800,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
                                   <button
                                     onClick={() => handleDeleteUser(u.id, u.username)}
                                     className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-900/40 text-slate-400 hover:text-rose-300 transition border border-slate-700"
-                                    title="Șterge contul"
+                                    title={isRo ? 'Șterge contul' : 'Delete account'}
                                   >
                                     <Trash2 className="w-3.5 h-3.5" />
                                   </button>
@@ -806,14 +825,14 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
             <div className="bg-indigo-950/40 border border-indigo-500/30 p-5 rounded-2xl space-y-4">
               <h3 className="text-xs font-extrabold text-indigo-300 uppercase tracking-wider flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-amber-400" />
-                <span>Generare Cod Nou de Invitație Personalizat & Setare Valabilitate</span>
+                <span>{isRo ? 'Generare Cod Nou de Invitație Personalizat & Setare Valabilitate' : 'Generate Custom Invite Code & Set Expiry'}</span>
               </h3>
 
               <form onSubmit={handleCreateInviteCode} className="space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-300 mb-1">
-                      Cod Invitație (Ex: ION2026):
+                      {isRo ? 'Cod Invitație (Ex: ION2026):' : 'Invite Code (e.g. VIP2026):'}
                     </label>
                     <input
                       type="text"
@@ -827,11 +846,11 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
 
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-300 mb-1">
-                      Notă / Nume Client (Opțional):
+                      {isRo ? 'Notă / Nume Client (Opțional):' : 'Note / Client Name (Optional):'}
                     </label>
                     <input
                       type="text"
-                      placeholder="Ex: Pentru Alex Popa"
+                      placeholder="Ex: Alex Popa"
                       value={codeNote}
                       onChange={(e) => setCodeNote(e.target.value)}
                       className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-white text-xs focus:outline-none focus:border-indigo-500"
@@ -840,19 +859,19 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
 
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-300 mb-1">
-                      Valabilitate & Regim Folosire:
+                      {isRo ? 'Valabilitate & Regim Folosire:' : 'Validity & Usage Terms:'}
                     </label>
                     <select
                       value={validityType}
                       onChange={(e) => setValidityType(e.target.value as any)}
                       className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-amber-400 font-semibold text-xs focus:outline-none focus:border-indigo-500"
                     >
-                      <option value="30days">30 Zile Valabilitate (Standard)</option>
-                      <option value="10days">10 Zile Valabilitate</option>
-                      <option value="5days">5 Zile Valabilitate</option>
-                      <option value="1use">⚡ O Singură Folosire (Devine Inactiv Imadiat)</option>
-                      <option value="unlimited">Fără Expirare (Nelimitat)</option>
-                      <option value="custom">Personalizat (Setează Zile / Utilizări)</option>
+                      <option value="30days">{isRo ? '30 Zile Valabilitate (Standard)' : '30 Days Validity (Standard)'}</option>
+                      <option value="10days">{isRo ? '10 Zile Valabilitate' : '10 Days Validity'}</option>
+                      <option value="5days">{isRo ? '5 Zile Valabilitate' : '5 Days Validity'}</option>
+                      <option value="1use">{isRo ? '⚡ O Singură Folosire (Devine Inactiv Imediat)' : '⚡ Single Use (Expires Immediately)'}</option>
+                      <option value="unlimited">{isRo ? 'Fără Expirare (Nelimitat)' : 'No Expiration (Unlimited)'}</option>
+                      <option value="custom">{isRo ? 'Personalizat (Setează Zile / Utilizări)' : 'Custom (Set Days / Uses)'}</option>
                     </select>
                   </div>
                 </div>
@@ -862,11 +881,11 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-slate-800/60">
                     <div>
                       <label className="block text-[11px] font-semibold text-slate-300 mb-1">
-                        Valabilitate Zile:
+                        {isRo ? 'Valabilitate Zile:' : 'Validity Days:'}
                       </label>
                       <input
                         type="number"
-                        placeholder="Ex: 14 zile"
+                        placeholder="Ex: 14"
                         value={customDays}
                         onChange={(e) => setCustomDays(e.target.value)}
                         className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-white text-xs focus:outline-none focus:border-indigo-500"
@@ -875,11 +894,11 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
 
                     <div>
                       <label className="block text-[11px] font-semibold text-slate-300 mb-1">
-                        Limita Maximă de Utilizări:
+                        {isRo ? 'Limita Maximă de Utilizări:' : 'Maximum Uses Limit:'}
                       </label>
                       <input
                         type="number"
-                        placeholder="Ex: 5 utilizări (Gol pt. Nelimitat)"
+                        placeholder={isRo ? 'Ex: 5 utilizări (Gol pt. Nelimitat)' : 'e.g. 5 uses (Empty for Unlimited)'}
                         value={maxUses}
                         onChange={(e) => setMaxUses(e.target.value)}
                         className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-white text-xs focus:outline-none focus:border-indigo-500"
@@ -892,7 +911,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
                         className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white font-bold text-xs transition shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-1.5"
                       >
                         <PlusCircle className="w-4 h-4" />
-                        <span>Generare Cod Personalizat</span>
+                        <span>{isRo ? 'Generare Cod Personalizat' : 'Generate Custom Code'}</span>
                       </button>
                     </div>
                   </div>
@@ -907,8 +926,8 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
                       <PlusCircle className="w-4 h-4" />
                       <span>
                         {validityType === '1use'
-                          ? 'Generare Cod cu O Singură Folosire'
-                          : 'Generare Cod Invitație'}
+                          ? (isRo ? 'Generare Cod cu O Singură Folosire' : 'Generate Single-Use Code')
+                          : (isRo ? 'Generare Cod Invitație' : 'Generate Invite Code')}
                       </span>
                     </button>
                   </div>
@@ -919,8 +938,12 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
             {/* Existing Codes Grid */}
             <div className="space-y-3">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between">
-                <span>Lista Coduri de Invitație ({inviteCodes.length})</span>
-                <span className="text-[10px] text-slate-500 font-normal">Sistemul dezactivează automat codurile când expiră sau sunt folosite</span>
+                <span>{isRo ? 'Lista Coduri de Invitație' : 'Invite Codes List'} ({inviteCodes.length})</span>
+                <span className="text-[10px] text-slate-500 font-normal">
+                  {isRo
+                    ? 'Sistemul dezactivează automat codurile când expiră sau sunt folosite'
+                    : 'System automatically disables codes when expired or used'}
+                </span>
               </h3>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -953,12 +976,12 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
                           {isInactive ? (
                             <>
                               <XCircle className="w-3 h-3 text-rose-400" />
-                              <span>INACTIV</span>
+                              <span>{isRo ? 'INACTIV' : 'INACTIVE'}</span>
                             </>
                           ) : (
                             <>
                               <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                              <span>ACTIV</span>
+                              <span>{isRo ? 'ACTIV' : 'ACTIVE'}</span>
                             </>
                           )}
                         </span>
@@ -972,25 +995,25 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
 
                       <div className="space-y-1 text-[11px] text-slate-400 border-t border-slate-900 pt-2 font-mono">
                         <div className="flex justify-between items-center">
-                          <span className="text-slate-500">Utilizări:</span>
+                          <span className="text-slate-500">{isRo ? 'Utilizări:' : 'Uses:'}</span>
                           <span className="text-white font-bold">
                             {item.usesCount} / {item.maxUses ? item.maxUses : '∞'}
-                            {item.maxUses === 1 && ' (O singură folosire)'}
+                            {item.maxUses === 1 && (isRo ? ' (O singură folosire)' : ' (Single use)')}
                           </span>
                         </div>
 
                         {item.validityDays && (
                           <div className="flex justify-between items-center">
-                            <span className="text-slate-500">Valabilitate:</span>
-                            <span className="text-indigo-300 font-bold">{item.validityDays} zile</span>
+                            <span className="text-slate-500">{isRo ? 'Valabilitate:' : 'Validity:'}</span>
+                            <span className="text-indigo-300 font-bold">{item.validityDays} {isRo ? 'zile' : 'days'}</span>
                           </div>
                         )}
 
                         {item.expiresAt && (
                           <div className="flex justify-between items-center">
-                            <span className="text-slate-500">Expiră la:</span>
+                            <span className="text-slate-500">{isRo ? 'Expiră la:' : 'Expires at:'}</span>
                             <span className={isTimeExpired ? 'text-rose-400 font-bold' : 'text-slate-300'}>
-                              {new Date(item.expiresAt).toLocaleDateString()}
+                              {new Date(item.expiresAt).toLocaleDateString(isRo ? 'ro-RO' : 'en-US')}
                             </span>
                           </div>
                         )}
@@ -1004,7 +1027,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
                           {copiedCode === item.code ? (
                             <>
                               <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                              <span className="text-emerald-400">Copiat!</span>
+                              <span className="text-emerald-400">{isRo ? 'Copiat!' : 'Copied!'}</span>
                             </>
                           ) : (
                             <>
@@ -1022,13 +1045,13 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
                               : 'bg-amber-500/10 text-amber-400 border-amber-500/30 hover:bg-amber-500/20'
                           }`}
                         >
-                          {item.isActive === false ? 'Activează' : 'Dezactivează'}
+                          {item.isActive === false ? (isRo ? 'Activează' : 'Activate') : (isRo ? 'Dezactivează' : 'Deactivate')}
                         </button>
 
                         <button
                           onClick={() => handleDeleteCode(item.code)}
                           className="text-[10px] font-bold text-rose-400 hover:text-rose-300 bg-rose-500/10 px-2 py-1 rounded-lg border border-rose-500/30 transition"
-                          title="Șterge codul"
+                          title={isRo ? 'Șterge codul' : 'Delete code'}
                         >
                           <Trash2 className="w-3 h-3" />
                         </button>
@@ -1048,7 +1071,9 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
               <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                 <div className="flex items-center gap-2">
                   <Sparkles className="w-5 h-5 text-emerald-400" />
-                  <h3 className="text-sm font-bold text-white">Bază de Date Supabase (PostgreSQL)</h3>
+                  <h3 className="text-sm font-bold text-white">
+                    {isRo ? 'Bază de Date Supabase (PostgreSQL)' : 'Supabase Database (PostgreSQL)'}
+                  </h3>
                 </div>
                 <div className="flex items-center gap-2">
                   {supabaseStatus?.isConfigured && (
@@ -1064,7 +1089,9 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
                           supabaseStatus?.tablesExist ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400 animate-ping'
                         }`}
                       />
-                      {supabaseStatus?.tablesExist ? 'Tabele Supabase Active ✓' : 'Așteaptă Creare Tabele (SQL)'}
+                      {supabaseStatus?.tablesExist
+                        ? (isRo ? 'Tabele Supabase Active ✓' : 'Supabase Tables Active ✓')
+                        : (isRo ? 'Așteaptă Creare Tabele (SQL)' : 'Awaiting Tables Creation (SQL)')}
                     </span>
                   )}
                   <span
@@ -1074,7 +1101,9 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
                         : 'bg-amber-500/10 text-amber-400 border border-amber-500/30'
                     }`}
                   >
-                    {supabaseStatus?.isConfigured ? 'Conectat la Supabase' : 'Neconectat (Setați SUPABASE_URL & KEY)'}
+                    {supabaseStatus?.isConfigured
+                      ? (isRo ? 'Conectat la Supabase' : 'Connected to Supabase')
+                      : (isRo ? 'Neconectat (Setați SUPABASE_URL & KEY)' : 'Disconnected (Set SUPABASE_URL & KEY)')}
                   </span>
                 </div>
               </div>
@@ -1083,39 +1112,45 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
                 <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 text-amber-300 text-xs space-y-2">
                   <div className="flex items-center gap-2 font-bold text-amber-200">
                     <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
-                    <span>Pasul 1 Necesar: Crearea Tabelelor în Supabase Dashboard</span>
+                    <span>{isRo ? 'Pasul 1 Necesar: Crearea Tabelelor în Supabase Dashboard' : 'Required Step 1: Create Tables in Supabase Dashboard'}</span>
                   </div>
                   <p className="text-[11px] text-amber-300/90 leading-relaxed">
-                    Credențialele Supabase sunt configurate! Pentru ca baza de date să funcționeze și să poată primi datele, deschideți panoul dumneavoastră Supabase, mergeți la <strong>SQL Editor</strong>, lipiți scriptul SQL de mai jos și apăsați <strong>Run</strong>.
+                    {isRo
+                      ? 'Credențialele Supabase sunt configurate! Pentru ca baza de date să funcționeze și să poată primi datele, deschideți panoul dumneavoastră Supabase, mergeți la SQL Editor, lipiți scriptul SQL de mai jos și apăsați Run.'
+                      : 'Supabase credentials are configured! In your Supabase dashboard, navigate to SQL Editor, paste the SQL schema below and click Run.'}
                   </p>
                 </div>
               )}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                 <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
-                  <span className="font-bold text-slate-300 block">Stare Credențiale Supabase</span>
+                  <span className="font-bold text-slate-300 block">
+                    {isRo ? 'Stare Credențiale Supabase' : 'Supabase Credentials Status'}
+                  </span>
                   <div className="flex justify-between items-center text-slate-400">
                     <span>URL Supabase (SUPABASE_URL):</span>
                     <span className={supabaseStatus?.hasSupabaseUrl ? 'text-emerald-400 font-bold' : 'text-slate-500'}>
-                      {supabaseStatus?.hasSupabaseUrl ? 'Configurat ✓' : 'Lipsă ✗'}
+                      {supabaseStatus?.hasSupabaseUrl ? (isRo ? 'Configurat ✓' : 'Configured ✓') : (isRo ? 'Lipsă ✗' : 'Missing ✗')}
                     </span>
                   </div>
                   <div className="flex justify-between items-center text-slate-400">
                     <span>Cheie Anon / Service (SUPABASE_KEY):</span>
                     <span className={supabaseStatus?.hasSupabaseKey ? 'text-emerald-400 font-bold' : 'text-slate-500'}>
-                      {supabaseStatus?.hasSupabaseKey ? 'Configurat ✓' : 'Lipsă ✗'}
+                      {supabaseStatus?.hasSupabaseKey ? (isRo ? 'Configurat ✓' : 'Configured ✓') : (isRo ? 'Lipsă ✗' : 'Missing ✗')}
                     </span>
                   </div>
                 </div>
 
                 <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
-                  <span className="font-bold text-slate-300 block">Înregistrări Pregătite pentru Migrare</span>
+                  <span className="font-bold text-slate-300 block">
+                    {isRo ? 'Înregistrări Pregătite pentru Migrare' : 'Records Ready for Migration'}
+                  </span>
                   <div className="flex justify-between items-center text-slate-400">
-                    <span>Total Utilizatori:</span>
+                    <span>{isRo ? 'Total Utilizatori:' : 'Total Users:'}</span>
                     <span className="text-white font-bold">{supabaseStatus?.totalUsersCount || users.length}</span>
                   </div>
                   <div className="flex justify-between items-center text-slate-400">
-                    <span>Total Coduri Invitație:</span>
+                    <span>{isRo ? 'Total Coduri Invitație:' : 'Total Invite Codes:'}</span>
                     <span className="text-white font-bold">{supabaseStatus?.totalInviteCodesCount || inviteCodes.length}</span>
                   </div>
                 </div>
@@ -1124,9 +1159,13 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
               {/* Migrate Action Button */}
               <div className="pt-2 flex items-center justify-between bg-slate-950/80 p-4 rounded-xl border border-slate-800">
                 <div>
-                  <h4 className="text-xs font-bold text-white">Migrează / Importă Toate Datele în Supabase</h4>
+                  <h4 className="text-xs font-bold text-white">
+                    {isRo ? 'Migrează / Importă Toate Datele în Supabase' : 'Migrate / Import All Data into Supabase'}
+                  </h4>
                   <p className="text-[11px] text-slate-400 mt-0.5">
-                    Mutați toți utilizatorii, abonamentele, semnalele și codurile de invitație în tabelele Supabase (`app_users` și `app_invite_codes`).
+                    {isRo
+                      ? 'Mutați toți utilizatorii, abonamentele, semnalele și codurile de invitație în tabelele Supabase (app_users și app_invite_codes).'
+                      : 'Move all users, subscriptions, signals, and invite codes into Supabase tables (app_users & app_invite_codes).'}
                   </p>
                 </div>
                 <button
@@ -1135,7 +1174,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
                   className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-2 shadow-lg shrink-0"
                 >
                   <RefreshCw className={`w-4 h-4 ${migrating ? 'animate-spin' : ''}`} />
-                  <span>{migrating ? 'Se migrează...' : 'Efectuează Migrarea Now'}</span>
+                  <span>{migrating ? (isRo ? 'Se migrează...' : 'Migrating...') : (isRo ? 'Efectuează Migrarea' : 'Run Migration')}</span>
                 </button>
               </div>
 
@@ -1143,7 +1182,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
               <div className="space-y-2 pt-2">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-slate-300">
-                    1. Script SQL pentru creare tabele în Supabase (SQL Editor):
+                    {isRo ? '1. Script SQL pentru creare tabele în Supabase (SQL Editor):' : '1. SQL Script for creating tables in Supabase (SQL Editor):'}
                   </span>
                   <button
                     onClick={() => {
@@ -1156,7 +1195,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
                     className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-bold flex items-center gap-1.5 transition"
                   >
                     <Copy className="w-3.5 h-3.5 text-indigo-400" />
-                    <span>{copiedSql ? 'Copiat!' : 'Copiază Scriptul SQL'}</span>
+                    <span>{copiedSql ? (isRo ? 'Copiat!' : 'Copied!') : (isRo ? 'Copiază Scriptul SQL' : 'Copy SQL Script')}</span>
                   </button>
                 </div>
                 <textarea
@@ -1178,7 +1217,9 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2">
                 <PlusCircle className="w-5 h-5 text-emerald-400" />
-                <h3 className="text-sm font-bold text-white">Adaugă sau Restabilește Cont Utilizator</h3>
+                <h3 className="text-sm font-bold text-white">
+                  {isRo ? 'Adaugă sau Restabilește Cont Utilizator' : 'Add or Restore User Account'}
+                </h3>
               </div>
               <button
                 onClick={() => setShowAddUserModal(false)}
@@ -1189,13 +1230,15 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
             </div>
 
             <p className="text-xs text-slate-400">
-              Creează un cont nou direct în Cloud Firestore sau restabilește un utilizator existent după resetarea sesiunii.
+              {isRo
+                ? 'Creează un cont nou direct în Cloud Database sau restabilește un utilizator existent după resetarea sesiunii.'
+                : 'Create a new account directly in Cloud DB or restore an existing user account.'}
             </p>
 
             <form onSubmit={handleCreateOrRestoreUser} className="space-y-3">
               <div>
                 <label className="block text-[11px] font-bold text-slate-300 uppercase mb-1">
-                  Nume Utilizator
+                  {isRo ? 'Nume Utilizator' : 'Username'}
                 </label>
                 <input
                   type="text"
@@ -1209,7 +1252,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
 
               <div>
                 <label className="block text-[11px] font-bold text-slate-300 uppercase mb-1">
-                  Parolă Nouă / Restabilită
+                  {isRo ? 'Parolă Nouă / Restabilită' : 'New / Restored Password'}
                 </label>
                 <input
                   type="text"
@@ -1224,7 +1267,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[11px] font-bold text-slate-300 uppercase mb-1">
-                    Zile Abonament
+                    {isRo ? 'Zile Abonament' : 'Subscription Days'}
                   </label>
                   <input
                     type="number"
@@ -1237,7 +1280,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
 
                 <div>
                   <label className="block text-[11px] font-bold text-slate-300 uppercase mb-1">
-                    Cod Invitație
+                    {isRo ? 'Cod Invitație' : 'Invite Code'}
                   </label>
                   <input
                     type="text"
@@ -1250,7 +1293,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
 
               <div>
                 <label className="block text-[11px] font-bold text-slate-300 uppercase mb-1.5">
-                  Pachet Acces Platformă
+                  {isRo ? 'Pachet Acces Platformă' : 'Platform Access Tier'}
                 </label>
                 <div className="grid grid-cols-3 gap-2">
                   <button
@@ -1298,7 +1341,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
                   onClick={() => setShowAddUserModal(false)}
                   className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold"
                 >
-                  Anulează
+                  {isRo ? 'Anulează' : 'Cancel'}
                 </button>
                 <button
                   type="submit"
@@ -1306,7 +1349,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-lg"
                 >
                   {loading && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
-                  <span>Salvează în Cloud</span>
+                  <span>{isRo ? 'Salvează în Cloud' : 'Save to Cloud'}</span>
                 </button>
               </div>
             </form>

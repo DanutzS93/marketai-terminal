@@ -934,7 +934,7 @@ export const RiskRulesConfigurationSection: React.FC<RiskRulesConfigurationSecti
                                     </span>
                                     {isBase && (
                                       <span className="text-[9px] bg-indigo-500 text-white font-mono px-1 rounded font-bold">
-                                        BAZĂ
+                                        {lang === 'ro' ? 'BAZĂ' : 'BASE'}
                                       </span>
                                     )}
                                   </div>

@@ -24,6 +24,7 @@ import {
   Cpu,
   CalendarDays,
   Wallet,
+  ArrowRight,
 } from 'lucide-react';
 import { MarketQuote, InstrumentId, UserProfile, SubscriptionTier } from '../types';
 import { getMarketScheduleStatus } from '../utils/marketSchedule';
@@ -78,7 +79,7 @@ export const Header: React.FC<HeaderProps> = ({
   onCopyInviteLink,
   inviteCopied = false,
 }) => {
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const isAdmin = user?.role === 'admin' || user?.username.toLowerCase() === 'admin';
   const userTier: SubscriptionTier = user?.subscriptionTier || 'diamond';
   const tierConfig = TIER_CONFIGS[userTier] || TIER_CONFIGS.diamond;
@@ -87,21 +88,21 @@ export const Header: React.FC<HeaderProps> = ({
   const handleMt5Click = () => {
     if (!hasEaAccess) {
       onTabChange('risk');
-      setIsMobileMenuOpen(false);
+      setIsMenuOpen(false);
       return;
     }
     onOpenMt5Modal();
-    setIsMobileMenuOpen(false);
+    setIsMenuOpen(false);
   };
 
   const handleNinjaTraderClick = () => {
     if (!hasEaAccess) {
       onTabChange('risk');
-      setIsMobileMenuOpen(false);
+      setIsMenuOpen(false);
       return;
     }
     if (onOpenNinjaTraderModal) onOpenNinjaTraderModal();
-    setIsMobileMenuOpen(false);
+    setIsMenuOpen(false);
   };
 
 
@@ -179,7 +180,7 @@ export const Header: React.FC<HeaderProps> = ({
 
   const handleNavClick = (tab: ActiveTab) => {
     onTabChange(tab);
-    setIsMobileMenuOpen(false);
+    setIsMenuOpen(false);
   };
 
   return (
@@ -247,388 +248,323 @@ export const Header: React.FC<HeaderProps> = ({
           })}
         </nav>
 
-        {/* Action Controls & Mobile Menu Toggle */}
-        <div className="flex items-center gap-1.5 sm:gap-2">
-          {/* Desktop-only Action Controls */}
-          <div className="hidden md:flex items-center gap-1.5 sm:gap-2">
-            {/* Live Market Schedule Status Badge */}
-            {(() => {
-              const schedule = getMarketScheduleStatus();
-              return schedule.isClosed ? (
-                <div
-                  className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg liquid-amber text-[11px] font-bold text-amber-300 border border-amber-500/40"
-                  title={`${schedule.reasonRo} (${schedule.userTimezone})`}
-                >
-                  <Lock className="w-3.5 h-3.5 text-amber-400" />
-                  <span>{lang === 'ro' ? 'Piață Închisă' : 'Market Closed'}</span>
-                </div>
-              ) : (
-                <div
-                  className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg liquid-emerald text-[11px] font-bold text-emerald-300 border border-emerald-500/40 shadow-[0_0_12px_rgba(16,185,129,0.2)]"
-                  title={lang === 'ro' ? 'Piață Deschisă (Tranzacționare Live)' : 'Market Open (Live Trading)'}
-                >
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                  <span>{lang === 'ro' ? 'Piață Deschisă' : 'Market Open'}</span>
-                </div>
-              );
-            })()}
-
-            {/* Admin CRM Button */}
-            {isAdmin && (
-              <button
-                onClick={onOpenAdminCrmModal}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg liquid-amber border border-amber-500/50 text-xs font-black text-amber-300 transition shadow-[0_0_15px_rgba(245,158,11,0.25)] cursor-pointer"
-                title="Deschide CRM Panou Administrator"
-              >
-                <ShieldCheck className="w-4 h-4 text-amber-400" />
-                <span>ADMIN CRM</span>
-              </button>
-            )}
-
-            {/* Copy Invite Link Button */}
-            <button
-              onClick={onCopyInviteLink}
-              className="hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg liquid-emerald border border-emerald-500/30 text-xs font-semibold text-emerald-300 transition cursor-pointer hover:border-emerald-400"
-              title="Copiază Link Invitație"
-            >
-              {inviteCopied ? (
-                <>
-                  <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>{lang === 'ro' ? 'Copiat!' : 'Copied!'}</span>
-                </>
-              ) : (
-                <>
-                  <Share2 className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>{lang === 'ro' ? 'Invitație' : 'Invite'}</span>
-                </>
-              )}
-            </button>
-
-            {/* User Account / Auth Status */}
-            {user ? (
-              <div className="flex items-center gap-1 bg-slate-900/80 backdrop-blur-md p-1 rounded-xl border border-white/10">
-                <div className="flex items-center gap-1.5 px-2 py-0.5 text-xs font-bold text-slate-200">
-                  <User className="w-3.5 h-3.5 text-indigo-400" />
-                  <span className="max-w-[90px] truncate">{user.username}</span>
-                  {isAdmin ? (
-                    <span className="text-[9px] liquid-amber text-amber-300 px-1.5 py-0.2 rounded border border-amber-500/40 uppercase font-mono">
-                      ADMIN
-                    </span>
-                  ) : (
-                    <span className="text-[9px] liquid-emerald text-emerald-300 px-1.5 py-0.2 rounded border border-emerald-500/40 uppercase font-mono flex items-center gap-0.5">
-                      <Clock className="w-2.5 h-2.5" />
-                      <span>{user.subscriptionDaysLeft ?? 30}d</span>
-                    </span>
-                  )}
-                  {/* Subscription Tier Badge */}
-                  <span className={`text-[9px] px-1.5 py-0.2 rounded border uppercase font-mono font-bold flex items-center gap-0.5 ${tierConfig.badgeBg} ${tierConfig.badgeText} ${tierConfig.badgeBorder}`}>
-                    <span>{tierConfig.iconText}</span>
-                    <span>{userTier.toUpperCase()}</span>
-                  </span>
-                </div>
-                <button
-                  onClick={onLogout}
-                  className="p-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 hover:text-rose-200 transition cursor-pointer border border-rose-500/20"
-                  title={lang === 'ro' ? 'Deconectare' : 'Sign Out'}
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={onOpenAuthModal}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg liquid-indigo text-white font-bold text-xs transition shadow-[0_0_15px_rgba(99,102,241,0.35)] cursor-pointer hover:border-indigo-400"
-              >
-                <User className="w-3.5 h-3.5" />
-                <span>{lang === 'ro' ? 'Autentificare' : 'Sign In'}</span>
-              </button>
-            )}
-
-            {/* Daily Macro Briefing Button */}
-            {onOpenDailyBriefingModal && (
-              <button
-                onClick={onOpenDailyBriefingModal}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-indigo-500/20 via-cyan-500/20 to-indigo-500/20 hover:from-indigo-500/30 hover:to-cyan-500/30 text-cyan-200 hover:text-white font-semibold text-xs transition border border-cyan-400/30 shadow-[0_0_15px_rgba(6,182,212,0.2)] cursor-pointer"
-                title={lang === 'ro' ? 'Deschide Raportul Macro Zilnic' : 'Open Daily Macro Briefing'}
-              >
-                <Sparkles className="w-3.5 h-3.5 text-cyan-300" />
-                <span className="hidden xl:inline">{lang === 'ro' ? 'Raport Zilnic' : 'Daily Briefing'}</span>
-              </button>
-            )}
-
-            {/* Refresh Data */}
-            <button
-              onClick={onRefresh}
-              disabled={isRefreshing}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white font-semibold text-xs transition shadow-[0_0_20px_rgba(99,102,241,0.4)] disabled:opacity-50 cursor-pointer border border-indigo-400/40"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-              <span>{lang === 'ro' ? 'Actualizează' : 'Refresh'}</span>
-            </button>
-          </div>
-
-          {/* Language Switcher (Always visible) */}
+        {/* Right Section: Language Toggle & 3-Line Dropdown Menu Button */}
+        <div className="flex items-center gap-2">
+          {/* Language Switcher (Always visible and accessible) */}
           <button
             onClick={onToggleLang}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-900/80 hover:bg-slate-800 border border-white/10 hover:border-white/20 text-xs font-bold text-slate-200 font-mono transition cursor-pointer backdrop-blur-md"
-            title="Schimbă Limba"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-white/10 hover:border-white/25 text-xs font-bold text-slate-200 font-mono transition cursor-pointer backdrop-blur-md shadow-xs active:scale-95"
+            title={lang === 'ro' ? 'Comută în Limba Engleză (EN)' : 'Switch to Romanian (RO)'}
           >
             <Globe className="w-3.5 h-3.5 text-indigo-400" />
             <span>{lang.toUpperCase()}</span>
           </button>
 
-          {/* Mobile 3-Line Hamburger Menu Toggle Button */}
-          <button
-            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-            className="lg:hidden flex items-center justify-center p-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white border border-indigo-400/50 transition shadow-lg shadow-indigo-600/30 cursor-pointer"
-            aria-label="Deschide Meniul Principal"
-          >
-            {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-          </button>
+          {/* 3-Horizontal-Lines Dropdown Menu Button */}
+          <div className="relative">
+            <button
+              onClick={() => setIsMenuOpen(!isMenuOpen)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl transition cursor-pointer border text-xs font-semibold shadow-md active:scale-95 ${
+                isMenuOpen
+                  ? 'bg-gradient-to-r from-indigo-600 to-indigo-700 text-white border-indigo-400/80 shadow-[0_0_20px_rgba(99,102,241,0.5)] ring-2 ring-indigo-400/40'
+                  : 'bg-slate-900/80 hover:bg-slate-800 text-slate-200 border-white/10 hover:border-white/25'
+              }`}
+              title={lang === 'ro' ? 'Meniu Platformă & Cont' : 'Platform & Account Menu'}
+              aria-label="Menu"
+            >
+              {isMenuOpen ? (
+                <X className="w-4 h-4 text-white" />
+              ) : (
+                <div className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+                  <Menu className="w-4 h-4 text-indigo-300" />
+                </div>
+              )}
+            </button>
+
+            {/* Backdrop for click-outside dismissal */}
+            {isMenuOpen && (
+              <div
+                className="fixed inset-0 z-40"
+                onClick={() => setIsMenuOpen(false)}
+              />
+            )}
+
+            {/* Dropdown Menu Panel (Opens Downward) */}
+            {isMenuOpen && (
+              <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 bg-[#0A1224]/95 backdrop-blur-3xl border border-white/15 rounded-2xl shadow-[0_25px_60px_rgba(0,0,0,0.85)] p-3.5 space-y-3 z-50 animate-in fade-in-50 zoom-in-95 duration-150 max-h-[calc(100vh-80px)] overflow-y-auto no-scrollbar glass-specular-top text-white">
+                {/* 1. User Profile Header */}
+                <div className="bg-slate-900/80 p-3 rounded-xl border border-white/10 flex items-center justify-between backdrop-blur-md">
+                  {user ? (
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-indigo-700 flex items-center justify-center font-bold text-white text-sm shadow-md border border-indigo-400/30 shrink-0">
+                        {user.username.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-bold text-sm text-white truncate max-w-[120px]">{user.username}</span>
+                          {isAdmin ? (
+                            <span className="text-[9px] liquid-amber text-amber-300 px-1.5 py-0.2 rounded border border-amber-500/40 uppercase font-mono font-bold">
+                              ADMIN
+                            </span>
+                          ) : (
+                            <span className="text-[9px] liquid-emerald text-emerald-300 px-1.5 py-0.2 rounded border border-emerald-500/40 uppercase font-mono flex items-center gap-0.5">
+                              <Clock className="w-2.5 h-2.5" />
+                              <span>{user.subscriptionDaysLeft ?? 30}d</span>
+                            </span>
+                          )}
+                          <span className={`text-[9px] px-1.5 py-0.2 rounded border uppercase font-mono font-bold flex items-center gap-0.5 ${tierConfig.badgeBg} ${tierConfig.badgeText} ${tierConfig.badgeBorder}`}>
+                            <span>{tierConfig.iconText}</span>
+                            <span>{userTier.toUpperCase()}</span>
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-slate-400 block mt-0.5">
+                          {lang === 'ro' ? 'Cont Sincronizat în Cloud' : 'Cloud Synchronized Account'}
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        setIsMenuOpen(false);
+                        onOpenAuthModal();
+                      }}
+                      className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 border border-indigo-400/40 cursor-pointer"
+                    >
+                      <User className="w-4 h-4" />
+                      <span>{lang === 'ro' ? 'Conectare / Înregistrare' : 'Sign In / Register'}</span>
+                    </button>
+                  )}
+
+                  {user && (
+                    <button
+                      onClick={() => {
+                        setIsMenuOpen(false);
+                        onLogout();
+                      }}
+                      className="p-2 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 hover:text-white transition cursor-pointer border border-rose-500/25 shrink-0"
+                      title={lang === 'ro' ? 'Deconectare' : 'Logout'}
+                    >
+                      <LogOut className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+
+                {/* 2. Live Market Schedule Status Badge */}
+                {(() => {
+                  const schedule = getMarketScheduleStatus();
+                  return schedule.isClosed ? (
+                    <div
+                      className="flex items-center justify-between px-3 py-2 rounded-xl liquid-amber text-xs font-bold text-amber-300 border border-amber-500/40"
+                      title={`${schedule.reasonRo} (${schedule.userTimezone})`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Lock className="w-4 h-4 text-amber-400 shrink-0" />
+                        <span>{lang === 'ro' ? 'Piață Închisă (Weekend)' : 'Market Closed (Weekend)'}</span>
+                      </div>
+                      <span className="text-[10px] font-mono text-amber-400/80">Luni 01:00</span>
+                    </div>
+                  ) : (
+                    <div
+                      className="flex items-center justify-between px-3 py-2 rounded-xl liquid-emerald text-xs font-bold text-emerald-300 border border-emerald-500/40 shadow-[0_0_12px_rgba(16,185,129,0.15)]"
+                      title={lang === 'ro' ? 'Piață Deschisă (Tranzacționare Live)' : 'Market Open (Live Trading)'}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shrink-0"></span>
+                        <span>{lang === 'ro' ? 'Piață Deschisă' : 'Market Open'}</span>
+                      </div>
+                      <span className="text-[10px] font-mono text-emerald-400/80 uppercase tracking-wider">
+                        {lang === 'ro' ? 'Sesiune Live' : 'Live Session'}
+                      </span>
+                    </div>
+                  );
+                })()}
+
+                {/* 3. Live MT5 Account Balance & Equity Card (if user logged in) */}
+                {user && (
+                  <div
+                    onClick={() => {
+                      setIsMenuOpen(false);
+                      onTabChange('risk');
+                    }}
+                    className="cursor-pointer bg-slate-900/90 hover:bg-slate-800/90 p-2.5 rounded-xl border border-emerald-500/30 hover:border-emerald-400 transition shadow-md backdrop-blur-md"
+                  >
+                    <div className="flex items-center justify-between mb-1.5">
+                      <div className="flex items-center gap-1.5">
+                        <span className="relative flex h-2 w-2">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                        </span>
+                        <span className="text-[10px] font-mono font-bold text-emerald-400 uppercase tracking-wide">
+                          {user?.mt5AccountNumber ? `MT5 #${user.mt5AccountNumber}` : 'MT5 LIVE ACCOUNT'}
+                        </span>
+                        {user?.mt5AccountServer && (
+                          <span className="text-[9px] font-mono text-slate-400 px-1.5 py-0.2 rounded bg-slate-950 border border-white/5">
+                            {user.mt5AccountServer}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[10px] text-cyan-300 font-semibold flex items-center gap-1">
+                        <ShieldCheck className="w-3.5 h-3.5 text-cyan-400" />
+                        {lang === 'ro' ? 'Risc & EA' : 'Risk & EA'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 bg-slate-950/80 p-2 rounded-lg border border-white/5 font-mono text-xs">
+                      <div>
+                        <span className="text-[9.5px] text-slate-400 block">{lang === 'ro' ? 'Balanță Cont:' : 'Balance:'}</span>
+                        <span className="text-xs font-bold text-white">
+                          {balanceValue !== null ? `$${balanceValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : (lang === 'ro' ? 'Sincronizare...' : 'Syncing...')}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[9.5px] text-slate-400 block">Equity:</span>
+                        <span className="text-xs font-bold text-emerald-300">
+                          {equityValue !== null ? `$${equityValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : (lang === 'ro' ? 'Sincronizare...' : 'Syncing...')}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 4. Action Buttons List */}
+                <div className="space-y-1.5 pt-1">
+                  {/* Admin CRM Button */}
+                  {isAdmin && (
+                    <button
+                      onClick={() => {
+                        setIsMenuOpen(false);
+                        if (onOpenAdminCrmModal) onOpenAdminCrmModal();
+                      }}
+                      className="w-full flex items-center justify-between px-3 py-2 rounded-xl liquid-amber border border-amber-500/50 text-xs font-black text-amber-300 transition shadow-[0_0_15px_rgba(245,158,11,0.2)] cursor-pointer hover:border-amber-400"
+                    >
+                      <div className="flex items-center gap-2">
+                        <ShieldCheck className="w-4 h-4 text-amber-400" />
+                        <span>ADMIN CRM DASHBOARD</span>
+                      </div>
+                      <ArrowRight className="w-3.5 h-3.5 text-amber-400" />
+                    </button>
+                  )}
+
+                  {/* Copy Invite Link */}
+                  <button
+                    onClick={() => {
+                      onCopyInviteLink();
+                    }}
+                    className="w-full flex items-center justify-between px-3 py-2 rounded-xl liquid-emerald border border-emerald-500/40 text-xs font-semibold text-emerald-300 transition cursor-pointer hover:border-emerald-400"
+                  >
+                    <div className="flex items-center gap-2">
+                      {inviteCopied ? <CheckCircle className="w-4 h-4 text-emerald-400" /> : <Share2 className="w-4 h-4 text-emerald-400" />}
+                      <span>{inviteCopied ? (lang === 'ro' ? 'Link Copiat în Clipboard!' : 'Invite Link Copied!') : (lang === 'ro' ? 'Copiază Link Invitație' : 'Copy Invite Link')}</span>
+                    </div>
+                  </button>
+
+                  {/* Daily Macro Briefing */}
+                  {onOpenDailyBriefingModal && (
+                    <button
+                      onClick={() => {
+                        setIsMenuOpen(false);
+                        onOpenDailyBriefingModal();
+                      }}
+                      className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-gradient-to-r from-indigo-500/20 via-cyan-500/20 to-indigo-500/20 hover:from-indigo-500/30 hover:to-cyan-500/30 text-cyan-200 hover:text-white font-semibold text-xs transition border border-cyan-400/30 shadow-[0_0_15px_rgba(6,182,212,0.15)] cursor-pointer"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-cyan-300" />
+                        <span>{lang === 'ro' ? 'Raport Macro Zilnic 📰' : 'Daily Macro Briefing 📰'}</span>
+                      </div>
+                    </button>
+                  )}
+
+                  {/* Refresh Data */}
+                  <button
+                    onClick={() => {
+                      onRefresh();
+                    }}
+                    disabled={isRefreshing}
+                    className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white font-semibold text-xs transition shadow-md shadow-indigo-600/30 disabled:opacity-50 cursor-pointer border border-indigo-400/40"
+                  >
+                    <div className="flex items-center gap-2">
+                      <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                      <span>{lang === 'ro' ? 'Actualizează Cotațiile Live' : 'Refresh Live Quotes'}</span>
+                    </div>
+                  </button>
+
+                  {/* API Keys Configuration */}
+                  <button
+                    onClick={() => {
+                      setIsMenuOpen(false);
+                      onOpenKeysModal();
+                    }}
+                    className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-white/10 hover:border-white/20 text-slate-200 font-semibold text-xs transition cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Key className="w-4 h-4 text-amber-400" />
+                      <span>{lang === 'ro' ? 'Configurare Chei API' : 'API Keys Settings'}</span>
+                    </div>
+                  </button>
+                </div>
+
+                {/* 5. Quick Modals Grid (MT5 & NinjaTrader) */}
+                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/10 text-xs">
+                  <button
+                    onClick={handleMt5Click}
+                    className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl liquid-indigo border border-indigo-500/30 text-indigo-200 font-semibold cursor-pointer hover:border-indigo-400"
+                  >
+                    <Terminal className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>MT5 Bridge</span>
+                    {!hasEaAccess && <Lock className="w-3 h-3 text-amber-400" />}
+                  </button>
+
+                  {onOpenNinjaTraderModal && (
+                    <button
+                      onClick={handleNinjaTraderClick}
+                      className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl liquid-amber border border-orange-500/30 text-orange-200 font-semibold cursor-pointer hover:border-orange-400"
+                    >
+                      <Cpu className="w-3.5 h-3.5 text-orange-400" />
+                      <span>NinjaTrader</span>
+                      {!hasEaAccess && <Lock className="w-3 h-3 text-amber-400" />}
+                    </button>
+                  )}
+                </div>
+
+                {/* 6. Mobile Navigation Menu (for < lg screen sizes) */}
+                <div className="lg:hidden pt-2 border-t border-white/10 space-y-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-2 block mb-1">
+                    {lang === 'ro' ? 'Meniu Navigare' : 'Navigation Menu'}
+                  </span>
+                  {navItems.map((item) => {
+                    const isActive = activeTab === item.id;
+                    const isLocked = isTabLocked(item.id, userTier, isAdmin);
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => handleNavClick(item.id)}
+                        className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
+                          isActive
+                            ? 'liquid-indigo text-white shadow-md border border-indigo-400/40'
+                            : isLocked
+                            ? 'text-slate-400/70 hover:bg-white/5 hover:text-white'
+                            : 'text-slate-300 hover:bg-white/5 hover:text-white'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          {item.icon}
+                          <span>{lang === 'ro' ? item.labelRo : item.labelEn}</span>
+                          {isLocked && <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0 ml-1" />}
+                        </div>
+                        {item.badge !== undefined && item.badge > 0 && (
+                          <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-indigo-500/30 text-indigo-300 font-bold border border-indigo-400/30">
+                            {item.badge}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
-
-      {/* MOBILE DRAWER OVERLAY MENU in Frosted Glass */}
-      {isMobileMenuOpen && (
-        <div className="lg:hidden bg-[#0A1224]/95 backdrop-blur-3xl border-b border-white/10 text-white p-4 shadow-2xl space-y-4 animate-in slide-in-from-top-2 duration-200">
-          {/* Mobile User Profile Header */}
-          <div className="bg-slate-900/80 p-3 rounded-xl border border-white/10 flex items-center justify-between backdrop-blur-md">
-            {user ? (
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-indigo-700 flex items-center justify-center font-bold text-white text-sm shadow-md border border-indigo-400/30">
-                  {user.username.charAt(0).toUpperCase()}
-                </div>
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-bold text-sm text-white">{user.username}</span>
-                    {isAdmin ? (
-                      <span className="text-[9px] liquid-amber text-amber-300 px-1.5 py-0.2 rounded border border-amber-500/40 uppercase font-mono">
-                        ADMIN
-                      </span>
-                    ) : (
-                      <span className="text-[9px] liquid-emerald text-emerald-300 px-1.5 py-0.2 rounded border border-emerald-500/40 uppercase font-mono flex items-center gap-0.5">
-                        <Clock className="w-2.5 h-2.5" />
-                        <span>{user.subscriptionDaysLeft ?? 30}d</span>
-                      </span>
-                    )}
-                    <span className={`text-[9px] px-1.5 py-0.2 rounded border uppercase font-mono font-bold flex items-center gap-0.5 ${tierConfig.badgeBg} ${tierConfig.badgeText} ${tierConfig.badgeBorder}`}>
-                      <span>{tierConfig.iconText}</span>
-                      <span>{userTier.toUpperCase()}</span>
-                    </span>
-                  </div>
-                  <span className="text-[10px] text-slate-400">
-                    {lang === 'ro' ? 'Sincronizat în Cloud' : 'Cloud Synchronized'}
-                  </span>
-                </div>
-              </div>
-            ) : (
-              <button
-                onClick={() => {
-                  setIsMobileMenuOpen(false);
-                  onOpenAuthModal();
-                }}
-                className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 border border-indigo-400/40 cursor-pointer"
-              >
-                <User className="w-4 h-4" />
-                <span>{lang === 'ro' ? 'Conectare / Înregistrare' : 'Sign In / Register'}</span>
-              </button>
-            )}
-
-            {user && (
-              <button
-                onClick={() => {
-                  setIsMobileMenuOpen(false);
-                  onLogout();
-                }}
-                className="px-2.5 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 text-xs font-bold flex items-center gap-1 border border-rose-500/20 cursor-pointer"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-                <span>{lang === 'ro' ? 'Ieșire' : 'Logout'}</span>
-              </button>
-            )}
-          </div>
-
-          {/* Live MT5 Account Balance & Equity Card in Mobile Drawer */}
-          <div
-            onClick={() => {
-              setIsMobileMenuOpen(false);
-              onTabChange('risk');
-            }}
-            className="cursor-pointer bg-slate-900/90 p-3 rounded-xl border border-emerald-500/40 hover:border-emerald-400 transition shadow-lg backdrop-blur-md"
-          >
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-1.5">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                </span>
-                <span className="text-[10px] font-mono font-bold text-emerald-400 uppercase tracking-wide">
-                  {user?.mt5AccountNumber ? `MT5 #${user.mt5AccountNumber}` : 'MT5 LIVE ACCOUNT'}
-                </span>
-                {user?.mt5AccountServer && (
-                  <span className="text-[9px] font-mono text-slate-400 px-1.5 py-0.5 rounded bg-slate-950 border border-white/5">
-                    {user.mt5AccountServer}
-                  </span>
-                )}
-              </div>
-              <span className="text-[10px] text-cyan-300 font-semibold flex items-center gap-1">
-                <ShieldCheck className="w-3.5 h-3.5 text-cyan-400" />
-                {lang === 'ro' ? 'Risc' : 'Risk'}
-              </span>
-            </div>
-            <div className="grid grid-cols-2 gap-2 bg-slate-950/80 p-2.5 rounded-lg border border-white/5 font-mono">
-              <div>
-                <span className="text-[10px] text-slate-400 block">{lang === 'ro' ? 'Balanță Cont:' : 'Balance:'}</span>
-                <span className="text-sm font-bold text-white">
-                  {balanceValue !== null ? `$${balanceValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : (lang === 'ro' ? 'Sincronizare...' : 'Syncing...')}
-                </span>
-              </div>
-              <div>
-                <span className="text-[10px] text-slate-400 block">Equity:</span>
-                <span className="text-sm font-bold text-emerald-300">
-                  {equityValue !== null ? `$${equityValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : (lang === 'ro' ? 'Sincronizare...' : 'Syncing...')}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Admin CRM Button for Mobile */}
-          {isAdmin && (
-            <button
-              onClick={() => {
-                setIsMobileMenuOpen(false);
-                if (onOpenAdminCrmModal) onOpenAdminCrmModal();
-              }}
-              className="w-full py-2.5 px-3 rounded-xl liquid-amber border border-amber-500/50 text-xs font-black text-amber-300 flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 cursor-pointer"
-            >
-              <ShieldCheck className="w-4 h-4 text-amber-400" />
-              <span>ADMIN CRM DASHBOARD</span>
-            </button>
-          )}
-
-          {/* Mobile Daily Macro Briefing Quick Access */}
-          {onOpenDailyBriefingModal && (
-            <button
-              onClick={() => {
-                setIsMobileMenuOpen(false);
-                onOpenDailyBriefingModal();
-              }}
-              className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-indigo-500/25 via-cyan-500/20 to-indigo-500/25 border border-cyan-400/40 text-xs font-black text-cyan-200 flex items-center justify-center gap-2 shadow-lg shadow-cyan-950/40 cursor-pointer"
-            >
-              <Sparkles className="w-4 h-4 text-cyan-300" />
-              <span>{lang === 'ro' ? 'Raport Macro Zilnic 📰' : 'Daily Macro Briefing 📰'}</span>
-            </button>
-          )}
-
-          {/* Navigation Menu List */}
-          <div className="space-y-1">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-2 block mb-1">
-              {lang === 'ro' ? 'Meniu Navigare' : 'Navigation Menu'}
-            </span>
-            {navItems.map((item) => {
-              const isActive = activeTab === item.id;
-              const isLocked = isTabLocked(item.id, userTier, isAdmin);
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => handleNavClick(item.id)}
-                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-                    isActive
-                      ? 'liquid-indigo text-white shadow-md border border-indigo-400/40'
-                      : isLocked
-                      ? 'text-slate-400/70 hover:bg-white/5 hover:text-white'
-                      : 'text-slate-300 hover:bg-white/5 hover:text-white'
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5">
-                    {item.icon}
-                    <span>{lang === 'ro' ? item.labelRo : item.labelEn}</span>
-                    {isLocked && <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0 ml-1" />}
-                  </div>
-                  {item.badge !== undefined && item.badge > 0 && (
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-indigo-500/30 text-indigo-300 font-bold border border-indigo-400/30">
-                      {item.badge} {lang === 'ro' ? 'semnale' : 'signals'}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Quick Actions Grid */}
-          <div className="pt-3 border-t border-white/10 space-y-2">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-2 block">
-              {lang === 'ro' ? 'Acțiuni & Unelte' : 'Actions & Tools'}
-            </span>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <button
-                onClick={handleMt5Click}
-                className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl liquid-indigo border border-indigo-500/30 text-indigo-200 font-semibold cursor-pointer"
-              >
-                <Terminal className="w-4 h-4 text-indigo-400" />
-                <span>MT5 Bridge</span>
-                {!hasEaAccess && <Lock className="w-3 h-3 text-amber-400" />}
-              </button>
-
-              {onOpenNinjaTraderModal && (
-                <button
-                  onClick={handleNinjaTraderClick}
-                  className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl liquid-amber border border-orange-500/30 text-orange-200 font-semibold cursor-pointer"
-                >
-                  <Cpu className="w-4 h-4 text-orange-400" />
-                  <span>NinjaTrader</span>
-                  {!hasEaAccess && <Lock className="w-3 h-3 text-amber-400" />}
-                </button>
-              )}
-
-              <button
-                onClick={() => {
-                  onTabChange('risk');
-                  setIsMobileMenuOpen(false);
-                }}
-                className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-white/10 text-slate-200 font-semibold cursor-pointer"
-              >
-                <ShieldCheck className="w-4 h-4 text-cyan-400" />
-                <span>{lang === 'ro' ? 'Reguli Risc' : 'Risk Rules'}</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  onOpenKeysModal();
-                  setIsMobileMenuOpen(false);
-                }}
-                className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-white/10 text-slate-200 font-semibold cursor-pointer"
-              >
-                <Key className="w-4 h-4 text-amber-400" />
-                <span>{lang === 'ro' ? 'Chei API' : 'API Keys'}</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  onRefresh();
-                  setIsMobileMenuOpen(false);
-                }}
-                disabled={isRefreshing}
-                className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-indigo-600/80 hover:bg-indigo-600 border border-indigo-400/50 text-white font-semibold disabled:opacity-50 cursor-pointer"
-              >
-                <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-                <span>{lang === 'ro' ? 'Actualizează' : 'Refresh Data'}</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  onCopyInviteLink();
-                  setIsMobileMenuOpen(false);
-                }}
-                className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl liquid-emerald border border-emerald-500/40 text-emerald-300 font-semibold cursor-pointer"
-              >
-                <Share2 className="w-4 h-4 text-emerald-400" />
-                <span>{inviteCopied ? (lang === 'ro' ? 'Copiat!' : 'Copied!') : (lang === 'ro' ? 'Link Invitație' : 'Invite Link')}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* MOBILE HORIZONTAL NAVIGATION ROW (Directly visible on Mobile & Tablet in Header) */}
       <nav

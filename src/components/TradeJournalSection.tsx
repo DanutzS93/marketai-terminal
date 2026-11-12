@@ -34,6 +34,7 @@ import {
   getDailyJournalMap,
   calculateMonthlyStats,
   unifyJournalEntries,
+  localizeOutcomeLabel,
   getLocalDateKey,
   DayCalendarCell,
 } from '../utils/tradeJournalUtils';
@@ -83,7 +84,7 @@ export const TradeJournalSection: React.FC<TradeJournalSectionProps> = ({
 
   // Unify platform signals and manual trades
   const unifiedEntries = useMemo(() => {
-    let list = unifyJournalEntries(signals, manualTrades, quotes, user, deletedJournalTradeIds);
+    let list = unifyJournalEntries(signals, manualTrades, quotes, user, deletedJournalTradeIds, lang);
     if (sourceFilter === 'SIGNALS') {
       list = list.filter((t) => !t.isManual);
     } else if (sourceFilter === 'MANUAL') {
@@ -389,7 +390,9 @@ export const TradeJournalSection: React.FC<TradeJournalSectionProps> = ({
             </div>
             <p className="text-[11px] text-slate-400 mt-0.5">
               {monthlyStats.runningCount > 0 ? (
-                <span className="text-cyan-400 font-bold font-mono">{monthlyStats.runningCount} în rulare</span>
+                <span className="text-cyan-400 font-bold font-mono">
+                  {monthlyStats.runningCount} {lang === 'ro' ? 'în rulare' : 'running'}
+                </span>
               ) : (
                 <span>{lang === 'ro' ? 'În această lună' : 'This month'}</span>
               )}
@@ -707,7 +710,7 @@ export const TradeJournalSection: React.FC<TradeJournalSectionProps> = ({
                           <span className="text-xs text-slate-400 font-mono">{trade.date} {trade.time}</span>
                         </div>
                         <p className="text-xs text-slate-400 mt-0.5">
-                          {trade.setup || trade.outcomeLabel || 'Manual Trade'}
+                          {localizeOutcomeLabel(trade.setup || trade.outcomeLabel, lang) || (lang === 'ro' ? 'Tranzacție Manuală' : 'Manual Trade')}
                           {trade.notes && <span className="italic text-slate-500"> — "{trade.notes}"</span>}
                         </p>
                       </div>

@@ -62,9 +62,10 @@ interface Time24PickerProps {
   onChange: (val: string) => void;
   onClear?: () => void;
   disabled?: boolean;
+  isEn?: boolean;
 }
 
-const Time24Picker: React.FC<Time24PickerProps> = ({ value, onChange, onClear, disabled = false }) => {
+const Time24Picker: React.FC<Time24PickerProps> = ({ value, onChange, onClear, disabled = false, isEn = false }) => {
   const cleanVal = (value || '').trim();
   const parts = cleanVal.split(':');
   const hRaw = parts[0] || '';
@@ -103,7 +104,7 @@ const Time24Picker: React.FC<Time24PickerProps> = ({ value, onChange, onClear, d
           onChange={handleHourSelect}
           disabled={disabled}
           className="bg-transparent text-sm font-mono font-black text-center focus:outline-none cursor-pointer text-white hover:text-purple-300 [&>option]:bg-slate-900 [&>option]:text-white py-0.5"
-          title="Selectează ora în format 24h (00 - 23)"
+          title={isEn ? "Select hour in 24h format (00 - 23)" : "Selectează ora în format 24h (00 - 23)"}
         >
           <option value="" disabled className="text-slate-500">
             --
@@ -115,7 +116,7 @@ const Time24Picker: React.FC<Time24PickerProps> = ({ value, onChange, onClear, d
           ))}
         </select>
         <span className="text-[8px] font-bold text-slate-400 tracking-tighter uppercase -mt-1">
-          ora
+          {isEn ? 'hour' : 'ora'}
         </span>
       </div>
 
@@ -128,7 +129,7 @@ const Time24Picker: React.FC<Time24PickerProps> = ({ value, onChange, onClear, d
           onChange={handleMinuteSelect}
           disabled={disabled || !currentHour}
           className="bg-transparent text-sm font-mono font-bold text-center focus:outline-none cursor-pointer text-purple-200 hover:text-purple-300 [&>option]:bg-slate-900 [&>option]:text-white py-0.5"
-          title="Selectează minutul (00 - 59)"
+          title={isEn ? "Select minute (00 - 59)" : "Selectează minutul (00 - 59)"}
         >
           <option value="" disabled className="text-slate-500">
             --
@@ -150,7 +151,7 @@ const Time24Picker: React.FC<Time24PickerProps> = ({ value, onChange, onClear, d
           type="button"
           onClick={onClear}
           className="ml-1 text-slate-500 hover:text-rose-400 text-sm font-bold transition px-1 -mt-2.5"
-          title="Șterge ora programată"
+          title={isEn ? "Clear scheduled time" : "Șterge ora programată"}
         >
           ×
         </button>
@@ -790,7 +791,8 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
 
           <div className="flex items-center gap-3">
             <div className="text-xs text-slate-400 font-medium">
-              <span className="text-purple-300 font-bold">{activeCount}</span> din 11 parități programate
+              <span className="text-purple-300 font-bold">{activeCount}</span>{' '}
+              {isEn ? 'of 11 instruments scheduled' : 'din 11 parități programate'}
             </div>
             <button
               type="button"
@@ -1078,6 +1080,7 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
                           onChange={(val) => handleTimeSlotChange(row.instrumentId, 'timeSlot1', val)}
                           onClear={() => handleClearSlot(row.instrumentId, 'timeSlot1')}
                           disabled={!isEnabled || !slot1Enabled}
+                          isEn={isEn}
                         />
                         {!slot1Enabled ? (
                           <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">
@@ -1112,6 +1115,7 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
                           onChange={(val) => handleTimeSlotChange(row.instrumentId, 'timeSlot2', val)}
                           onClear={() => handleClearSlot(row.instrumentId, 'timeSlot2')}
                           disabled={!isEnabled || !slot2Enabled}
+                          isEn={isEn}
                         />
                         {!slot2Enabled ? (
                           <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">
@@ -1146,6 +1150,7 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
                           onChange={(val) => handleTimeSlotChange(row.instrumentId, 'timeSlot3', val)}
                           onClear={() => handleClearSlot(row.instrumentId, 'timeSlot3')}
                           disabled={!isEnabled || !slot3Enabled}
+                          isEn={isEn}
                         />
                         {!slot3Enabled ? (
                           <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">
@@ -1232,7 +1237,7 @@ export const AutomatedTradeSchedulerSection: React.FC<AutomatedTradeSchedulerSec
                           onClick={() => handleTestTrigger(row.instrumentId)}
                           disabled={testTriggerLoading === row.instrumentId}
                           className="p-2 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 transition disabled:opacity-50"
-                          title="Testează generarea acum pe această paritate"
+                          title={isEn ? "Test signal generation now for this instrument" : "Testează generarea acum pe această paritate"}
                         >
                           {testTriggerLoading === row.instrumentId ? (
                             <div className="w-4 h-4 border-2 border-amber-400/30 border-t-amber-400 rounded-full animate-spin" />

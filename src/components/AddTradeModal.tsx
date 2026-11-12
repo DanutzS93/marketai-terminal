@@ -178,7 +178,7 @@ export const AddTradeModal: React.FC<AddTradeModalProps> = ({
     } else if (status === 'BREAKEVEN') {
       outcomeLabel = 'Break-Even (BE) ⚖️';
     } else {
-      outcomeLabel = 'În Desfășurare / Activ ⏳';
+      outcomeLabel = lang === 'ro' ? 'În Desfășurare / Activ ⏳' : 'Running / Active ⏳';
     }
 
     const tradeEntry: TradeJournalEntry = {
@@ -401,8 +401,8 @@ export const AddTradeModal: React.FC<AddTradeModalProps> = ({
                     : 'bg-slate-800/80 text-slate-400 border-slate-700 hover:text-slate-200'
                 }`}
               >
-                <span className="text-sm">🎯 Câștig (WIN)</span>
-                <span className="text-[10px] text-emerald-400 font-semibold">+RR Pozitiv</span>
+                <span className="text-sm">{lang === 'ro' ? '🎯 Câștig (WIN)' : '🎯 Win (TP)'}</span>
+                <span className="text-[10px] text-emerald-400 font-semibold">{lang === 'ro' ? '+RR Pozitiv' : '+RR Positive'}</span>
               </button>
 
               <button
@@ -414,8 +414,8 @@ export const AddTradeModal: React.FC<AddTradeModalProps> = ({
                     : 'bg-slate-800/80 text-slate-400 border-slate-700 hover:text-slate-200'
                 }`}
               >
-                <span className="text-sm">🛑 Pierdere (SL)</span>
-                <span className="text-[10px] text-rose-400 font-semibold">-1.0R / Negativ</span>
+                <span className="text-sm">{lang === 'ro' ? '🛑 Pierdere (SL)' : '🛑 Loss (SL)'}</span>
+                <span className="text-[10px] text-rose-400 font-semibold">{lang === 'ro' ? '-1.0R / Negativ' : '-1.0R / Negative'}</span>
               </button>
 
               <button
@@ -428,7 +428,7 @@ export const AddTradeModal: React.FC<AddTradeModalProps> = ({
                 }`}
               >
                 <span className="text-sm">⚖️ Break-Even</span>
-                <span className="text-[10px] text-amber-400 font-semibold">0.0R (Fără Risc)</span>
+                <span className="text-[10px] text-amber-400 font-semibold">{lang === 'ro' ? '0.0R (Fără Risc)' : '0.0R (Risk Free)'}</span>
               </button>
 
               <button
@@ -440,8 +440,8 @@ export const AddTradeModal: React.FC<AddTradeModalProps> = ({
                     : 'bg-slate-800/80 text-slate-400 border-slate-700 hover:text-slate-200'
                 }`}
               >
-                <span className="text-sm">⏳ În Rulare</span>
-                <span className="text-[10px] text-blue-400 font-semibold">Deschis / Activ</span>
+                <span className="text-sm">{lang === 'ro' ? '⏳ În Rulare' : '⏳ Running'}</span>
+                <span className="text-[10px] text-blue-400 font-semibold">{lang === 'ro' ? 'Deschis / Activ' : 'Open / Active'}</span>
               </button>
             </div>
           </div>

@@ -435,7 +435,11 @@ export const BridgeIntegrationModal: React.FC<BridgeIntegrationModalProps> = ({
                   <p className="text-xs text-emerald-200/80 mt-1">
                     Server / Broker: <span className="font-semibold text-emerald-200">{currentAccount.accountServer || 'Live Broker Terminal'}</span>
                     {currentAccount.accountCompany ? ` • ${currentAccount.accountCompany}` : ''}
-                    {currentAccount.accountCurrency ? ` • Monedă: ${currentAccount.accountCurrency}` : ''}
+                    {currentAccount.accountCurrency
+                  ? (lang === 'ro'
+                      ? ` • Monedă: ${currentAccount.accountCurrency}`
+                      : ` • Currency: ${currentAccount.accountCurrency}`)
+                  : ''}
                   </p>
                   <div className="flex items-center gap-4 mt-2 font-mono text-xs text-emerald-200">
                     <span>{lang === 'ro' ? 'Balanță:' : 'Balance:'} <strong className="text-white">${(currentAccount.balance ?? 100000).toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong></span>
@@ -449,8 +453,10 @@ export const BridgeIntegrationModal: React.FC<BridgeIntegrationModalProps> = ({
                 </span>
                 <span className="text-[10px] text-emerald-400 font-mono">
                   {currentAccount.lastConnectedAt
-                    ? `Sincronizat: ${new Date(currentAccount.lastConnectedAt).toLocaleTimeString()}`
-                    : 'Conexiune Activă'}
+                    ? (lang === 'ro'
+                        ? `Sincronizat: ${new Date(currentAccount.lastConnectedAt).toLocaleTimeString()}`
+                        : `Synced: ${new Date(currentAccount.lastConnectedAt).toLocaleTimeString()}`)
+                    : (lang === 'ro' ? 'Conexiune Activă' : 'Active Connection')}
                 </span>
               </div>
             </div>

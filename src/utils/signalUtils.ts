@@ -1664,8 +1664,10 @@ export interface TradePnLMetrics {
 export function calculateTradePnLMetrics(
   signal: TradingSignal,
   user?: UserProfile | null,
-  quotes?: Record<string, MarketQuote>
+  quotes?: Record<string, MarketQuote>,
+  lang: 'ro' | 'en' = 'ro'
 ): TradePnLMetrics {
+  const isRo = lang === 'ro';
   const isFutures = signal.instrumentId === 'NQ_F' || signal.instrumentId === 'ES_F' || signal.instrumentId === 'YM_F' || signal.instrumentId === 'GC_F';
   const hasNinja = Boolean(user?.ninjaTraderAccountNumber || signal.ninjaTraderPlaced || signal.accountSource === 'NINJATRADER');
   const hasMt5 = Boolean(user?.mt5AccountNumber || signal.mt5Placed || signal.accountSource === 'MT5');
@@ -1700,7 +1702,7 @@ export function calculateTradePnLMetrics(
 
   let rr = 0;
   let pnl = 0;
-  let statusLabel = 'În Așteptare';
+  let statusLabel = isRo ? 'În Așteptare' : 'Pending';
   let hasPrice = true;
 
   const isExplicitManual = signal.isManualClose === true || signal.closedManually === true || status.startsWith('MANUAL_');
@@ -1722,34 +1724,39 @@ export function calculateTradePnLMetrics(
   if (isPendingOrder) {
     rr = 0;
     pnl = 0;
-    statusLabel = 'În Așteptare';
+    statusLabel = isRo ? 'În Așteptare' : 'Pending';
   } else if (isClosed && (signal.pnl !== undefined || signal.realizedProfit !== undefined)) {
     const closedProfit = signal.realizedProfit !== undefined ? signal.realizedProfit : (signal.pnl as number);
     pnl = Math.round(closedProfit * 100) / 100;
     rr = dollarRisk > 0 ? Math.round((pnl / dollarRisk) * 100) / 100 : 0;
+    const realizedSuffix = isRo ? '[REALIZAT]' : '[REALIZED]';
     if (accountSource === 'MT5') {
-      accountBadge = user?.mt5AccountNumber ? `MT5 #${user.mt5AccountNumber} [REALIZAT]` : 'MT5 REALIZAT';
+      accountBadge = user?.mt5AccountNumber ? `MT5 #${user.mt5AccountNumber} ${realizedSuffix}` : (isRo ? 'MT5 REALIZAT' : 'MT5 REALIZED');
       accountBadgeStyle = 'liquid-emerald text-emerald-300 border-emerald-500/60 shadow-[0_0_10px_rgba(16,185,129,0.25)] font-bold';
     } else if (accountSource === 'NINJATRADER') {
-      accountBadge = user?.ninjaTraderAccountNumber ? `NT8 #${user.ninjaTraderAccountNumber} [REALIZAT]` : 'NT8 REALIZAT';
+      accountBadge = user?.ninjaTraderAccountNumber ? `NT8 #${user.ninjaTraderAccountNumber} ${realizedSuffix}` : (isRo ? 'NT8 REALIZAT' : 'NT8 REALIZED');
       accountBadgeStyle = 'liquid-amber text-orange-300 border-orange-500/60 shadow-[0_0_10px_rgba(249,115,22,0.25)] font-bold';
     }
-    statusLabel = pnl > 0 ? (status === 'TP1_HIT' ? 'TP1 Realizat (Broker)' : 'Profit Realizat') : pnl < 0 ? 'SL Realizat (Broker)' : 'BE Realizat';
+    statusLabel = pnl > 0
+      ? (status === 'TP1_HIT' ? (isRo ? 'TP1 Realizat (Broker)' : 'TP1 Realized (Broker)') : (isRo ? 'Profit Realizat' : 'Realized Profit'))
+      : pnl < 0
+      ? (isRo ? 'SL Realizat (Broker)' : 'SL Realized (Broker)')
+      : (isRo ? 'BE Realizat' : 'BE Realized');
   } else if (status === 'SL_HIT') {
     rr = -1.0;
     pnl = -dollarRisk;
-    statusLabel = 'SL Atins';
+    statusLabel = isRo ? 'SL Atins' : 'SL Hit';
   } else if (status === 'TP1_HIT') {
     const tp1Dist = Math.abs(signal.targetPrice1 - signal.entryPrice);
     const rawTp1Rr = Math.max(0.5, Math.round((tp1Dist / riskDist) * 10) / 10);
     if (signal.isBeHitAfterTp1) {
       rr = Math.round(rawTp1Rr * 0.7 * 100) / 100;
       pnl = signal.liveProfit !== undefined ? signal.liveProfit : Math.round(dollarRisk * rr * 100) / 100;
-      statusLabel = 'TP1 Securizat (BE)';
+      statusLabel = isRo ? 'TP1 Securizat (BE)' : 'TP1 Secured (BE)';
     } else {
       rr = rawTp1Rr;
       pnl = signal.liveProfit !== undefined ? signal.liveProfit : Math.round(dollarRisk * rr * 100) / 100;
-      statusLabel = 'TP1 Atins';
+      statusLabel = isRo ? 'TP1 Atins' : 'TP1 Hit';
     }
   } else if (status === 'TP2_HIT') {
     const tp1Dist = Math.abs(signal.targetPrice1 - signal.entryPrice);
@@ -1759,18 +1766,18 @@ export function calculateTradePnLMetrics(
     if (signal.isBeHitAfterTp2) {
       rr = Math.round((rawTp1Rr * 0.35 + rawTp2Rr * 0.35) * 100) / 100;
       pnl = signal.liveProfit !== undefined ? signal.liveProfit : Math.round(dollarRisk * rr * 100) / 100;
-      statusLabel = 'TP2 Securizat (BE)';
+      statusLabel = isRo ? 'TP2 Securizat (BE)' : 'TP2 Secured (BE)';
     } else {
       rr = rawTp2Rr;
       pnl = signal.liveProfit !== undefined ? signal.liveProfit : Math.round(dollarRisk * rr * 100) / 100;
-      statusLabel = 'TP2 Atins';
+      statusLabel = isRo ? 'TP2 Atins' : 'TP2 Hit';
     }
   } else if (status === 'TP3_HIT') {
     const tp3Dist = Math.abs(signal.targetPrice3 - signal.entryPrice);
     const rawTp3Rr = Math.max(1.5, Math.round((tp3Dist / riskDist) * 10) / 10);
     rr = rawTp3Rr;
     pnl = Math.round(dollarRisk * rr * 100) / 100;
-    statusLabel = 'TP3 MAX Atins';
+    statusLabel = isRo ? 'TP3 MAX Atins' : 'TP3 MAX Hit';
   } else if (!isClosed && (status === 'RUNNING' || (status === 'ACTIVE' && signal.isEntryTriggered) || (signal.liveProfit !== undefined && (signal.isEntryTriggered || status === 'RUNNING')))) {
     // 1. Check direct open positions reported by MT5 terminal first for fresh live PnL
     let liveProf: number | undefined = undefined;
@@ -1800,7 +1807,7 @@ export function calculateTradePnLMetrics(
     if (liveProf !== undefined && typeof liveProf === 'number') {
       pnl = Math.round(liveProf * 100) / 100;
       rr = dollarRisk > 0 ? Math.round((pnl / dollarRisk) * 100) / 100 : 0;
-      statusLabel = pnl > 0 ? 'Profit Live (MT5)' : pnl < 0 ? 'Minus Live (MT5)' : 'Trade Activ (MT5)';
+      statusLabel = pnl > 0 ? (isRo ? 'Profit Live (MT5)' : 'Live Profit (MT5)') : pnl < 0 ? (isRo ? 'Minus Live (MT5)' : 'Live Loss (MT5)') : (isRo ? 'Trade Activ (MT5)' : 'Active Trade (MT5)');
     } else if (currentPrice <= 0) {
       rr = 0;
       pnl = 0;
@@ -1810,16 +1817,16 @@ export function calculateTradePnLMetrics(
       const move = isBuy ? (currentPrice - signal.entryPrice) : (signal.entryPrice - currentPrice);
       rr = Math.round((move / riskDist) * 100) / 100;
       pnl = Math.round(dollarRisk * rr * 100) / 100;
-      statusLabel = 'Trade Activ';
+      statusLabel = isRo ? 'Trade Activ' : 'Active Trade';
     }
   } else if (status === 'CANCELLED') {
     rr = 0;
     pnl = 0;
-    statusLabel = 'Anulat';
+    statusLabel = isRo ? 'Anulat' : 'Cancelled';
   } else {
     rr = 0;
     pnl = 0;
-    statusLabel = 'În Așteptare';
+    statusLabel = isRo ? 'În Așteptare' : 'Pending';
   }
 
   return {

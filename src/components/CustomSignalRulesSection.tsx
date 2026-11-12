@@ -280,7 +280,7 @@ export const CustomSignalRulesSection: React.FC<CustomSignalRulesSectionProps> =
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-1 font-mono">
                   <Activity className="w-3.5 h-3.5 text-cyan-400" />
-                  Condiție RSI (14)
+                  {lang === 'ro' ? 'Condiție RSI (14)' : 'RSI (14) Condition'}
                 </span>
                 {currentQuote && (
                   <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 bg-black/40 text-amber-300 rounded border border-amber-500/30">
@@ -453,11 +453,11 @@ export const CustomSignalRulesSection: React.FC<CustomSignalRulesSectionProps> =
                 </span>
 
                 <span className={`px-2.5 py-0.5 rounded-md font-mono font-bold text-xs ${isRsiMatch() ? 'bg-emerald-950/70 text-emerald-300 border border-emerald-500/40' : 'bg-white/5 text-slate-400 border border-white/10'}`}>
-                  RSI ({currentQuote.rsi}) {isRsiMatch() ? '✓ Valid' : '• Neutru'}
+                  RSI ({currentQuote.rsi}) {isRsiMatch() ? '✓ Valid' : (lang === 'ro' ? '• Neutru' : '• Neutral')}
                 </span>
 
                 <span className={`px-2.5 py-0.5 rounded-md font-mono font-bold text-xs ${isMaMatch() ? 'bg-emerald-950/70 text-emerald-300 border border-emerald-500/40' : 'bg-white/5 text-slate-400 border border-white/10'}`}>
-                  Preț (${currentQuote.price}) {isMaMatch() ? '✓ Aliniat' : '• În verificare'}
+                  {lang === 'ro' ? 'Preț' : 'Price'} (${currentQuote.price}) {isMaMatch() ? (lang === 'ro' ? '✓ Aliniat' : '✓ Aligned') : (lang === 'ro' ? '• În verificare' : '• Checking')}
                 </span>
               </div>
 

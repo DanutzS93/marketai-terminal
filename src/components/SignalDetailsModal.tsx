@@ -211,7 +211,7 @@ export const SignalDetailsModal: React.FC<SignalDetailsModalProps> = ({
 
           {/* Synchronized Live P&L Banner */}
           {(() => {
-            const pnlData = calculateTradePnLMetrics(signal, user, quotes);
+            const pnlData = calculateTradePnLMetrics(signal, user, quotes, lang);
             const isPos = pnlData.pnl > 0;
             const isNeg = pnlData.pnl < 0;
             const hasExplicitPnl = signal.pnl !== undefined && typeof signal.pnl === 'number';

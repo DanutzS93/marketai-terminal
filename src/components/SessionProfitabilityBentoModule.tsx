@@ -170,8 +170,8 @@ export const SessionProfitabilityBentoModule: React.FC<SessionProfitabilityBento
 
   // Unify all signals and manual journal entries
   const allEntries = useMemo(() => {
-    return unifyJournalEntries(signals, manualTrades, quotes, user, deletedJournalTradeIds);
-  }, [signals, manualTrades, quotes, user, deletedJournalTradeIds]);
+    return unifyJournalEntries(signals, manualTrades, quotes, user, deletedJournalTradeIds, lang);
+  }, [signals, manualTrades, quotes, user, deletedJournalTradeIds, lang]);
 
   // Apply filters
   const filteredEntries = useMemo(() => {
@@ -809,7 +809,11 @@ export const SessionProfitabilityBentoModule: React.FC<SessionProfitabilityBento
                                 ? 'bg-rose-950/60 text-rose-300 border-rose-500/30'
                                 : 'bg-white/10 text-slate-300 border-white/10'
                             }`}
-                            title={`Generat la ${t.entryTime || t.time || '12:00'}${t.exitTime ? ` (Închis la ${t.exitTime})` : ''}`}
+                            title={
+                              lang === 'ro'
+                                ? `Generat la ${t.entryTime || t.time || '12:00'}${t.exitTime ? ` (Închis la ${t.exitTime})` : ''}`
+                                : `Generated at ${t.entryTime || t.time || '12:00'}${t.exitTime ? ` (Closed at ${t.exitTime})` : ''}`
+                            }
                           >
                             {t.symbol} {t.rrAchieved > 0 ? `+${t.rrAchieved}R` : `${t.rrAchieved}R`} ({t.entryTime || t.time || '12:00'})
                           </span>

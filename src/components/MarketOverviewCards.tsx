@@ -400,11 +400,18 @@ function resolveSignalForInstrument(
     },
     indicators: {
       rsiStatus: `RSI ${typeof quote?.rsi === 'number' ? quote.rsi.toFixed(1) : '52.0'} (${
-        (quote?.rsi || 50) > 70 ? 'Supracumpărat' : (quote?.rsi || 50) < 30 ? 'Supravândut' : 'Echilibrat'
+        (quote?.rsi || 50) > 70
+          ? (lang === 'ro' ? 'Supracumpărat' : 'Overbought')
+          : (quote?.rsi || 50) < 30
+          ? (lang === 'ro' ? 'Supravândut' : 'Oversold')
+          : (lang === 'ro' ? 'Echilibrat' : 'Neutral')
       })`,
       macdStatus: `MACD Histogram ${formatMacdNumber(macdVal)}`,
-      movingAverages: `Preț $${price} vs Medii Mobile (EMA20 & SMA50)`,
-      volatility: `ATR Dinamic Sesiune (15m)`,
+      movingAverages:
+        lang === 'ro'
+          ? `Preț $${price} vs Medii Mobile (EMA20 & SMA50)`
+          : `Price $${price} vs Moving Averages (EMA20 & SMA50)`,
+      volatility: lang === 'ro' ? `ATR Dinamic Sesiune (15m)` : `Dynamic Session ATR (15m)`,
     },
     macroFactors: ['LSE Institutional Flow', 'Smart Money Order Flow'],
     createdAt: new Date().toISOString(),
