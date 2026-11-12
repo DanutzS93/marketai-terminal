@@ -29,7 +29,7 @@ import {
   Check,
 } from 'lucide-react';
 import { TradingSignal, InstrumentId, TimeFrame, UserProfile, MarketQuote } from '../types';
-import { getOutcomeBadgeDetails, getEffectiveOutcomeStatus, getLocalizedSignalText, formatFullDateTime, getCancellationReason, calculateExecutionType, getOrCalculateVolumeProfileLevels, formatSignalPrice, calculateTradePnLMetrics } from '../utils/signalUtils';
+import { getOutcomeBadgeDetails, getEffectiveOutcomeStatus, getLocalizedSignalText, formatFullDateTime, getCancellationReason, calculateExecutionType, getOrCalculateVolumeProfileLevels, formatSignalPrice, calculateTradePnLMetrics, calculateSignalStats, isSignalWin, isSignalLoss, isSignalCancelled } from '../utils/signalUtils';
 import { getMarketScheduleStatus } from '../utils/marketSchedule';
 import { SignalHistoryStatsModal } from './SignalHistoryStatsModal';
 import { SignalDetailsModal } from './SignalDetailsModal';
@@ -170,17 +170,22 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
 
   const featuredSignal = filteredSignals[0] || signals[0];
 
-  // Calculate statistics across all stored signals
-  const tp1Count = signals.filter((s) => s.outcomeStatus === 'TP1_HIT').length;
-  const tp2Count = signals.filter((s) => s.outcomeStatus === 'TP2_HIT').length;
-  const tp3Count = signals.filter((s) => s.outcomeStatus === 'TP3_HIT').length;
-  const slCount = signals.filter((s) => s.outcomeStatus === 'SL_HIT').length;
-  const runningCount = signals.filter((s) => s.outcomeStatus === 'RUNNING').length;
-  const pendingCount = signals.filter((s) => !s.outcomeStatus || s.outcomeStatus === 'PENDING' || s.outcomeStatus === 'ACTIVE').length;
-  
-  const totalClosed = tp1Count + tp2Count + tp3Count + slCount;
-  const totalWins = tp1Count + tp2Count + tp3Count;
-  const winRatePercent = totalClosed > 0 ? Math.round((totalWins / totalClosed) * 100) : 0;
+  // Calculate 100% real statistics across all stored signals
+  const stats = calculateSignalStats(signals);
+  const {
+    tp1Count,
+    tp2Count,
+    tp3Count,
+    manualProfitCount,
+    slHitCount,
+    manualLossCount,
+    slCount,
+    runningCount,
+    pendingCount,
+    totalWins,
+    totalClosed,
+    winRatePercent,
+  } = stats;
 
   const getSignalBadgeStyle = (type: string) => {
     switch (type) {
@@ -436,7 +441,7 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
           </span>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
           {/* Win Rate */}
           <div className="liquid-indigo p-3.5 rounded-xl border border-indigo-500/40 shadow-lg flex flex-col justify-between backdrop-blur-md">
             <span className="text-[10px] text-indigo-300 uppercase font-bold tracking-wider block font-mono">
@@ -484,14 +489,27 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
             </span>
           </div>
 
+          {/* Manual Profit Count */}
+          <div className="liquid-emerald p-3.5 rounded-xl border border-emerald-500/40 shadow-md backdrop-blur-md">
+            <span className="text-[10px] text-emerald-300 uppercase font-bold tracking-wider block font-mono">
+              {lang === 'ro' ? 'Profit Manual ✋' : 'Manual Profit ✋'}
+            </span>
+            <span className="text-2xl font-black font-mono text-white block my-1">{manualProfitCount}</span>
+            <span className="text-[11px] text-emerald-300 font-medium font-mono block">
+              {signals.length > 0 ? ((manualProfitCount / signals.length) * 100).toFixed(0) : 0}% {lang === 'ro' ? 'din total' : 'of total'}
+            </span>
+          </div>
+
           {/* SL Count */}
           <div className="liquid-rose p-3.5 rounded-xl border border-rose-500/40 shadow-md backdrop-blur-md">
             <span className="text-[10px] text-rose-300 uppercase font-bold tracking-wider block font-mono">
-              Stop Loss (SL Hit)
+              {lang === 'ro' ? 'Stop Loss (SL)' : 'Stop Loss (SL Hit)'}
             </span>
             <span className="text-2xl font-black font-mono text-white block my-1">{slCount}</span>
             <span className="text-[11px] text-rose-300 font-medium font-mono block">
-              {signals.length > 0 ? ((slCount / signals.length) * 100).toFixed(0) : 0}% {lang === 'ro' ? 'din total' : 'of total'}
+              {manualLossCount > 0
+                ? `${slHitCount} SL • ${manualLossCount} ${lang === 'ro' ? 'manual' : 'manual'}`
+                : `${signals.length > 0 ? ((slCount / signals.length) * 100).toFixed(0) : 0}% ${lang === 'ro' ? 'din total' : 'of total'}`}
             </span>
           </div>
 

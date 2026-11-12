@@ -17,6 +17,7 @@ import {
   Calendar,
 } from 'lucide-react';
 import { TradingSignal, InstrumentId } from '../types';
+import { calculateSignalStats, isSignalWin, isSignalLoss } from '../utils/signalUtils';
 
 interface SignalPerformanceSummaryCardProps {
   signals: TradingSignal[];
@@ -52,25 +53,20 @@ export const SignalPerformanceSummaryCard: React.FC<SignalPerformanceSummaryCard
       ? activeSignalList
       : activeSignalList.filter((s) => s.instrumentId === selectedAssetFilter);
 
-  // Statistics calculation (strictly mutually exclusive per trade to avoid duplicate counting)
-  const tp1Count = filteredList.filter((s) => s.outcomeStatus === 'TP1_HIT').length;
-  const tp2Count = filteredList.filter((s) => s.outcomeStatus === 'TP2_HIT').length;
-  const tp3Count = filteredList.filter((s) => s.outcomeStatus === 'TP3_HIT').length;
-  const slCount = filteredList.filter((s) => s.outcomeStatus === 'SL_HIT').length;
-  const runningCount = filteredList.filter(
-    (s) =>
-      s.outcomeStatus === 'RUNNING' ||
-      s.outcomeStatus === 'ACTIVE' ||
-      s.outcomeStatus === 'PENDING' ||
-      !s.outcomeStatus
-  ).length;
-
-  const totalWins = tp1Count + tp2Count + tp3Count;
-  const totalLosses = slCount;
-  const totalClosed = totalWins + totalLosses;
-
-  // Calculate Win Rate percentage
-  const winRate = totalClosed > 0 ? Math.round((totalWins / totalClosed) * 100) : 0;
+  // Statistics calculation strictly from actual real signals
+  const stats = calculateSignalStats(filteredList);
+  const {
+    tp1Count,
+    tp2Count,
+    tp3Count,
+    manualProfitCount,
+    slCount,
+    runningCount,
+    totalWins,
+    totalLosses,
+    totalClosed,
+    winRatePercent: winRate,
+  } = stats;
 
   // Win/Loss Ratio string
   let winLossRatioText = '1 : 1';
@@ -100,15 +96,13 @@ export const SignalPerformanceSummaryCard: React.FC<SignalPerformanceSummaryCard
 
   const instrumentBreakdown = baseInstruments.map((item) => {
     const assetSigs = activeSignalList.filter((s) => s.instrumentId === item.id);
-    const w = assetSigs.filter((s) => ['TP1_HIT', 'TP2_HIT', 'TP3_HIT'].includes(s.outcomeStatus || '')).length;
-    const l = assetSigs.filter((s) => s.outcomeStatus === 'SL_HIT').length;
-    const closed = w + l;
+    const assetStats = calculateSignalStats(assetSigs);
     return {
       ...item,
-      wins: w,
-      losses: l,
+      wins: assetStats.totalWins,
+      losses: assetStats.totalLosses,
       total: assetSigs.length,
-      winRate: closed > 0 ? Math.round((w / closed) * 100) : 0,
+      winRate: assetStats.winRatePercent,
     };
   });
 

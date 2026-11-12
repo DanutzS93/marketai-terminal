@@ -18,7 +18,19 @@ import {
   Info,
 } from 'lucide-react';
 import { TradingSignal, InstrumentId, TimeFrame } from '../types';
-import { getOutcomeBadgeDetails, getEffectiveOutcomeStatus, getLocalizedSignalText, formatFullDateTime, getCancellationReason } from '../utils/signalUtils';
+import {
+  getOutcomeBadgeDetails,
+  getEffectiveOutcomeStatus,
+  getLocalizedSignalText,
+  formatFullDateTime,
+  getCancellationReason,
+  calculateSignalStats,
+  isSignalWin,
+  isSignalLoss,
+  isSignalRunning,
+  isSignalPending,
+  isSignalCancelled,
+} from '../utils/signalUtils';
 import { SignalDetailsModal } from './SignalDetailsModal';
 
 interface SignalHistoryStatsModalProps {
@@ -51,13 +63,25 @@ export const SignalHistoryStatsModal: React.FC<SignalHistoryStatsModalProps> = (
   const filtered = signals.filter((sig) => {
     if (filterAsset !== 'ALL' && sig.instrumentId !== filterAsset) return false;
     if (filterStatus !== 'ALL') {
-      if (filterStatus === 'BREAKEVEN' && sig.outcomeStatus !== 'TP1_HIT') return false;
-      if (filterStatus === 'RUNNING' && sig.outcomeStatus !== 'RUNNING') return false;
-      if (filterStatus === 'PENDING' && sig.outcomeStatus !== 'PENDING') return false;
-      if (filterStatus === 'TP2' && sig.outcomeStatus !== 'TP2_HIT') return false;
-      if (filterStatus === 'TP3' && sig.outcomeStatus !== 'TP3_HIT') return false;
-      if (filterStatus === 'SL' && sig.outcomeStatus !== 'SL_HIT') return false;
-      if (filterStatus === 'CANCELLED' && sig.outcomeStatus !== 'CANCELLED') return false;
+      if (filterStatus === 'WIN' && !isSignalWin(sig)) return false;
+      if (filterStatus === 'LOSS' && !isSignalLoss(sig)) return false;
+      if (filterStatus === 'BREAKEVEN') {
+        const eff = getEffectiveOutcomeStatus(sig);
+        if (eff !== 'TP1_HIT' && sig.firstHitMilestone !== 'TP1' && !sig.isBeHitAfterTp1 && eff !== 'BREAKEVEN' && eff !== 'MANUAL_BE') return false;
+      }
+      if (filterStatus === 'TP2') {
+        const eff = getEffectiveOutcomeStatus(sig);
+        if (eff !== 'TP2_HIT' && sig.firstHitMilestone !== 'TP2') return false;
+      }
+      if (filterStatus === 'TP3') {
+        const eff = getEffectiveOutcomeStatus(sig);
+        if (eff !== 'TP3_HIT' && sig.firstHitMilestone !== 'TP3') return false;
+      }
+      if (filterStatus === 'MANUAL_PROFIT' && (!isSignalWin(sig) || getEffectiveOutcomeStatus(sig) !== 'MANUAL_PROFIT')) return false;
+      if (filterStatus === 'SL' && !isSignalLoss(sig)) return false;
+      if (filterStatus === 'RUNNING' && !isSignalRunning(sig)) return false;
+      if (filterStatus === 'PENDING' && !isSignalPending(sig)) return false;
+      if (filterStatus === 'CANCELLED' && !isSignalCancelled(sig)) return false;
     }
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -70,17 +94,22 @@ export const SignalHistoryStatsModal: React.FC<SignalHistoryStatsModalProps> = (
     return true;
   });
 
-  // Calculate statistics
-  const tp1Count = signals.filter((s) => s.outcomeStatus === 'TP1_HIT').length;
-  const tp2Count = signals.filter((s) => s.outcomeStatus === 'TP2_HIT').length;
-  const tp3Count = signals.filter((s) => s.outcomeStatus === 'TP3_HIT').length;
-  const slCount = signals.filter((s) => s.outcomeStatus === 'SL_HIT').length;
-  const runningCount = signals.filter((s) => s.outcomeStatus === 'RUNNING').length;
-  const pendingCount = signals.filter((s) => !s.outcomeStatus || s.outcomeStatus === 'PENDING' || s.outcomeStatus === 'ACTIVE').length;
-
-  const totalClosed = tp1Count + tp2Count + tp3Count + slCount;
-  const totalWins = tp1Count + tp2Count + tp3Count;
-  const winRatePercent = totalClosed > 0 ? Math.round((totalWins / totalClosed) * 100) : 0;
+  // Calculate 100% real statistics
+  const stats = calculateSignalStats(signals);
+  const {
+    tp1Count,
+    tp2Count,
+    tp3Count,
+    manualProfitCount,
+    slHitCount,
+    manualLossCount,
+    slCount,
+    runningCount,
+    pendingCount,
+    totalWins,
+    totalClosed,
+    winRatePercent,
+  } = stats;
 
   // What was hit first count
   const tpFirstCount = signals.filter((s) => s.firstHitMilestone === 'TP1' || s.firstHitMilestone === 'TP2' || s.firstHitMilestone === 'TP3').length;
@@ -134,7 +163,7 @@ export const SignalHistoryStatsModal: React.FC<SignalHistoryStatsModalProps> = (
 
         <div className="p-3.5 sm:p-6 space-y-5 sm:space-y-6 overflow-y-auto flex-1">
           {/* STATS OVERVIEW CARDS */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
             {/* Win Rate */}
             <div className="col-span-2 bg-gradient-to-br from-[#0E1A38]/90 via-[#0A1224]/90 to-[#070D1A]/95 text-white p-4 rounded-xl border border-white/10 shadow-lg flex flex-col justify-between backdrop-blur-xl">
               <div>
@@ -184,14 +213,25 @@ export const SignalHistoryStatsModal: React.FC<SignalHistoryStatsModalProps> = (
               </span>
             </div>
 
+            {/* Manual Profit */}
+            <div className="bg-emerald-500/15 p-3.5 rounded-xl border border-emerald-500/30 backdrop-blur-md">
+              <span className="text-[10px] text-emerald-300 font-bold uppercase tracking-wider block font-mono">
+                {lang === 'ro' ? 'Profit Manual ✋' : 'Manual Profit ✋'}
+              </span>
+              <span className="text-2xl font-black font-mono text-emerald-300 block my-1">{manualProfitCount}</span>
+              <span className="text-[10px] text-emerald-400/80 font-medium block">
+                {lang === 'ro' ? 'Închis profit' : 'Secured profit'}
+              </span>
+            </div>
+
             {/* SL Hits */}
             <div className="bg-rose-500/10 p-3.5 rounded-xl border border-rose-500/25 backdrop-blur-md">
               <span className="text-[10px] text-rose-300 font-bold uppercase tracking-wider block font-mono">
-                Stop Loss 🔴
+                {lang === 'ro' ? 'Stop Loss (SL)' : 'Stop Loss 🔴'}
               </span>
               <span className="text-2xl font-black font-mono text-rose-400 block my-1">{slCount}</span>
               <span className="text-[10px] text-rose-400/80 font-medium block">
-                {lang === 'ro' ? 'Invalide' : 'SL Triggered'}
+                {manualLossCount > 0 ? `${slHitCount} SL • ${manualLossCount} manual` : (lang === 'ro' ? 'Invalide' : 'SL Triggered')}
               </span>
             </div>
 
@@ -282,12 +322,14 @@ export const SignalHistoryStatsModal: React.FC<SignalHistoryStatsModalProps> = (
                 className="bg-[#0A1326]/90 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-200 focus:outline-none focus:border-cyan-400 font-mono"
               >
                 <option value="ALL">{lang === 'ro' ? 'Toate Statusurile' : 'All Statuses'}</option>
+                <option value="WIN">{lang === 'ro' ? 'Toate Câștigurile (Wins)' : 'All Wins (Profit)'}</option>
                 <option value="BREAKEVEN">BreakEven (TP1 Atins)</option>
-                <option value="RUNNING">{lang === 'ro' ? 'În Derulare' : 'Running'}</option>
-                <option value="PENDING">{lang === 'ro' ? 'În Așteptare' : 'Pending'}</option>
                 <option value="TP2">TP 2 Atins</option>
                 <option value="TP3">TP 3 Max Atins</option>
-                <option value="SL">Stop Loss Atins</option>
+                <option value="MANUAL_PROFIT">{lang === 'ro' ? 'Închis Manual (Profit)' : 'Closed Manually (Profit)'}</option>
+                <option value="LOSS">{lang === 'ro' ? 'Toate Pierderile (Losses)' : 'All Losses'}</option>
+                <option value="RUNNING">{lang === 'ro' ? 'În Derulare' : 'Running'}</option>
+                <option value="PENDING">{lang === 'ro' ? 'În Așteptare' : 'Pending'}</option>
                 <option value="CANCELLED">{lang === 'ro' ? 'Anulat (Ordin Neactivat)' : 'Cancelled (Unfilled)'}</option>
               </select>
             </div>

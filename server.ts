@@ -8113,13 +8113,16 @@ app.post('/api/mt5/account', async (req, res) => {
               closedSig.pnl = Math.round(pNum * 100) / 100;
               closedSig.realizedProfit = closedSig.pnl;
 
-              const isAlreadyTpOrSl = ['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT'].includes(closedSig.outcomeStatus);
+              const hasMilestoneTp = ['TP1', 'TP2', 'TP3'].includes(closedSig.firstHitMilestone || '');
+              const isAlreadyTpOrSl = ['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT'].includes(closedSig.outcomeStatus) || hasMilestoneTp;
               if (!isAlreadyTpOrSl) {
                 if (closedSig.isManualClose === true || closedSig.closedManually === true) {
                   closedSig.outcomeStatus = closedSig.pnl > 0 ? 'MANUAL_PROFIT' : (closedSig.pnl < 0 ? 'MANUAL_LOSS' : 'MANUAL_BE');
                 } else {
                   closedSig.outcomeStatus = closedSig.pnl > 0 ? 'TP1_HIT' : (closedSig.pnl < 0 ? 'SL_HIT' : 'BREAKEVEN');
                 }
+              } else if (hasMilestoneTp && !['TP1_HIT', 'TP2_HIT', 'TP3_HIT'].includes(closedSig.outcomeStatus)) {
+                closedSig.outcomeStatus = `${closedSig.firstHitMilestone}_HIT`;
               }
               didChange = true;
 
@@ -8398,7 +8401,8 @@ app.post('/api/mt5/update', async (req, res) => {
           if (!target.mt5Placed) { target.mt5Placed = true; didChange = true; }
           target.mt5PlacedAt = target.mt5PlacedAt || new Date().toISOString();
           target.accountSource = 'MT5';
-          const isTpOrSlOutcome = ['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT'].includes(outcomeStatus || target.outcomeStatus);
+          const hasTpHit = ['TP1', 'TP2', 'TP3'].includes(target.firstHitMilestone || '') || ['TP1_HIT', 'TP2_HIT', 'TP3_HIT'].includes(target.outcomeStatus);
+          const isTpOrSlOutcome = ['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT'].includes(outcomeStatus || target.outcomeStatus) || hasTpHit;
           const isTradeCancel = status === 'CANCELLED' || milestone === 'MANUAL_CANCEL';
           const isTradeManualClose = !isTpOrSlOutcome && (
             isManualClose === true || 
@@ -8471,12 +8475,15 @@ app.post('/api/mt5/update', async (req, res) => {
           const isMarket = target.executionType && target.executionType.toUpperCase().includes('MARKET');
           const fallbackOutcome = (isMarket || target.isEntryTriggered) ? 'RUNNING' : 'PENDING';
           let effOutcome = outcomeStatus || target.outcomeStatus;
-          if (milestone === 'TP1_BREAK_EVEN' || milestone === 'TP1' || outcomeStatus === 'TP1_HIT') {
-            effOutcome = 'TP1_HIT';
-            target.firstHitMilestone = target.firstHitMilestone || 'TP1';
-          } else if (milestone === 'TP2' || outcomeStatus === 'TP2_HIT') {
+          if (milestone === 'TP3' || outcomeStatus === 'TP3_HIT' || target.firstHitMilestone === 'TP3' || target.outcomeStatus === 'TP3_HIT') {
+            effOutcome = 'TP3_HIT';
+            target.firstHitMilestone = target.firstHitMilestone || 'TP3';
+          } else if (milestone === 'TP2' || outcomeStatus === 'TP2_HIT' || target.firstHitMilestone === 'TP2' || target.outcomeStatus === 'TP2_HIT') {
             effOutcome = 'TP2_HIT';
             target.firstHitMilestone = target.firstHitMilestone || 'TP2';
+          } else if (milestone === 'TP1_BREAK_EVEN' || milestone === 'TP1' || outcomeStatus === 'TP1_HIT' || target.firstHitMilestone === 'TP1' || target.outcomeStatus === 'TP1_HIT') {
+            effOutcome = 'TP1_HIT';
+            target.firstHitMilestone = target.firstHitMilestone || 'TP1';
           } else if (isTradeCancel) {
             effOutcome = 'CANCELLED';
           } else if (isTradeManualClose) {
@@ -8484,7 +8491,7 @@ app.post('/api/mt5/update', async (req, res) => {
           } else if (isTpOrSlOutcome) {
             effOutcome = outcomeStatus || target.outcomeStatus;
           } else if (!effOutcome || effOutcome === 'OPENED' || effOutcome === 'PROFIT') {
-            if (['TP1_HIT', 'TP2_HIT'].includes(target.outcomeStatus)) {
+            if (['TP1_HIT', 'TP2_HIT', 'TP3_HIT'].includes(target.outcomeStatus)) {
               effOutcome = target.outcomeStatus;
             } else {
               effOutcome = target.status === 'CLOSED'

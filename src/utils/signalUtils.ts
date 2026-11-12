@@ -889,6 +889,7 @@ export function evaluateSignalOutcome(
 /**
  * Resolves the true effective outcome status of a signal, ensuring that trades that are
  * closed, realized, or manually closed can never revert to PENDING or RUNNING.
+ * If a trade took TP (TP1, TP2, TP3), it permanently keeps its TP milestone outcome.
  */
 export function getEffectiveOutcomeStatus(sigOrStatus?: string | Partial<TradingSignal>): string {
   if (!sigOrStatus) return 'PENDING';
@@ -897,11 +898,17 @@ export function getEffectiveOutcomeStatus(sigOrStatus?: string | Partial<Trading
   }
   const sig = sigOrStatus;
   const currentOutcome = (sig.outcomeStatus as string) || '';
+
+  // 1. If trade reached a Take Profit milestone (TP1, TP2, TP3), preserve it!
+  // Even if MT5 or user later closed remaining runner manually, the primary achievement is the TP milestone!
+  if (['TP3', 'TP2', 'TP1'].includes(sig.firstHitMilestone || '') || ['TP3_HIT', 'TP2_HIT', 'TP1_HIT'].includes(currentOutcome)) {
+    if (sig.firstHitMilestone === 'TP3' || currentOutcome === 'TP3_HIT') return 'TP3_HIT';
+    if (sig.firstHitMilestone === 'TP2' || currentOutcome === 'TP2_HIT') return 'TP2_HIT';
+    return 'TP1_HIT';
+  }
+
   const isTerminalOutcome =
     currentOutcome === 'CANCELLED' ||
-    currentOutcome === 'TP1_HIT' ||
-    currentOutcome === 'TP2_HIT' ||
-    currentOutcome === 'TP3_HIT' ||
     currentOutcome === 'SL_HIT' ||
     currentOutcome.startsWith('MANUAL_');
 
@@ -920,7 +927,7 @@ export function getEffectiveOutcomeStatus(sigOrStatus?: string | Partial<Trading
     return 'PENDING';
   }
 
-  // Explicit manual close check
+  // Explicit manual close check (only when NO Take Profit was ever reached)
   const isExplicitManual = sig.isManualClose === true || sig.closedManually === true || currentOutcome.startsWith('MANUAL_');
   if (isExplicitManual && (sig.status === 'CLOSED' || sig.status === 'CANCELLED' || sig.closedAt !== undefined)) {
     if (sig.status === 'CANCELLED') return 'CANCELLED';
@@ -944,6 +951,153 @@ export function getEffectiveOutcomeStatus(sigOrStatus?: string | Partial<Trading
   }
 
   return currentOutcome || ((sig.status as string) === 'RUNNING' || sig.status === 'ACTIVE' ? (sig.isEntryTriggered ? 'RUNNING' : 'PENDING') : 'PENDING');
+}
+
+export interface SignalStatistics {
+  totalSignals: number;
+  tp1Count: number;
+  tp2Count: number;
+  tp3Count: number;
+  manualProfitCount: number;
+  totalWins: number;
+  slHitCount: number;
+  manualLossCount: number;
+  slCount: number;
+  totalLosses: number;
+  totalBE: number;
+  totalClosed: number;
+  runningCount: number;
+  pendingCount: number;
+  cancelledCount: number;
+  winRatePercent: number;
+}
+
+export function isSignalCancelled(sig: Partial<TradingSignal>): boolean {
+  if (!sig) return false;
+  if (sig.status === 'CANCELLED' || sig.outcomeStatus === 'CANCELLED') return true;
+  if ((sig.cancelReasonRo || sig.cancelReasonEn) && !sig.isEntryTriggered && sig.status !== 'CLOSED') return true;
+  return false;
+}
+
+export function isSignalWin(sig: Partial<TradingSignal>): boolean {
+  if (!sig || isSignalCancelled(sig)) return false;
+  const eff = getEffectiveOutcomeStatus(sig);
+  if (['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'MANUAL_PROFIT'].includes(eff)) return true;
+  if (['TP1', 'TP2', 'TP3'].includes(sig.firstHitMilestone || '')) return true;
+  if (sig.isBeHitAfterTp1 || sig.isBeHitAfterTp2) return true;
+  const prof = sig.realizedProfit !== undefined ? sig.realizedProfit : sig.pnl;
+  if (sig.status === 'CLOSED' && prof !== undefined && prof > 0) return true;
+  return false;
+}
+
+export function isSignalLoss(sig: Partial<TradingSignal>): boolean {
+  if (!sig || isSignalCancelled(sig)) return false;
+  if (isSignalWin(sig)) return false;
+  const eff = getEffectiveOutcomeStatus(sig);
+  if (['SL_HIT', 'MANUAL_LOSS'].includes(eff)) return true;
+  if (sig.firstHitMilestone === 'SL') return true;
+  const prof = sig.realizedProfit !== undefined ? sig.realizedProfit : sig.pnl;
+  if (sig.status === 'CLOSED' && prof !== undefined && prof < 0) return true;
+  return false;
+}
+
+export function isSignalBreakeven(sig: Partial<TradingSignal>): boolean {
+  if (!sig || isSignalCancelled(sig) || isSignalWin(sig) || isSignalLoss(sig)) return false;
+  const eff = getEffectiveOutcomeStatus(sig);
+  if (['BREAKEVEN', 'MANUAL_BE'].includes(eff)) return true;
+  const prof = sig.realizedProfit !== undefined ? sig.realizedProfit : sig.pnl;
+  if (sig.status === 'CLOSED' && prof !== undefined && prof === 0) return true;
+  return false;
+}
+
+export function isSignalClosed(sig: Partial<TradingSignal>): boolean {
+  if (!sig || isSignalCancelled(sig)) return false;
+  if (sig.status === 'CLOSED' || sig.closedAt !== undefined) return true;
+  const eff = getEffectiveOutcomeStatus(sig);
+  if (['TP3_HIT', 'SL_HIT', 'MANUAL_PROFIT', 'MANUAL_LOSS', 'MANUAL_BE', 'MANUAL_CLOSED'].includes(eff)) return true;
+  if (sig.isBeHitAfterTp1 || sig.isBeHitAfterTp2) return true;
+  return false;
+}
+
+export function isSignalRunning(sig: Partial<TradingSignal>): boolean {
+  if (!sig || isSignalCancelled(sig) || isSignalClosed(sig)) return false;
+  const eff = getEffectiveOutcomeStatus(sig);
+  return eff === 'RUNNING' || (sig.status as string) === 'RUNNING' || (sig.isEntryTriggered === true && sig.status !== 'CLOSED');
+}
+
+export function isSignalPending(sig: Partial<TradingSignal>): boolean {
+  if (!sig || isSignalCancelled(sig) || isSignalClosed(sig) || isSignalRunning(sig)) return false;
+  const eff = getEffectiveOutcomeStatus(sig);
+  return eff === 'PENDING' || !sig.isEntryTriggered;
+}
+
+export function calculateSignalStats(signals: TradingSignal[]): SignalStatistics {
+  const list = signals || [];
+  let tp1Count = 0;
+  let tp2Count = 0;
+  let tp3Count = 0;
+  let manualProfitCount = 0;
+  let slHitCount = 0;
+  let manualLossCount = 0;
+  let totalBE = 0;
+  let runningCount = 0;
+  let pendingCount = 0;
+  let cancelledCount = 0;
+
+  for (const s of list) {
+    if (isSignalCancelled(s)) {
+      cancelledCount++;
+      continue;
+    }
+    const eff = getEffectiveOutcomeStatus(s);
+    if (isSignalWin(s)) {
+      if (eff === 'TP3_HIT' || s.firstHitMilestone === 'TP3') {
+        tp3Count++;
+      } else if (eff === 'TP2_HIT' || s.firstHitMilestone === 'TP2') {
+        tp2Count++;
+      } else if (eff === 'TP1_HIT' || s.firstHitMilestone === 'TP1' || s.isBeHitAfterTp1 || s.isBeHitAfterTp2) {
+        tp1Count++;
+      } else {
+        manualProfitCount++;
+      }
+    } else if (isSignalLoss(s)) {
+      if (eff === 'SL_HIT' || s.firstHitMilestone === 'SL') {
+        slHitCount++;
+      } else {
+        manualLossCount++;
+      }
+    } else if (isSignalBreakeven(s)) {
+      totalBE++;
+    } else if (isSignalRunning(s)) {
+      runningCount++;
+    } else {
+      pendingCount++;
+    }
+  }
+
+  const totalWins = tp1Count + tp2Count + tp3Count + manualProfitCount;
+  const totalLosses = slHitCount + manualLossCount;
+  const totalClosed = totalWins + totalLosses;
+  const winRatePercent = totalClosed > 0 ? Math.round((totalWins / totalClosed) * 100) : 0;
+
+  return {
+    totalSignals: list.length,
+    tp1Count,
+    tp2Count,
+    tp3Count,
+    manualProfitCount,
+    totalWins,
+    slHitCount,
+    manualLossCount,
+    slCount: totalLosses,
+    totalLosses,
+    totalBE,
+    totalClosed,
+    runningCount,
+    pendingCount,
+    cancelledCount,
+    winRatePercent,
+  };
 }
 
 export function getOutcomeBadgeDetails(

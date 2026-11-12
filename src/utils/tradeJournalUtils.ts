@@ -632,7 +632,8 @@ export function calculateMonthlyStats(
     }
 
     if (typeof entry.pnl === 'number') {
-      totalPnl += entry.pnl;
+      const effPnl = (entry.status === 'LOSS' && entry.pnl > 0) ? -entry.pnl : entry.pnl;
+      totalPnl += effPnl;
     }
   }
 

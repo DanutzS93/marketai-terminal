@@ -278,38 +278,14 @@ export const SessionProfitabilityBentoModule: React.FC<SessionProfitabilityBento
       OFF_HOURS: { totalTrades: 0, wins: 0, losses: 0, be: 0, netRr: 0, netPnl: 0, winRate: 0, assetRr: {} },
     };
 
-    const hasRealTrades = filteredEntries.length > 0;
-
-    if (!hasRealTrades) {
-      // Baseline algorithmic seed when no trades are yet recorded in the selected filter
-      const baselineSeeds: Record<SessionKey, { wins: number; losses: number; netRr: number; netPnl: number }> = {
-        OVERLAP: { wins: 19, losses: 3, netRr: 21.8, netPnl: 4360 },
-        LONDON: { wins: 14, losses: 4, netRr: 12.6, netPnl: 2520 },
-        NEW_YORK_PM: { wins: 9, losses: 4, netRr: 5.4, netPnl: 1080 },
-        ASIA: { wins: 5, losses: 3, netRr: 2.1, netPnl: 420 },
-        OFF_HOURS: { wins: 1, losses: 2, netRr: -1.2, netPnl: -240 },
-      };
-
-      for (const key of Object.keys(baselineSeeds) as SessionKey[]) {
-        stats[key].wins = baselineSeeds[key].wins;
-        stats[key].losses = baselineSeeds[key].losses;
-        stats[key].totalTrades = baselineSeeds[key].wins + baselineSeeds[key].losses;
-        stats[key].netRr = baselineSeeds[key].netRr;
-        stats[key].netPnl = baselineSeeds[key].netPnl;
-        const totalClosed = stats[key].wins + stats[key].losses;
-        stats[key].winRate = totalClosed > 0 ? Math.round((stats[key].wins / totalClosed) * 100) : 0;
-      }
-      return stats;
-    }
-
-    // When real trades exist, calculate statistics strictly from trades generated during each session
+    // When real trades exist, calculate statistics strictly from trades generated during each session (100% real data)
     for (const entry of filteredEntries) {
       const hDec = getEntryHourDec(entry);
       const sessionKey = mapHourToSession(hDec);
-      const isWin = entry.status === 'WIN' || entry.rrAchieved > 0;
-      const isLoss = entry.status === 'LOSS' || entry.rrAchieved < 0;
-      const rr = entry.rrAchieved || 0;
-      const pnl = entry.pnl || rr * 200;
+      const isWin = entry.status === 'WIN' || (entry.status !== 'RUNNING' && entry.rrAchieved > 0);
+      const isLoss = entry.status === 'LOSS' || (entry.status !== 'RUNNING' && entry.rrAchieved < 0);
+      const rr = entry.status === 'RUNNING' ? 0 : (entry.rrAchieved || 0);
+      const pnl = entry.status === 'RUNNING' ? 0 : (entry.pnl || 0);
 
       stats[sessionKey].totalTrades += 1;
       if (isWin) stats[sessionKey].wins += 1;
@@ -332,27 +308,9 @@ export const SessionProfitabilityBentoModule: React.FC<SessionProfitabilityBento
   }, [filteredEntries, signals, userTimezoneOffsetHours]);
 
   // Hourly Performance Breakdown mapped to local hours (08:00 – 21:00 Bucharest base converted to local)
-  // Strictly grouped by the GENERATION HOUR of each trade
+  // Strictly grouped by the GENERATION HOUR of each trade (100% real data, NO dummy baseline seeds)
   const hourlyStats = useMemo(() => {
     const bucharestHours = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21];
-    const hasRealTrades = filteredEntries.length > 0;
-
-    const baselinePerHour: Record<number, { wins: number; losses: number; netRr: number; netPnl: number }> = {
-      8: { wins: 1, losses: 1, netRr: 0.2, netPnl: 40 },
-      9: { wins: 3, losses: 1, netRr: 3.2, netPnl: 640 },
-      10: { wins: 5, losses: 1, netRr: 6.4, netPnl: 1280 },
-      11: { wins: 3, losses: 1, netRr: 2.8, netPnl: 560 },
-      12: { wins: 2, losses: 1, netRr: 1.1, netPnl: 220 },
-      13: { wins: 1, losses: 2, netRr: -0.8, netPnl: -160 },
-      14: { wins: 2, losses: 1, netRr: 1.2, netPnl: 240 },
-      15: { wins: 4, losses: 1, netRr: 5.5, netPnl: 1100 },
-      16: { wins: 7, losses: 1, netRr: 9.8, netPnl: 1960 },
-      17: { wins: 5, losses: 1, netRr: 6.5, netPnl: 1300 },
-      18: { wins: 3, losses: 1, netRr: 2.6, netPnl: 520 },
-      19: { wins: 2, losses: 1, netRr: 1.5, netPnl: 300 },
-      20: { wins: 2, losses: 1, netRr: 1.2, netPnl: 240 },
-      21: { wins: 1, losses: 1, netRr: 0.1, netPnl: 20 },
-    };
 
     return bucharestHours.map((bHour) => {
       const localHourDec = toLocalHour(bHour);
@@ -365,29 +323,21 @@ export const SessionProfitabilityBentoModule: React.FC<SessionProfitabilityBento
       let userCount = 0;
       const tradesInHour: TradeJournalEntry[] = [];
 
-      if (!hasRealTrades) {
-        const base = baselinePerHour[bHour] || { wins: 1, losses: 1, netRr: 0.5, netPnl: 100 };
-        wins = base.wins;
-        losses = base.losses;
-        netRr = base.netRr;
-        netPnl = base.netPnl;
-      } else {
-        for (const entry of filteredEntries) {
-          const hDec = getEntryHourDec(entry);
-          const hInt = Math.floor(hDec);
-          if (hInt === localHourInt) {
-            userCount += 1;
-            tradesInHour.push(entry);
-            const isWin = entry.status === 'WIN' || entry.rrAchieved > 0;
-            const isLoss = entry.status === 'LOSS' || entry.rrAchieved < 0;
-            const rr = entry.rrAchieved || 0;
-            const pnl = entry.pnl || rr * 200;
+      for (const entry of filteredEntries) {
+        const hDec = getEntryHourDec(entry);
+        const hInt = Math.floor(hDec);
+        if (hInt === localHourInt) {
+          userCount += 1;
+          tradesInHour.push(entry);
+          const isWin = entry.status === 'WIN' || (entry.status !== 'RUNNING' && entry.rrAchieved > 0);
+          const isLoss = entry.status === 'LOSS' || (entry.status !== 'RUNNING' && entry.rrAchieved < 0);
+          const rr = entry.status === 'RUNNING' ? 0 : (entry.rrAchieved || 0);
+          const pnl = entry.status === 'RUNNING' ? 0 : (entry.pnl || 0);
 
-            if (isWin) wins += 1;
-            else if (isLoss) losses += 1;
-            netRr = Math.round((netRr + rr) * 10) / 10;
-            netPnl = Math.round(netPnl + pnl);
-          }
+          if (isWin) wins += 1;
+          else if (isLoss) losses += 1;
+          netRr = Math.round((netRr + rr) * 10) / 10;
+          netPnl = Math.round(netPnl + pnl);
         }
       }
 

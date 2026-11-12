@@ -81,7 +81,8 @@ export const DayTradesModal: React.FC<DayTradesModalProps> = ({
     }
 
     if (typeof t.pnl === 'number') {
-      totalPnl += t.pnl;
+      const effPnl = (t.status === 'LOSS' && t.pnl > 0) ? -t.pnl : t.pnl;
+      totalPnl += effPnl;
     }
   }
 
