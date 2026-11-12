@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Header, ActiveTab } from './components/Header';
 import { MarketOverviewCards } from './components/MarketOverviewCards';
 import { CustomSignalRulesSection } from './components/CustomSignalRulesSection';
@@ -21,7 +21,7 @@ import { UsdHighImpactWarningModal, EconomicNewsEvent } from './components/UsdHi
 import { DailyMacroBriefingModal } from './components/DailyMacroBriefingModal';
 import { SessionProfitabilityBentoModule } from './components/SessionProfitabilityBentoModule';
 import { MarketQuote, TradingSignal, InstrumentId, TimeFrame, UserApiKeys, CustomSignalRule, UserProfile, TradeJournalEntry, DailyMacroBriefing } from './types';
-import { evaluateSignalOutcome, filter30DaySignals, mergeSignals } from './utils/signalUtils';
+import { evaluateSignalOutcome, filter30DaySignals, mergeSignals, reconcileSignalsWithJournal } from './utils/signalUtils';
 import { getMarketScheduleStatus, isSignalExpiredByMarketClose } from './utils/marketSchedule';
 import { INITIAL_SAMPLE_TRADES, isDemoOrSampleTrade, getLocalDateKey, formatTimeFromDate } from './utils/tradeJournalUtils';
 import { ShieldCheck, Info, Sparkles, BarChart2, Sliders, Newspaper, LayoutGrid, AlertTriangle } from 'lucide-react';
@@ -233,6 +233,10 @@ export default function App() {
     return [];
   });
 
+  const reconciledSignals = useMemo(() => {
+    return reconcileSignalsWithJournal(signals, manualTrades, deletedSignalIds);
+  }, [signals, manualTrades, deletedSignalIds]);
+
   // Verify Auth Session and Sync Cloud Data on Mount
   useEffect(() => {
     let isCancelled = false;
@@ -267,12 +271,6 @@ export default function App() {
             });
             if (syncRes.ok && !isCancelled) {
               const syncData = await syncRes.json();
-              const cloudDeleted = Array.isArray(syncData.deletedSignalIds) ? syncData.deletedSignalIds : [];
-              setDeletedSignalIds(cloudDeleted);
-              try {
-                localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_DELETED_SIGNALS_KEY, data.user.id), JSON.stringify(cloudDeleted));
-              } catch (e) {}
-
               const cloudDeletedJournal = Array.isArray(syncData.deletedJournalTradeIds) ? syncData.deletedJournalTradeIds : [];
               setDeletedJournalTradeIds(cloudDeletedJournal);
               try {
@@ -280,29 +278,38 @@ export default function App() {
               } catch (e) {}
               const cloudDeletedJournalSet = new Set(cloudDeletedJournal);
 
-              if (Array.isArray(syncData.signals)) {
-                // Strict isolation: only load signals matching this user's ID
-                const userFiltered = filter30DaySignals(syncData.signals, cloudDeleted)
-                  .filter((s) => !s.userId || s.userId === data.user.id)
-                  .map((s) => ({ ...s, userId: data.user.id }));
-                setSignals(userFiltered);
-                try {
-                  localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_SIGNALS_KEY, data.user.id), JSON.stringify(userFiltered));
-                } catch (e) {}
-              }
+              let cleanCloudJournal: TradeJournalEntry[] = [];
               if (Array.isArray(syncData.tradeJournal)) {
-                const cleanCloud = syncData.tradeJournal.filter((t: any) => {
+                cleanCloudJournal = syncData.tradeJournal.filter((t: any) => {
                   if (!t || isDemoOrSampleTrade(t)) return false;
                   if (cloudDeletedJournalSet.has(t.id)) return false;
                   if (t.linkedSignalId && cloudDeletedJournalSet.has(t.linkedSignalId)) return false;
                   if (cloudDeletedJournalSet.has(`sig_journal_${t.id}`)) return false;
                   return true;
                 });
-                setManualTrades(cleanCloud);
+                setManualTrades(cleanCloudJournal);
                 try {
-                  localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_MANUAL_TRADES_KEY, data.user.id), JSON.stringify(cleanCloud));
+                  localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_MANUAL_TRADES_KEY, data.user.id), JSON.stringify(cleanCloudJournal));
                 } catch (e) {}
               }
+
+              // Do not treat active trades from the journal as deleted signals!
+              const journalSigIds = new Set(cleanCloudJournal.map((t) => t.linkedSignalId || (t.id.startsWith('sig_journal_') ? t.id.replace('sig_journal_', '') : t.id)).filter(Boolean));
+              const rawCloudDeleted = Array.isArray(syncData.deletedSignalIds) ? syncData.deletedSignalIds : [];
+              const cloudDeleted = rawCloudDeleted.filter((id: string) => !journalSigIds.has(id));
+              setDeletedSignalIds(cloudDeleted);
+              try {
+                localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_DELETED_SIGNALS_KEY, data.user.id), JSON.stringify(cloudDeleted));
+              } catch (e) {}
+
+              const incomingSignals = Array.isArray(syncData.signals) ? syncData.signals : [];
+              const reconciled = reconcileSignalsWithJournal(incomingSignals, cleanCloudJournal, cloudDeleted)
+                .filter((s) => !s.userId || s.userId === data.user.id)
+                .map((s) => ({ ...s, userId: data.user.id }));
+              setSignals(reconciled);
+              try {
+                localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_SIGNALS_KEY, data.user.id), JSON.stringify(reconciled));
+              } catch (e) {}
               if (syncData.apiKeys && (syncData.apiKeys.geminiApiKey || syncData.apiKeys.lseKey)) {
                 setApiKeys(syncData.apiKeys);
               }
@@ -662,12 +669,6 @@ export default function App() {
       });
       if (syncRes.ok) {
         const syncData = await syncRes.json();
-        const cloudDeleted = Array.isArray(syncData.deletedSignalIds) ? syncData.deletedSignalIds : [];
-        setDeletedSignalIds(cloudDeleted);
-        try {
-          localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_DELETED_SIGNALS_KEY, newUser.id), JSON.stringify(cloudDeleted));
-        } catch (e) {}
-
         const cloudDeletedJournal = Array.isArray(syncData.deletedJournalTradeIds) ? syncData.deletedJournalTradeIds : [];
         setDeletedJournalTradeIds(cloudDeletedJournal);
         try {
@@ -675,28 +676,37 @@ export default function App() {
         } catch (e) {}
         const cloudDeletedJournalSet = new Set(cloudDeletedJournal);
 
-        if (Array.isArray(syncData.signals)) {
-          const userFiltered = filter30DaySignals(syncData.signals, cloudDeleted)
-            .filter((s) => !s.userId || s.userId === newUser.id)
-            .map((s) => ({ ...s, userId: newUser.id }));
-          setSignals(userFiltered);
-          try {
-            localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_SIGNALS_KEY, newUser.id), JSON.stringify(userFiltered));
-          } catch (e) {}
-        }
+        let cleanCloudJournal: TradeJournalEntry[] = [];
         if (Array.isArray(syncData.tradeJournal)) {
-          const cleanCloud = syncData.tradeJournal.filter((t: any) => {
+          cleanCloudJournal = syncData.tradeJournal.filter((t: any) => {
             if (!t || isDemoOrSampleTrade(t)) return false;
             if (cloudDeletedJournalSet.has(t.id)) return false;
             if (t.linkedSignalId && cloudDeletedJournalSet.has(t.linkedSignalId)) return false;
             if (cloudDeletedJournalSet.has(`sig_journal_${t.id}`)) return false;
             return true;
           });
-          setManualTrades(cleanCloud);
+          setManualTrades(cleanCloudJournal);
           try {
-            localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_MANUAL_TRADES_KEY, newUser.id), JSON.stringify(cleanCloud));
+            localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_MANUAL_TRADES_KEY, newUser.id), JSON.stringify(cleanCloudJournal));
           } catch (e) {}
         }
+
+        const journalSigIds = new Set(cleanCloudJournal.map((t) => t.linkedSignalId || (t.id.startsWith('sig_journal_') ? t.id.replace('sig_journal_', '') : t.id)).filter(Boolean));
+        const rawCloudDeleted = Array.isArray(syncData.deletedSignalIds) ? syncData.deletedSignalIds : [];
+        const cloudDeleted = rawCloudDeleted.filter((id: string) => !journalSigIds.has(id));
+        setDeletedSignalIds(cloudDeleted);
+        try {
+          localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_DELETED_SIGNALS_KEY, newUser.id), JSON.stringify(cloudDeleted));
+        } catch (e) {}
+
+        const incomingSignals = Array.isArray(syncData.signals) ? syncData.signals : [];
+        const reconciled = reconcileSignalsWithJournal(incomingSignals, cleanCloudJournal, cloudDeleted)
+          .filter((s) => !s.userId || s.userId === newUser.id)
+          .map((s) => ({ ...s, userId: newUser.id }));
+        setSignals(reconciled);
+        try {
+          localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_SIGNALS_KEY, newUser.id), JSON.stringify(reconciled));
+        } catch (e) {}
         if (syncData.apiKeys && (syncData.apiKeys.geminiApiKey || syncData.apiKeys.lseKey)) {
           setApiKeys(syncData.apiKeys);
         }
@@ -1094,7 +1104,7 @@ export default function App() {
   };
 
   const handleCloseTrade = async (signalId: string) => {
-    const targetSig = signals.find((s) => s.id === signalId);
+    const targetSig = reconciledSignals.find((s) => s.id === signalId) || signals.find((s) => s.id === signalId);
     if (!targetSig) return;
     const liveQ = quotes[targetSig.instrumentId];
     const exitPrice = liveQ && liveQ.price > 0 ? liveQ.price : (targetSig?.currentMarketPrice || targetSig?.entryPrice || 0);
@@ -1153,6 +1163,8 @@ export default function App() {
       timeframe: targetSig.timeframe,
       linkedSignalId: targetSig.id,
       isManual: true,
+      isManualClose: true,
+      closedManually: true,
       generatedAt: targetSig.createdAt,
       entryDate: dKey,
       entryTime: timeStr,
@@ -1162,36 +1174,48 @@ export default function App() {
 
     handleSaveManualTrade(journalEntry);
 
-    // 2. Mark signal as CANCELLED / CLOSED with manual close details
-    setSignals((prev) =>
-      prev.map((s) => {
-        if (s.id === signalId) {
-          return {
-            ...s,
-            status: 'CANCELLED',
-            outcomeStatus: 'CANCELLED',
-            cancelReasonRo: `Închis manual din interfață la $${exitPrice} (${finalPnl >= 0 ? '+' : ''}$${finalPnl.toFixed(2)})`,
-            cancelReasonEn: `Manually closed from dashboard at $${exitPrice} (${finalPnl >= 0 ? '+' : ''}$${finalPnl.toFixed(2)})`,
-            closedAt: nowIso,
-            exitPrice: exitPrice,
-            pnl: finalPnl,
-            realizedProfit: finalPnl,
-          };
-        }
-        return s;
-      })
-    );
+    // 2. Mark signal as CLOSED with manual close details & realized profit
+    const finalOutcomeStatus = finalPnl > 0 ? 'MANUAL_PROFIT' : finalPnl < 0 ? 'MANUAL_LOSS' : 'MANUAL_BE';
+    setSignals((prev) => {
+      const exists = prev.some((s) => s.id === signalId);
+      if (exists) {
+        return prev.map((s) => {
+          if (s.id === signalId) {
+            return {
+              ...s,
+              status: 'CLOSED',
+              outcomeStatus: finalOutcomeStatus,
+              cancelReasonRo: `Închis manual din interfață la $${exitPrice} (${finalPnl >= 0 ? '+' : ''}$${finalPnl.toFixed(2)})`,
+              cancelReasonEn: `Manually closed from dashboard at $${exitPrice} (${finalPnl >= 0 ? '+' : ''}$${finalPnl.toFixed(2)})`,
+              closedAt: nowIso,
+              exitPrice: exitPrice,
+              pnl: finalPnl,
+              realizedProfit: finalPnl,
+              isManualClose: true,
+              closedManually: true,
+            };
+          }
+          return s;
+        });
+      } else {
+        const closedSig: TradingSignal = {
+          ...targetSig,
+          status: 'CLOSED',
+          outcomeStatus: finalOutcomeStatus,
+          cancelReasonRo: `Închis manual din interfață la $${exitPrice} (${finalPnl >= 0 ? '+' : ''}$${finalPnl.toFixed(2)})`,
+          cancelReasonEn: `Manually closed from dashboard at $${exitPrice} (${finalPnl >= 0 ? '+' : ''}$${finalPnl.toFixed(2)})`,
+          closedAt: nowIso,
+          exitPrice: exitPrice,
+          pnl: finalPnl,
+          realizedProfit: finalPnl,
+          isManualClose: true,
+          closedManually: true,
+        };
+        return [closedSig, ...prev];
+      }
+    });
 
-    // 3. Add to deletedSignalIds so MT5 & NinjaTrader receive it in cancelled_ids immediately
-    const updatedDeleted = Array.from(new Set([...deletedSignalIds, signalId]));
-    setDeletedSignalIds(updatedDeleted);
-    try {
-      localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_DELETED_SIGNALS_KEY, user?.id), JSON.stringify(updatedDeleted));
-    } catch (e) {
-      console.warn('Could not save deletedSignalIds to localStorage:', e);
-    }
-
-    // 4. Post to /api/user/close-trade
+    // 3. Post to /api/user/close-trade
     const token = authToken || localStorage.getItem('market_ai_auth_token');
     if (token) {
       try {
@@ -1217,8 +1241,8 @@ export default function App() {
   };
 
   const handleCloseAllTrades = async () => {
-    const activeSigs = signals.filter(
-      (s) => s.outcomeStatus !== 'CANCELLED' && s.outcomeStatus !== 'SL_HIT' && s.outcomeStatus !== 'TP3_HIT'
+    const activeSigs = reconciledSignals.filter(
+      (s) => s.status !== 'CLOSED' && s.outcomeStatus !== 'CANCELLED' && s.outcomeStatus !== 'SL_HIT' && s.outcomeStatus !== 'TP3_HIT' && !s.closedAt
     );
     if (activeSigs.length === 0) return;
 
@@ -1282,6 +1306,8 @@ export default function App() {
             timeframe: s.timeframe,
             linkedSignalId: s.id,
             isManual: true,
+            isManualClose: true,
+            closedManually: true,
             generatedAt: s.createdAt,
             entryDate: dKey,
             entryTime: timeStr,
@@ -1290,16 +1316,19 @@ export default function App() {
           };
           createdJournalEntries.push(jEntry);
 
+          const finalOutcomeStatus = finalPnl > 0 ? 'MANUAL_PROFIT' : finalPnl < 0 ? 'MANUAL_LOSS' : 'MANUAL_BE';
           return {
             ...s,
-            status: 'CANCELLED',
-            outcomeStatus: 'CANCELLED',
+            status: 'CLOSED',
+            outcomeStatus: finalOutcomeStatus,
             cancelReasonRo: `Închis manual din interfață la $${exitPrice} (${finalPnl >= 0 ? '+' : ''}$${finalPnl.toFixed(2)})`,
             cancelReasonEn: `Manually closed from dashboard at $${exitPrice} (${finalPnl >= 0 ? '+' : ''}$${finalPnl.toFixed(2)})`,
             closedAt: nowIso,
             exitPrice: exitPrice,
             pnl: finalPnl,
             realizedProfit: finalPnl,
+            isManualClose: true,
+            closedManually: true,
           };
         }
         return s;
@@ -1319,14 +1348,6 @@ export default function App() {
         } catch (e) {}
         return updated;
       });
-    }
-
-    const updatedDeleted = Array.from(new Set([...deletedSignalIds, ...closingIds]));
-    setDeletedSignalIds(updatedDeleted);
-    try {
-      localStorage.setItem(getUserStorageKey(LOCAL_STORAGE_DELETED_SIGNALS_KEY, user?.id), JSON.stringify(updatedDeleted));
-    } catch (e) {
-      console.warn('Could not save deletedSignalIds to localStorage:', e);
     }
 
     const token = authToken || localStorage.getItem('market_ai_auth_token');
@@ -1657,12 +1678,14 @@ export default function App() {
             const effectivePnl = sig.pnl !== undefined ? sig.pnl : sig.realizedProfit;
             const isManual = sig.isManualClose === true || sig.closedManually === true;
             let termOutcome: NonNullable<TradingSignal['outcomeStatus']>;
-            if (sig.status === 'CANCELLED') {
+            if (effectivePnl !== undefined && effectivePnl !== 0) {
+              termOutcome = effectivePnl > 0 ? (isManual ? 'MANUAL_PROFIT' : 'TP1_HIT') : (isManual ? 'MANUAL_LOSS' : 'SL_HIT');
+            } else if (sig.status === 'CANCELLED') {
               termOutcome = 'CANCELLED';
             } else if (isManual) {
-              termOutcome = effectivePnl !== undefined && effectivePnl > 0 ? 'MANUAL_PROFIT' : (effectivePnl !== undefined && effectivePnl < 0 ? 'MANUAL_LOSS' : 'MANUAL_BE');
+              termOutcome = 'MANUAL_BE';
             } else {
-              termOutcome = effectivePnl !== undefined && effectivePnl > 0 ? 'TP1_HIT' : (effectivePnl !== undefined && effectivePnl < 0 ? 'SL_HIT' : 'CANCELLED');
+              termOutcome = 'TP1_HIT';
             }
             return {
               ...sig,
@@ -2354,7 +2377,7 @@ export default function App() {
         onToggleLang={() => setLang((prev) => (prev === 'ro' ? 'en' : 'ro'))}
         activeTab={activeTab}
         onTabChange={setActiveTab}
-        signalsCount={signals.length}
+        signalsCount={reconciledSignals.length}
         user={user}
         onOpenAuthModal={() => setIsAuthModalOpen(true)}
         onLogout={handleLogout}
@@ -2408,14 +2431,14 @@ export default function App() {
               <div className="space-y-6">
                 {/* Dashboard Summary Card: Historical Success Rate & Win/Loss Ratio over last 30 days */}
                 <SignalPerformanceSummaryCard
-                  signals={signals}
+                  signals={reconciledSignals}
                   lang={lang}
                   onOpenHistoryModal={() => setIsHistoryModalOpen(true)}
                 />
 
                 {/* Bento Tiles Module: Session & Hourly Trade Profitability Statistics */}
                 <SessionProfitabilityBentoModule
-                  signals={signals}
+                  signals={reconciledSignals}
                   manualTrades={manualTrades}
                   quotes={quotes}
                   lang={lang}
@@ -2428,7 +2451,7 @@ export default function App() {
                   quotes={quotes}
                   selectedInstrument={selectedInstrument}
                   onSelectInstrument={setSelectedInstrument}
-                  signals={signals}
+                  signals={reconciledSignals}
                   onOpenCalcModal={() => setIsCalcModalOpen(true)}
                   lang={lang}
                   onGenerateSignal={handleGenerateSignal}
@@ -2441,7 +2464,7 @@ export default function App() {
             {activeTab === 'signals' && (
               <div>
                 <TradingSignalsSection
-                  signals={signals}
+                  signals={reconciledSignals}
                   selectedInstrument={selectedInstrument}
                   onSelectInstrument={setSelectedInstrument}
                   onGenerateSignal={handleGenerateSignal}
@@ -2525,7 +2548,7 @@ export default function App() {
             {activeTab === 'journal' && (
               <div>
                 <TradeJournalSection
-                  signals={signals}
+                  signals={reconciledSignals}
                   quotes={quotes}
                   manualTrades={manualTrades}
                   deletedJournalTradeIds={deletedJournalTradeIds}
@@ -2603,7 +2626,7 @@ export default function App() {
       <SignalHistoryStatsModal
         isOpen={isHistoryModalOpen}
         onClose={() => setIsHistoryModalOpen(false)}
-        signals={signals}
+        signals={reconciledSignals}
         lang={lang}
         onDeleteSignal={handleDeleteSignal}
         onDeleteAllSignals={handleDeleteAllSignals}

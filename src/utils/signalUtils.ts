@@ -1,5 +1,6 @@
-import { TradingSignal, UserProfile, MarketQuote } from '../types';
+import { TradingSignal, UserProfile, MarketQuote, TradeJournalEntry } from '../types';
 import { isSignalExpiredByMarketClose } from './marketSchedule';
+import { isDemoOrSampleTrade } from './tradeJournalUtils';
 
 export function formatFullDateTime(dateObjOrStr?: Date | string, lang: 'ro' | 'en' = 'ro'): string {
   if (!dateObjOrStr) {
@@ -930,23 +931,23 @@ export function getEffectiveOutcomeStatus(sigOrStatus?: string | Partial<Trading
   // Explicit manual close check (only when NO Take Profit was ever reached)
   const isExplicitManual = sig.isManualClose === true || sig.closedManually === true || currentOutcome.startsWith('MANUAL_');
   if (isExplicitManual && (sig.status === 'CLOSED' || sig.status === 'CANCELLED' || sig.closedAt !== undefined)) {
-    if (sig.status === 'CANCELLED') return 'CANCELLED';
     const prof = sig.realizedProfit !== undefined ? sig.realizedProfit : sig.pnl;
     if (prof !== undefined && prof > 0) return 'MANUAL_PROFIT';
     if (prof !== undefined && prof < 0) return 'MANUAL_LOSS';
     if (prof !== undefined && prof === 0) return 'MANUAL_BE';
+    if (sig.status === 'CANCELLED' && !sig.isEntryTriggered) return 'CANCELLED';
     return 'MANUAL_CLOSED';
   }
 
   const isClosed = sig.status === 'CLOSED' || sig.status === 'CANCELLED' || sig.closedAt !== undefined;
   if (isClosed) {
-    if (sig.status === 'CANCELLED') return 'CANCELLED';
+    const prof = sig.realizedProfit !== undefined ? sig.realizedProfit : sig.pnl;
+    if (prof !== undefined && prof > 0) return 'MANUAL_PROFIT';
+    if (prof !== undefined && prof < 0) return 'MANUAL_LOSS';
+    if (sig.status === 'CANCELLED' && !sig.isEntryTriggered) return 'CANCELLED';
     if (currentOutcome && currentOutcome !== 'PENDING' && currentOutcome !== 'RUNNING') {
       return currentOutcome;
     }
-    const prof = sig.realizedProfit !== undefined ? sig.realizedProfit : sig.pnl;
-    if (prof !== undefined && prof > 0) return 'TP1_HIT';
-    if (prof !== undefined && prof < 0) return 'SL_HIT';
     return 'TP1_HIT';
   }
 
@@ -974,6 +975,12 @@ export interface SignalStatistics {
 
 export function isSignalCancelled(sig: Partial<TradingSignal>): boolean {
   if (!sig) return false;
+  // If trade has realized profit/loss, or status is CLOSED, or has a milestone/outcome like MANUAL_PROFIT/MANUAL_LOSS/TP/SL:
+  // It is a COMPLETED TRADE, NOT a cancelled unexecuted order!
+  const hasRealizedPnl = (sig.realizedProfit !== undefined && sig.realizedProfit !== 0) || (sig.pnl !== undefined && sig.pnl !== 0);
+  const isCompletedTrade = sig.status === 'CLOSED' || hasRealizedPnl || ['MANUAL_PROFIT', 'MANUAL_LOSS', 'TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT'].includes(sig.outcomeStatus || '');
+  if (isCompletedTrade) return false;
+
   if (sig.status === 'CANCELLED' || sig.outcomeStatus === 'CANCELLED') return true;
   if ((sig.cancelReasonRo || sig.cancelReasonEn) && !sig.isEntryTriggered && sig.status !== 'CLOSED') return true;
   return false;
@@ -986,6 +993,7 @@ export function isSignalWin(sig: Partial<TradingSignal>): boolean {
   if (['TP1', 'TP2', 'TP3'].includes(sig.firstHitMilestone || '')) return true;
   if (sig.isBeHitAfterTp1 || sig.isBeHitAfterTp2) return true;
   const prof = sig.realizedProfit !== undefined ? sig.realizedProfit : sig.pnl;
+  if (prof !== undefined && prof > 0) return true;
   if (sig.status === 'CLOSED' && prof !== undefined && prof > 0) return true;
   return false;
 }
@@ -997,6 +1005,7 @@ export function isSignalLoss(sig: Partial<TradingSignal>): boolean {
   if (['SL_HIT', 'MANUAL_LOSS'].includes(eff)) return true;
   if (sig.firstHitMilestone === 'SL') return true;
   const prof = sig.realizedProfit !== undefined ? sig.realizedProfit : sig.pnl;
+  if (prof !== undefined && prof < 0) return true;
   if (sig.status === 'CLOSED' && prof !== undefined && prof < 0) return true;
   return false;
 }
@@ -1841,5 +1850,135 @@ export function calculateTradePnLMetrics(
     statusLabel,
     hasPrice,
   };
+}
+
+/**
+ * Reconcile signals state with the Trade Journal (manualTrades):
+ * Guarantees that any trade recorded in the journal (e.g. executed via MT5 EA,
+ * or closed manually) also appears seamlessly in the Signal History and WinRate statistics!
+ */
+export function reconcileSignalsWithJournal(
+  signals: TradingSignal[],
+  manualTrades: TradeJournalEntry[],
+  deletedSignalIds?: string[]
+): TradingSignal[] {
+  const deletedSet = new Set(deletedSignalIds || []);
+  const map = new Map<string, TradingSignal>();
+
+  // 1. Index existing signals (unless explicitly deleted by user via trash icon)
+  for (const s of signals || []) {
+    if (s && s.id && !deletedSet.has(s.id)) {
+      map.set(s.id, s);
+    }
+  }
+
+  // 2. Scan every trade in manualTrades (the Journal)
+  for (const t of manualTrades || []) {
+    if (!t || isDemoOrSampleTrade(t)) continue;
+    const sigId = t.linkedSignalId || (t.id.startsWith('sig_journal_') ? t.id.replace('sig_journal_', '') : null);
+    if (!sigId) continue;
+    if (deletedSet.has(sigId) || deletedSet.has(t.id)) continue;
+
+    const existingSig = map.get(sigId);
+    if (existingSig) {
+      // Sync latest realized PnL, exit price, and status into existing signal
+      if (t.pnl !== undefined && (existingSig.pnl === undefined || existingSig.pnl === 0)) {
+        existingSig.pnl = t.pnl;
+        existingSig.realizedProfit = t.pnl;
+      }
+      if (t.exitPrice !== undefined && (!existingSig.exitPrice || existingSig.exitPrice === 0)) {
+        existingSig.exitPrice = t.exitPrice;
+      }
+      if (t.closedAt && !existingSig.closedAt) {
+        existingSig.closedAt = t.closedAt;
+      }
+      if (t.status === 'WIN' && !['TP3_HIT', 'TP2_HIT', 'TP1_HIT', 'MANUAL_PROFIT'].includes(existingSig.outcomeStatus || '')) {
+        existingSig.status = 'CLOSED';
+        existingSig.outcomeStatus = t.outcomeLabel?.includes('TP')
+          ? (t.outcomeLabel.includes('TP3') ? 'TP3_HIT' : t.outcomeLabel.includes('TP2') ? 'TP2_HIT' : 'TP1_HIT')
+          : 'MANUAL_PROFIT';
+        if (existingSig.pnl === undefined || existingSig.pnl === 0) {
+          existingSig.pnl = t.pnl;
+          existingSig.realizedProfit = t.pnl;
+        }
+      } else if (t.status === 'LOSS' && !['SL_HIT', 'MANUAL_LOSS'].includes(existingSig.outcomeStatus || '')) {
+        existingSig.status = 'CLOSED';
+        existingSig.outcomeStatus = t.outcomeLabel?.includes('SL') ? 'SL_HIT' : 'MANUAL_LOSS';
+        if (existingSig.pnl === undefined || existingSig.pnl === 0) {
+          existingSig.pnl = t.pnl;
+          existingSig.realizedProfit = t.pnl;
+        }
+      }
+    } else {
+      // Reconstruct missing signal so it is visible in the Signal History
+      const isBuy = t.direction === 'BUY';
+      let outcomeStatus: any = 'CLOSED';
+      if (t.status === 'WIN') {
+        if (t.outcomeLabel?.includes('TP3')) outcomeStatus = 'TP3_HIT';
+        else if (t.outcomeLabel?.includes('TP2')) outcomeStatus = 'TP2_HIT';
+        else if (t.outcomeLabel?.includes('TP1')) outcomeStatus = 'TP1_HIT';
+        else outcomeStatus = 'MANUAL_PROFIT';
+      } else if (t.status === 'LOSS') {
+        outcomeStatus = t.outcomeLabel?.includes('SL') ? 'SL_HIT' : 'MANUAL_LOSS';
+      } else if (t.status === 'BREAKEVEN') {
+        outcomeStatus = 'MANUAL_BE';
+      } else if (t.status === 'RUNNING') {
+        outcomeStatus = 'RUNNING';
+      }
+
+      const createdTime = t.generatedAt || t.createdAt || `${t.date}T${t.time || '12:00'}:00.000Z`;
+
+      const restoredSig: TradingSignal = {
+        id: sigId,
+        instrumentId: t.instrumentId as any,
+        symbol: t.symbol,
+        instrumentName: t.instrumentName || t.symbol,
+        type: isBuy ? 'BUY' : 'SELL',
+        timeframe: (t.timeframe || '15m') as any,
+        entryPrice: t.entryPrice,
+        entryRangeMin: t.entryPrice,
+        entryRangeMax: t.entryPrice,
+        stopLoss: t.stopLoss,
+        targetPrice1: t.takeProfit || t.entryPrice,
+        targetPrice2: t.takeProfit || t.entryPrice,
+        targetPrice3: t.takeProfit || t.entryPrice,
+        riskRewardRatio: `1:${t.rrAchieved || 2.0}`,
+        confidencePercent: 88,
+        keyLevels: {
+          support: [t.stopLoss],
+          resistance: [t.takeProfit || t.entryPrice],
+        },
+        indicators: {
+          rsiStatus: 'RSI Normal',
+          macdStatus: 'MACD Trend Aligned',
+          volatility: 'Standard Volatility',
+          movingAverages: 'EMA & SMA Aligned',
+        },
+        macroFactors: ['Sesiune Live MT5 Execution'],
+        title: t.setup || (isBuy ? 'Tranzacție BUY Executată' : 'Tranzacție SELL Executată'),
+        titleRo: t.setup || (isBuy ? 'Tranzacție BUY Executată' : 'Tranzacție SELL Executată'),
+        titleEn: t.setup || (isBuy ? 'Executed BUY Trade' : 'Executed SELL Trade'),
+        summary: t.setup || t.notes || 'Tranzacție Executată',
+        summaryRo: t.setup || t.notes || 'Tranzacție Executată',
+        summaryEn: t.setup || t.notes || 'Executed Trade',
+        rationale: t.notes || t.setup || 'Tranzacție sincronizată din Jurnal',
+        rationaleRo: t.notes || t.setup || 'Tranzacție sincronizată din Jurnal',
+        rationaleEn: t.notes || t.setup || 'Trade synchronized from Journal',
+        status: (t.status === 'RUNNING' ? 'ACTIVE' : 'CLOSED') as any,
+        outcomeStatus,
+        pnl: t.pnl,
+        realizedProfit: t.pnl,
+        exitPrice: t.exitPrice,
+        createdAt: createdTime,
+        closedAt: t.closedAt,
+        isEntryTriggered: true,
+        isManualClose: t.isManualClose || t.isManual || (typeof outcomeStatus === 'string' && outcomeStatus.startsWith('MANUAL_')),
+        closedManually: t.closedManually || t.isManual || (typeof outcomeStatus === 'string' && outcomeStatus.startsWith('MANUAL_')),
+      };
+      map.set(sigId, restoredSig);
+    }
+  }
+
+  return filter30DaySignals(Array.from(map.values()), deletedSignalIds);
 }
 

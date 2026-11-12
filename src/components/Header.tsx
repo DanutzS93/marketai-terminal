@@ -184,9 +184,9 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <header className={`sticky top-0 shadow-[0_10px_35px_rgba(0,0,0,0.6)] backdrop-blur-2xl ${isMenuOpen ? 'z-50' : 'z-40'}`}>
+    <header className={`sticky top-0 shadow-[0_10px_35px_rgba(0,0,0,0.6)] backdrop-blur-2xl ${isMenuOpen ? 'z-[100]' : 'z-40'}`}>
       {/* Top Navbar in Liquid Frosted Glass */}
-      <div className="bg-[#0B1326]/75 backdrop-blur-2xl text-white px-4 sm:px-6 py-2.5 border-b border-white/10 flex items-center justify-between gap-3 shadow-2xl relative z-50">
+      <div className="bg-[#0B1326]/75 backdrop-blur-2xl text-white px-4 sm:px-6 py-2.5 border-b border-white/10 flex items-center justify-between gap-3 shadow-2xl relative z-[60]">
         {/* Subtle top edge specular reflection */}
         <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none" />
 
@@ -285,7 +285,7 @@ export const Header: React.FC<HeaderProps> = ({
             {/* Backdrop for click-outside dismissal */}
             {isMenuOpen && (
               <div
-                className="fixed inset-0 z-40 bg-black/40 backdrop-blur-xs"
+                className="fixed inset-0 z-[90] bg-black/50 backdrop-blur-xs"
                 onClick={() => setIsMenuOpen(false)}
               />
             )}
@@ -294,7 +294,7 @@ export const Header: React.FC<HeaderProps> = ({
             {isMenuOpen && (
               <div
                 style={{ position: 'absolute' }}
-                className="absolute right-0 top-full mt-2 w-80 sm:w-96 bg-[#0A1224]/95 backdrop-blur-3xl border border-white/15 rounded-2xl shadow-[0_25px_60px_rgba(0,0,0,0.85)] p-3.5 space-y-3 z-50 animate-in fade-in slide-in-from-top-2 duration-200 max-h-[calc(100vh-80px)] overflow-y-auto no-scrollbar text-white"
+                className="absolute right-0 top-full mt-2 w-80 sm:w-96 bg-[#0A1224]/98 backdrop-blur-3xl border border-white/20 rounded-2xl shadow-[0_25px_60px_rgba(0,0,0,0.95)] p-3.5 space-y-3 z-[100] animate-in fade-in slide-in-from-top-2 duration-200 max-h-[calc(100vh-80px)] overflow-y-auto no-scrollbar text-white"
               >
                 {/* 1. User Profile Header */}
                 <div className="bg-slate-900/80 p-3 rounded-xl border border-white/10 flex items-center justify-between backdrop-blur-md">
@@ -715,7 +715,10 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
 
       {/* Sub-Header Live Market Ticker in Frosted Liquid Glass */}
-      <div className="bg-[#070D18]/90 backdrop-blur-2xl border-b border-white/10 px-3 sm:px-4 py-1.5 text-xs flex items-center justify-between overflow-x-auto no-scrollbar gap-4 shadow-inner text-slate-200 relative z-0">
+      <div
+        style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+        className="bg-[#070D18]/90 backdrop-blur-2xl border-b border-white/10 px-3 sm:px-4 py-1.5 text-xs flex items-center justify-between overflow-x-auto no-scrollbar gap-4 shadow-inner text-slate-200 relative z-0"
+      >
         <div className="flex items-center gap-3 sm:gap-6 min-w-max">
           <div className="flex items-center gap-2 font-mono select-none">
             {/* Glowing & Pulsing Blue Dot with Ping Halo */}

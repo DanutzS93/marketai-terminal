@@ -61,7 +61,15 @@ export const SignalHistoryStatsModal: React.FC<SignalHistoryStatsModalProps> = (
 
   // Filter signals
   const filtered = signals.filter((sig) => {
-    if (filterAsset !== 'ALL' && sig.instrumentId !== filterAsset) return false;
+    if (filterAsset !== 'ALL') {
+      const match =
+        sig.instrumentId === filterAsset ||
+        ((filterAsset === 'NASDAQ' || filterAsset === 'NQ_F') && (sig.instrumentId === 'NASDAQ' || sig.instrumentId === 'NQ_F')) ||
+        ((filterAsset === 'GOLD' || filterAsset === 'GC_F') && (sig.instrumentId === 'GOLD' || sig.instrumentId === 'GC_F')) ||
+        ((filterAsset === 'DOW_JONES' || filterAsset === 'YM_F') && (sig.instrumentId === 'DOW_JONES' || sig.instrumentId === 'YM_F')) ||
+        ((filterAsset === 'SPX500' || filterAsset === 'ES_F') && (sig.instrumentId === 'SPX500' || sig.instrumentId === 'ES_F'));
+      if (!match) return false;
+    }
     if (filterStatus !== 'ALL') {
       if (filterStatus === 'WIN' && !isSignalWin(sig)) return false;
       if (filterStatus === 'LOSS' && !isSignalLoss(sig)) return false;

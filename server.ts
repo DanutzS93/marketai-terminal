@@ -1017,6 +1017,14 @@ app.post('/api/user/sync-data', async (req, res) => {
     }
   }
 
+  // Prevent active trades in tradeJournal from ever being purged by deletedSignalIds
+  if (Array.isArray(user.tradeJournal) && user.deletedSignalIds) {
+    const journalSigIds = new Set(
+      user.tradeJournal.map((t: any) => t.linkedSignalId || (t.id && t.id.startsWith('sig_journal_') ? t.id.replace('sig_journal_', '') : t.id)).filter(Boolean)
+    );
+    user.deletedSignalIds = user.deletedSignalIds.filter((id: string) => !journalSigIds.has(id));
+  }
+
   await saveUsersDb(users, user.id);
 
   return res.json({ success: true, count: user.signals ? user.signals.length : 0, deletedSignalIds: user.deletedSignalIds });
@@ -1145,14 +1153,11 @@ app.post('/api/user/close-trade', async (req, res) => {
   if (!user) return res.status(401).json({ error: 'Sesiune nevalidă.' });
 
   if (!user.deletedSignalIds) user.deletedSignalIds = [];
-  if (!user.deletedSignalIds.includes(signalId)) {
-    user.deletedSignalIds.push(signalId);
-  }
 
   const nowIso = new Date().toISOString();
   let targetSig: any = null;
 
-  // Update signal outcome to CANCELLED / CLOSED with manual close reason
+  // Update signal outcome to CLOSED with manual close reason (do NOT add to deletedSignalIds!)
   if (Array.isArray(user.signals)) {
     user.signals = user.signals.map((s) => {
       if (s.id === signalId) {
@@ -1164,17 +1169,20 @@ app.post('/api/user/close-trade', async (req, res) => {
         const rr = Math.round((move / riskDist) * 10) / 10;
         const dollarRisk = Math.max(10, Math.round((user.accountBalance || 100000) * ((user.riskSettings?.riskPerTrade ?? 1.0) / 100)));
         const finalPnl = journalEntry?.pnl ?? (s.pnl !== undefined ? s.pnl : Math.round(dollarRisk * rr * 100) / 100);
+        const finalStatus = finalPnl > 0 ? 'MANUAL_PROFIT' : finalPnl < 0 ? 'MANUAL_LOSS' : 'MANUAL_BE';
 
         return {
           ...s,
-          status: 'CANCELLED',
-          outcomeStatus: 'CANCELLED',
+          status: 'CLOSED',
+          outcomeStatus: finalStatus,
           cancelReasonRo: `Închis manual din interfață la $${finalExit} (${finalPnl >= 0 ? '+' : ''}$${finalPnl.toFixed(2)})`,
           cancelReasonEn: `Manually closed from dashboard at $${finalExit} (${finalPnl >= 0 ? '+' : ''}$${finalPnl.toFixed(2)})`,
           closedAt: nowIso,
           exitPrice: finalExit,
           pnl: finalPnl,
           realizedProfit: finalPnl,
+          isManualClose: true,
+          closedManually: true,
         };
       }
       return s;
@@ -1272,24 +1280,26 @@ app.post('/api/user/close-all-trades', async (req, res) => {
         .filter((s: any) => s && s.outcomeStatus !== 'CANCELLED' && s.outcomeStatus !== 'SL_HIT' && s.outcomeStatus !== 'TP3_HIT')
         .map((s: any) => String(s.id));
 
-  // Add all target IDs to user's deletedSignalIds (strictly user-isolated)
-  for (const id of targetIds) {
-    if (!user.deletedSignalIds.includes(id)) {
-      user.deletedSignalIds.push(id);
-    }
-  }
-
   const nowIso = new Date().toISOString();
   if (Array.isArray(user.signals)) {
     user.signals = user.signals.map((s) => {
       if (targetIds.includes(String(s.id))) {
+        const matchingJournal = Array.isArray(journalEntries) ? journalEntries.find((j: any) => j && (j.linkedSignalId === String(s.id) || j.id === `sig_journal_${s.id}`)) : null;
+        const finalExit = matchingJournal?.exitPrice || s.currentMarketPrice || s.entryPrice || 0;
+        const finalPnl = matchingJournal?.pnl ?? s.pnl;
+        const finalOutcome = finalPnl !== undefined && finalPnl > 0 ? 'MANUAL_PROFIT' : finalPnl !== undefined && finalPnl < 0 ? 'MANUAL_LOSS' : 'MANUAL_BE';
         return {
           ...s,
-          status: 'CANCELLED',
-          outcomeStatus: 'CANCELLED',
+          status: 'CLOSED',
+          outcomeStatus: finalOutcome,
           cancelReasonRo: 'Închis manual din interfață (Comandă Închidere Totală)',
           cancelReasonEn: 'Manually closed from dashboard (Close All command)',
           closedAt: nowIso,
+          exitPrice: finalExit,
+          pnl: finalPnl,
+          realizedProfit: finalPnl,
+          isManualClose: true,
+          closedManually: true,
         };
       }
       return s;
@@ -8698,6 +8708,46 @@ app.post('/api/mt5/update', async (req, res) => {
               matchedUser.tradeJournal.unshift(newJEntry);
               didChange = true;
             }
+          }
+        } else {
+          // Target was not found in matchedUser.signals! Check if it exists in matchedUser.tradeJournal
+          const jMatch = matchedUser.tradeJournal?.find((j: any) => j && (j.linkedSignalId === signal_id || j.id === signal_id || j.id === `sig_journal_${signal_id}`));
+          if (jMatch) {
+            const isBuy = jMatch.direction === 'BUY';
+            const effPnl = incomingPnl !== undefined ? Math.round(Number(incomingPnl) * 100) / 100 : jMatch.pnl;
+            const restored: any = {
+              id: signal_id,
+              symbol: jMatch.symbol,
+              instrumentId: jMatch.instrumentId,
+              instrumentName: jMatch.instrumentName || jMatch.symbol,
+              type: isBuy ? 'BUY' : 'SELL',
+              timeframe: jMatch.timeframe || '15m',
+              entryPrice: jMatch.entryPrice,
+              stopLoss: jMatch.stopLoss,
+              targetPrice1: jMatch.takeProfit || jMatch.entryPrice,
+              targetPrice2: jMatch.takeProfit || jMatch.entryPrice,
+              targetPrice3: jMatch.takeProfit || jMatch.entryPrice,
+              confidencePercent: 88,
+              keyLevels: {
+                support: [jMatch.stopLoss],
+                resistance: [jMatch.takeProfit || jMatch.entryPrice],
+              },
+              summary: jMatch.setup || 'MT5 Executed Trade',
+              rationale: jMatch.notes || 'Sincronizat din MT5 & Jurnal',
+              status: status === 'RUNNING' ? 'RUNNING' : 'CLOSED',
+              outcomeStatus: effPnl !== undefined && effPnl > 0 ? 'MANUAL_PROFIT' : effPnl !== undefined && effPnl < 0 ? 'MANUAL_LOSS' : 'MANUAL_BE',
+              pnl: effPnl,
+              realizedProfit: effPnl,
+              exitPrice: exitPrice !== undefined ? Number(exitPrice) : jMatch.exitPrice,
+              createdAt: jMatch.generatedAt || jMatch.createdAt || new Date().toISOString(),
+              closedAt: jMatch.closedAt || new Date().toISOString(),
+              isEntryTriggered: true,
+              isManualClose: true,
+              closedManually: true,
+            };
+            matchedUser.signals = matchedUser.signals || [];
+            matchedUser.signals.unshift(restored);
+            didChange = true;
           }
         }
       }

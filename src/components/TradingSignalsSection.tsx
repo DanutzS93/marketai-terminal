@@ -163,7 +163,15 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
   };
 
   const filteredSignals = signals.filter((s) => {
-    if (filterInstrument !== 'ALL' && s.instrumentId !== filterInstrument) return false;
+    if (filterInstrument !== 'ALL') {
+      const match =
+        s.instrumentId === filterInstrument ||
+        ((filterInstrument === 'NASDAQ' || filterInstrument === 'NQ_F') && (s.instrumentId === 'NASDAQ' || s.instrumentId === 'NQ_F')) ||
+        ((filterInstrument === 'GOLD' || filterInstrument === 'GC_F') && (s.instrumentId === 'GOLD' || s.instrumentId === 'GC_F')) ||
+        ((filterInstrument === 'DOW_JONES' || filterInstrument === 'YM_F') && (s.instrumentId === 'DOW_JONES' || s.instrumentId === 'YM_F')) ||
+        ((filterInstrument === 'SPX500' || filterInstrument === 'ES_F') && (s.instrumentId === 'SPX500' || s.instrumentId === 'ES_F'));
+      if (!match) return false;
+    }
     if (filterTimeframe !== 'ALL' && s.timeframe !== filterTimeframe) return false;
     return true;
   });
