@@ -1235,6 +1235,15 @@ void SendAccountSync()
       {
          string comm = PositionGetString(POSITION_COMMENT);
          string sigId = ExtractSignalIdFromText(comm);
+         ulong posId = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
+         if(sigId == "")
+         {
+            int tIdx = FindTrackedTradeIndex(posId, t);
+            if(tIdx >= 0 && trackedTrades[tIdx].signalId != "")
+               sigId = trackedTrades[tIdx].signalId;
+            else if(activeSignalId != "")
+               sigId = activeSignalId;
+         }
          string sym = PositionGetString(POSITION_SYMBOL);
          long pType = PositionGetInteger(POSITION_TYPE);
          double oPrice = PositionGetDouble(POSITION_PRICE_OPEN);
@@ -1359,43 +1368,53 @@ double GetRealizedProfitForPosition(ulong posId, double &lastExitPrice, bool &is
    isManualClose = false;
    
    // HistorySelectByPosition loads only this position's deals (much faster than full history)
-   if(HistorySelectByPosition((long)posId))
+   bool loaded = HistorySelectByPosition((long)posId);
+   int dealsTotal = loaded ? HistoryDealsTotal() : 0;
+   
+   // Robust Fallback: if HistorySelectByPosition returned false or 0 deals, select full recent history (last 30 days)
+   if(!loaded || dealsTotal == 0)
    {
-      int dealsTotal = HistoryDealsTotal();
-      for(int i = 0; i < dealsTotal; i++)
+      datetime fromTime = TimeCurrent() - (30 * 86400);
+      if(HistorySelect(fromTime, TimeCurrent() + 86400))
       {
-         ulong dealTicket = HistoryDealGetTicket(i);
-         if(dealTicket > 0)
+         dealsTotal = HistoryDealsTotal();
+      }
+   }
+   
+   for(int i = 0; i < dealsTotal; i++)
+   {
+      ulong dealTicket = HistoryDealGetTicket(i);
+      if(dealTicket > 0)
+      {
+         long dealPosId = HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
+         if(dealPosId == (long)posId)
          {
-            long dealPosId = HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
-            if(dealPosId == (long)posId)
+            long entryType = HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
+            if(entryType == DEAL_ENTRY_OUT || entryType == DEAL_ENTRY_INOUT)
             {
-               long entryType = HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
-               if(entryType == DEAL_ENTRY_OUT || entryType == DEAL_ENTRY_INOUT)
-               {
-                  totalProfit += HistoryDealGetDouble(dealTicket, DEAL_PROFIT);
-                  totalProfit += HistoryDealGetDouble(dealTicket, DEAL_SWAP);
-                  totalProfit += HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
-                  totalProfit += HistoryDealGetDouble(dealTicket, DEAL_FEE);
-                  lastExitPrice = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
+               totalProfit += HistoryDealGetDouble(dealTicket, DEAL_PROFIT);
+               totalProfit += HistoryDealGetDouble(dealTicket, DEAL_SWAP);
+               totalProfit += HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
+               totalProfit += HistoryDealGetDouble(dealTicket, DEAL_FEE);
+               double pPrice = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
+               if(pPrice > 0.0) lastExitPrice = pPrice;
 
-                  long reason = HistoryDealGetInteger(dealTicket, DEAL_REASON);
-                  // DEAL_REASON_CLIENT = 0, DEAL_REASON_MOBILE = 1, DEAL_REASON_WEB = 2
-                  // ONLY explicit manual actions by the user on the closing deal
-                  if(reason == 0 || reason == 1 || reason == 2)
-                  {
-                     isManualClose = true;
-                  }
-                  else
-                  {
-                     isManualClose = false;
-                  }
-               }
-               else if(entryType == DEAL_ENTRY_IN)
+               long reason = HistoryDealGetInteger(dealTicket, DEAL_REASON);
+               // DEAL_REASON_CLIENT = 0, DEAL_REASON_MOBILE = 1, DEAL_REASON_WEB = 2
+               // ONLY explicit manual actions by the user on the closing deal
+               if(reason == 0 || reason == 1 || reason == 2)
                {
-                  totalProfit += HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
-                  totalProfit += HistoryDealGetDouble(dealTicket, DEAL_FEE);
+                  isManualClose = true;
                }
+               else
+               {
+                  isManualClose = false;
+               }
+            }
+            else if(entryType == DEAL_ENTRY_IN)
+            {
+               totalProfit += HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
+               totalProfit += HistoryDealGetDouble(dealTicket, DEAL_FEE);
             }
          }
       }
@@ -1439,11 +1458,8 @@ bool SendTradeUpdate(string signalId, string status, string outcome, string mile
       exitPriceJson = ",\\"exitPrice\\":" + DoubleToString(exitPrice, 5);
    }
 
-   string pnlJson = "";
-   if(status == "CLOSED" || milestone == "POSITION_CLOSED" || milestone == "MANUAL_CLOSE" || isManualClose || milestone == "TP1_BREAK_EVEN")
-   {
-      pnlJson = ",\\"pnl\\":" + DoubleToString(pnl, 2) + ",\\"profit\\":" + DoubleToString(pnl, 2);
-   }
+   // Always send exact broker realized PnL / profit extracted directly from MT5
+   string pnlJson = ",\\"pnl\\":" + DoubleToString(pnl, 2) + ",\\"profit\\":" + DoubleToString(pnl, 2);
    
    string payload = "{\\"signal_id\\":\\"" + signalId + "\\"," +
                     "\\"status\\":\\"" + status + "\\"," +
@@ -1550,9 +1566,17 @@ void RegisterOpenPositions()
       {
          string comm = PositionGetString(POSITION_COMMENT);
          string sigId = ExtractSignalIdFromText(comm);
+         ulong posId = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
+         if(sigId == "")
+         {
+            int tIdx = FindTrackedTradeIndex(posId, t);
+            if(tIdx >= 0 && trackedTrades[tIdx].signalId != "")
+               sigId = trackedTrades[tIdx].signalId;
+            else if(activeSignalId != "")
+               sigId = activeSignalId;
+         }
          if(sigId != "")
          {
-            ulong posId = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
             string sym = PositionGetString(POSITION_SYMBOL);
             long pType = PositionGetInteger(POSITION_TYPE);
             double oPrice = PositionGetDouble(POSITION_PRICE_OPEN);
@@ -2715,7 +2739,7 @@ void ManageActivePositions()
                   tp1Hit = true;
                   Sleep(100);
                   double exitPr = 0.0;
-                  double currentRealized = GetRealizedProfitForPosition(ticket, exitPr);
+                  double currentRealized = GetRealizedProfitForPosition(posId, exitPr);
                   SendTradeUpdate(thisSigId, "RUNNING", "TP1_HIT", "TP1_BREAK_EVEN", currentRealized, currentPrice);
                }
             }
@@ -2731,8 +2755,11 @@ void ManageActivePositions()
                {
                   if(tIdx >= 0) trackedTrades[tIdx].tp2Hit = true;
                   tp2Hit = true;
-                  Print("MarketAI: TP2 reached at ", currentPrice, "! Profit: +$", posProfit, ". Closed partial.");
-                  SendTradeUpdate(thisSigId, "RUNNING", "TP2_HIT", "TP2", 0.0, currentPrice);
+                  Sleep(100);
+                  double exitPr2 = 0.0;
+                  double currentRealized2 = GetRealizedProfitForPosition(posId, exitPr2);
+                  Print("MarketAI: TP2 reached at ", currentPrice, "! Realized PnL: +$", currentRealized2, ". Closed partial.");
+                  SendTradeUpdate(thisSigId, "RUNNING", "TP2_HIT", "TP2", currentRealized2, currentPrice);
                }
             }
          }
@@ -2823,7 +2850,7 @@ void ManageActivePositions()
                   tp1Hit = true;
                   Sleep(100);
                   double exitPr = 0.0;
-                  double currentRealized = GetRealizedProfitForPosition(ticket, exitPr);
+                  double currentRealized = GetRealizedProfitForPosition(posId, exitPr);
                   SendTradeUpdate(thisSigId, "RUNNING", "TP1_HIT", "TP1_BREAK_EVEN", currentRealized, currentPrice);
                }
             }
@@ -2839,8 +2866,11 @@ void ManageActivePositions()
                {
                   if(tIdx >= 0) trackedTrades[tIdx].tp2Hit = true;
                   tp2Hit = true;
-                  Print("MarketAI: TP2 reached at ", currentPrice, "! Profit: +$", posProfit, ". Closed partial.");
-                  SendTradeUpdate(thisSigId, "RUNNING", "TP2_HIT", "TP2", 0.0, currentPrice);
+                  Sleep(100);
+                  double exitPr2 = 0.0;
+                  double currentRealized2 = GetRealizedProfitForPosition(posId, exitPr2);
+                  Print("MarketAI: TP2 reached at ", currentPrice, "! Realized PnL: +$", currentRealized2, ". Closed partial.");
+                  SendTradeUpdate(thisSigId, "RUNNING", "TP2_HIT", "TP2", currentRealized2, currentPrice);
                }
             }
          }

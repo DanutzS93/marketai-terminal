@@ -228,14 +228,30 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 double realizedPnL = 0;
                 double exitPrice = 0;
+                bool foundTrade = false;
                 if (SystemPerformance.AllTrades.Count > 0)
                 {
                     var lastTrade = SystemPerformance.AllTrades[SystemPerformance.AllTrades.Count - 1];
-                    realizedPnL = lastTrade.ProfitCurrency;
+                    realizedPnL = lastTrade.ProfitCurrency - (lastTrade.Commission > 0 ? lastTrade.Commission : 0);
                     exitPrice = lastTrade.ExitPrice;
+                    foundTrade = true;
+                }
+                else if (Account != null && Account.Trades != null && Account.Trades.Count > 0)
+                {
+                    for (int t = Account.Trades.Count - 1; t >= 0; t--)
+                    {
+                        var at = Account.Trades[t];
+                        if (at.Instrument == Instrument)
+                        {
+                            realizedPnL = at.ProfitCurrency - (at.Commission > 0 ? at.Commission : 0);
+                            exitPrice = at.ExitPrice;
+                            foundTrade = true;
+                            break;
+                        }
+                    }
                 }
 
-                string outcome = realizedPnL > 0 ? "TP1_HIT" : (realizedPnL < 0 ? "SL_HIT" : "BREAKEVEN");
+                string outcome = realizedPnL > 0.01 ? "TP1_HIT" : (realizedPnL < -0.01 ? "SL_HIT" : "BREAKEVEN");
                 NotifyServerOrderClosed(activeSignalId, outcome, realizedPnL, exitPrice);
                 activeSignalId = "";
             }

@@ -982,10 +982,37 @@ app.post('/api/user/sync-data', async (req, res) => {
   if (Array.isArray(customRules)) user.customRules = customRules;
   if (Array.isArray(tradeJournal)) {
     const delSet = new Set(user.deletedJournalTradeIds || []);
+    const existingJournalMap = new Map<string, any>();
+    for (const j of user.tradeJournal || []) {
+      if (j && j.id) existingJournalMap.set(String(j.id), j);
+    }
     user.tradeJournal = tradeJournal.filter((t: any) => {
       if (!t || isDemoOrSampleTrade(t)) return false;
       if (delSet.has(t.id) || (t.linkedSignalId && delSet.has(t.linkedSignalId)) || delSet.has(`sig_journal_${t.id}`)) return false;
       return true;
+    }).map((clientEntry: any) => {
+      const srvEntry = existingJournalMap.get(String(clientEntry.id));
+      if (srvEntry) {
+        // If server entry already has confirmed broker PnL from MT5 or NinjaTrader, preserve the real broker PnL!
+        const isBrokerConfirmed = Boolean(
+          srvEntry.notes?.includes('MT5') ||
+          srvEntry.notes?.includes('NinjaTrader') ||
+          srvEntry.outcomeLabel?.includes('Broker') ||
+          srvEntry.outcomeLabel?.includes('MT5') ||
+          srvEntry.outcomeLabel?.includes('NT8') ||
+          srvEntry.pnl !== undefined
+        );
+        if (isBrokerConfirmed && srvEntry.pnl !== undefined) {
+          return {
+            ...clientEntry,
+            pnl: srvEntry.pnl,
+            status: srvEntry.status || clientEntry.status,
+            outcomeLabel: srvEntry.outcomeLabel || clientEntry.outcomeLabel,
+            notes: srvEntry.notes || clientEntry.notes,
+          };
+        }
+      }
+      return clientEntry;
     });
   }
   
@@ -8383,10 +8410,14 @@ app.post('/api/mt5/update', async (req, res) => {
   if (!body || typeof body !== 'object') body = {};
 
   const { signal_id, status, outcomeStatus, milestone, accountBalance, equity, accountNumber, accountServer, accountCurrency, accountCompany, pnl, profit, exitPrice, isManualClose } = body;
+  const incomingPnl = pnl !== undefined ? pnl : profit;
 
-  // Instant response for duplicate historical sync deals to avoid event loop overload
-  if (milestone === 'HISTORICAL_SYNC' && signal_id && matchedUser?.mt5ProcessedSignalIds?.includes(String(signal_id))) {
-    return res.json({ success: true, cached: true, signal_id });
+  // Instant response for duplicate historical sync deals ONLY if already closed with same PnL
+  if (milestone === 'HISTORICAL_SYNC' && signal_id && matchedUser?.signals) {
+    const existingSig = matchedUser.signals.find((s: any) => s.id === signal_id || s.signal_id === signal_id);
+    if (existingSig && existingSig.status === 'CLOSED' && incomingPnl !== undefined && existingSig.pnl === Math.round(Number(incomingPnl) * 100) / 100) {
+      return res.json({ success: true, cached: true, signal_id });
+    }
   }
 
   console.log(`[MT5 EA Update] Signal ${signal_id} status: ${status}, outcome: ${outcomeStatus}, milestone: ${milestone}, balance: ${accountBalance}, accNum: ${accountNumber}, pnl: ${pnl ?? profit}`);
@@ -8526,7 +8557,7 @@ app.post('/api/mt5/update', async (req, res) => {
 
           if (incomingPnl !== undefined && !isNaN(Number(incomingPnl))) {
             const roundedPnl = Math.round(Number(incomingPnl) * 100) / 100;
-            if (target.status === 'CLOSED' || target.status === 'CANCELLED' || isTradeManualClose || milestone === 'POSITION_CLOSED') {
+            if (target.status === 'CLOSED' || target.status === 'CANCELLED' || isTradeManualClose || milestone === 'POSITION_CLOSED' || milestone === 'HISTORICAL_SYNC') {
               if (target.pnl !== roundedPnl) {
                 target.pnl = roundedPnl;
                 target.realizedProfit = roundedPnl;
@@ -8534,6 +8565,9 @@ app.post('/api/mt5/update', async (req, res) => {
               }
             } else if (roundedPnl !== 0) {
               target.liveProfit = roundedPnl;
+              if (milestone === 'TP1_BREAK_EVEN' || milestone === 'TP2') {
+                target.realizedProfit = roundedPnl;
+              }
               didChange = true;
             }
           }

@@ -1730,11 +1730,14 @@ export function calculateTradePnLMetrics(
 
   const isClosed = !isPendingOrder && (signal.status === 'CLOSED' || isTerminalState);
 
+  const hasBrokerRealizedPnl = (signal.pnl !== undefined && typeof signal.pnl === 'number') ||
+                               (signal.realizedProfit !== undefined && typeof signal.realizedProfit === 'number');
+
   if (isPendingOrder) {
     rr = 0;
     pnl = 0;
     statusLabel = isRo ? 'În Așteptare' : 'Pending';
-  } else if (isClosed && (signal.pnl !== undefined || signal.realizedProfit !== undefined)) {
+  } else if (hasBrokerRealizedPnl && (isClosed || ['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT'].includes(status) || status.startsWith('MANUAL_'))) {
     const closedProfit = signal.realizedProfit !== undefined ? signal.realizedProfit : (signal.pnl as number);
     pnl = Math.round(closedProfit * 100) / 100;
     rr = dollarRisk > 0 ? Math.round((pnl / dollarRisk) * 100) / 100 : 0;
@@ -1747,24 +1750,27 @@ export function calculateTradePnLMetrics(
       accountBadgeStyle = 'liquid-amber text-orange-300 border-orange-500/60 shadow-[0_0_10px_rgba(249,115,22,0.25)] font-bold';
     }
     statusLabel = pnl > 0
-      ? (status === 'TP1_HIT' ? (isRo ? 'TP1 Realizat (Broker)' : 'TP1 Realized (Broker)') : (isRo ? 'Profit Realizat' : 'Realized Profit'))
+      ? (status === 'TP1_HIT' ? (isRo ? 'TP1 Realizat (Broker)' : 'TP1 Realized (Broker)') :
+         status === 'TP2_HIT' ? (isRo ? 'TP2 Realizat (Broker)' : 'TP2 Realized (Broker)') :
+         status === 'TP3_HIT' ? (isRo ? 'TP3 Realizat (Broker)' : 'TP3 Realized (Broker)') :
+         (isRo ? 'Profit Realizat' : 'Realized Profit'))
       : pnl < 0
       ? (isRo ? 'SL Realizat (Broker)' : 'SL Realized (Broker)')
       : (isRo ? 'BE Realizat' : 'BE Realized');
   } else if (status === 'SL_HIT') {
     rr = -1.0;
-    pnl = -dollarRisk;
+    pnl = hasBrokerRealizedPnl ? (signal.realizedProfit ?? (signal.pnl as number)) : -dollarRisk;
     statusLabel = isRo ? 'SL Atins' : 'SL Hit';
   } else if (status === 'TP1_HIT') {
     const tp1Dist = Math.abs(signal.targetPrice1 - signal.entryPrice);
     const rawTp1Rr = Math.max(0.5, Math.round((tp1Dist / riskDist) * 10) / 10);
     if (signal.isBeHitAfterTp1) {
       rr = Math.round(rawTp1Rr * 0.7 * 100) / 100;
-      pnl = signal.liveProfit !== undefined ? signal.liveProfit : Math.round(dollarRisk * rr * 100) / 100;
+      pnl = hasBrokerRealizedPnl ? (signal.realizedProfit ?? (signal.pnl as number)) : (signal.liveProfit !== undefined ? signal.liveProfit : Math.round(dollarRisk * rr * 100) / 100);
       statusLabel = isRo ? 'TP1 Securizat (BE)' : 'TP1 Secured (BE)';
     } else {
       rr = rawTp1Rr;
-      pnl = signal.liveProfit !== undefined ? signal.liveProfit : Math.round(dollarRisk * rr * 100) / 100;
+      pnl = hasBrokerRealizedPnl ? (signal.realizedProfit ?? (signal.pnl as number)) : (signal.liveProfit !== undefined ? signal.liveProfit : Math.round(dollarRisk * rr * 100) / 100);
       statusLabel = isRo ? 'TP1 Atins' : 'TP1 Hit';
     }
   } else if (status === 'TP2_HIT') {
@@ -1774,18 +1780,18 @@ export function calculateTradePnLMetrics(
     const rawTp2Rr = Math.max(1.0, Math.round((tp2Dist / riskDist) * 10) / 10);
     if (signal.isBeHitAfterTp2) {
       rr = Math.round((rawTp1Rr * 0.35 + rawTp2Rr * 0.35) * 100) / 100;
-      pnl = signal.liveProfit !== undefined ? signal.liveProfit : Math.round(dollarRisk * rr * 100) / 100;
+      pnl = hasBrokerRealizedPnl ? (signal.realizedProfit ?? (signal.pnl as number)) : (signal.liveProfit !== undefined ? signal.liveProfit : Math.round(dollarRisk * rr * 100) / 100);
       statusLabel = isRo ? 'TP2 Securizat (BE)' : 'TP2 Secured (BE)';
     } else {
       rr = rawTp2Rr;
-      pnl = signal.liveProfit !== undefined ? signal.liveProfit : Math.round(dollarRisk * rr * 100) / 100;
+      pnl = hasBrokerRealizedPnl ? (signal.realizedProfit ?? (signal.pnl as number)) : (signal.liveProfit !== undefined ? signal.liveProfit : Math.round(dollarRisk * rr * 100) / 100);
       statusLabel = isRo ? 'TP2 Atins' : 'TP2 Hit';
     }
   } else if (status === 'TP3_HIT') {
     const tp3Dist = Math.abs(signal.targetPrice3 - signal.entryPrice);
     const rawTp3Rr = Math.max(1.5, Math.round((tp3Dist / riskDist) * 10) / 10);
     rr = rawTp3Rr;
-    pnl = Math.round(dollarRisk * rr * 100) / 100;
+    pnl = hasBrokerRealizedPnl ? (signal.realizedProfit ?? (signal.pnl as number)) : Math.round(dollarRisk * rr * 100) / 100;
     statusLabel = isRo ? 'TP3 MAX Atins' : 'TP3 MAX Hit';
   } else if (!isClosed && (status === 'RUNNING' || (status === 'ACTIVE' && signal.isEntryTriggered) || (signal.liveProfit !== undefined && (signal.isEntryTriggered || status === 'RUNNING')))) {
     // 1. Check direct open positions reported by MT5 terminal first for fresh live PnL
@@ -1881,10 +1887,26 @@ export function reconcileSignalsWithJournal(
 
     const existingSig = map.get(sigId);
     if (existingSig) {
+      const isJournalBroker = Boolean(
+        t.notes?.includes('MT5') ||
+        t.notes?.includes('NinjaTrader') ||
+        t.outcomeLabel?.includes('Broker') ||
+        t.outcomeLabel?.includes('MT5') ||
+        t.outcomeLabel?.includes('NT8')
+      );
+      const isSignalBroker = Boolean(
+        existingSig.accountSource === 'MT5' ||
+        existingSig.accountSource === 'NINJATRADER' ||
+        existingSig.mt5Placed ||
+        existingSig.ninjaTraderPlaced
+      );
+
       // Sync latest realized PnL, exit price, and status into existing signal
-      if (t.pnl !== undefined && (existingSig.pnl === undefined || existingSig.pnl === 0)) {
+      if (t.pnl !== undefined && (existingSig.pnl === undefined || existingSig.pnl === 0 || isJournalBroker)) {
         existingSig.pnl = t.pnl;
         existingSig.realizedProfit = t.pnl;
+      } else if (existingSig.pnl !== undefined && isSignalBroker && t.pnl !== existingSig.pnl) {
+        t.pnl = existingSig.pnl;
       }
       if (t.exitPrice !== undefined && (!existingSig.exitPrice || existingSig.exitPrice === 0)) {
         existingSig.exitPrice = t.exitPrice;
@@ -1897,14 +1919,14 @@ export function reconcileSignalsWithJournal(
         existingSig.outcomeStatus = t.outcomeLabel?.includes('TP')
           ? (t.outcomeLabel.includes('TP3') ? 'TP3_HIT' : t.outcomeLabel.includes('TP2') ? 'TP2_HIT' : 'TP1_HIT')
           : 'MANUAL_PROFIT';
-        if (existingSig.pnl === undefined || existingSig.pnl === 0) {
+        if (existingSig.pnl === undefined || existingSig.pnl === 0 || isJournalBroker) {
           existingSig.pnl = t.pnl;
           existingSig.realizedProfit = t.pnl;
         }
       } else if (t.status === 'LOSS' && !['SL_HIT', 'MANUAL_LOSS'].includes(existingSig.outcomeStatus || '')) {
         existingSig.status = 'CLOSED';
         existingSig.outcomeStatus = t.outcomeLabel?.includes('SL') ? 'SL_HIT' : 'MANUAL_LOSS';
-        if (existingSig.pnl === undefined || existingSig.pnl === 0) {
+        if (existingSig.pnl === undefined || existingSig.pnl === 0 || isJournalBroker) {
           existingSig.pnl = t.pnl;
           existingSig.realizedProfit = t.pnl;
         }

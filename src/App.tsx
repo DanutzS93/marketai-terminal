@@ -519,6 +519,37 @@ export default function App() {
                 return hasChanges ? updated : prevSignals;
               });
             }
+
+            // Synchronize confirmed tradeJournal entries & broker PnLs from server into manualTrades state
+            if (Array.isArray(data.user.tradeJournal)) {
+              setManualTrades((prevTrades) => {
+                const cloudJournal = data.user.tradeJournal;
+                const delSet = new Set(data.user.deletedJournalTradeIds || []);
+                let changed = false;
+                const tradeMap = new Map<string, TradeJournalEntry>();
+                for (const pt of prevTrades) {
+                  if (pt && pt.id) tradeMap.set(String(pt.id), pt);
+                }
+                for (const ct of cloudJournal) {
+                  if (!ct || isDemoOrSampleTrade(ct)) continue;
+                  if (delSet.has(ct.id) || (ct.linkedSignalId && delSet.has(ct.linkedSignalId))) continue;
+                  const existing = tradeMap.get(String(ct.id));
+                  if (!existing) {
+                    tradeMap.set(String(ct.id), ct);
+                    changed = true;
+                  } else {
+                    if (ct.pnl !== undefined && existing.pnl !== ct.pnl) {
+                      tradeMap.set(String(ct.id), { ...existing, ...ct });
+                      changed = true;
+                    } else if (ct.status !== existing.status || ct.outcomeLabel !== existing.outcomeLabel) {
+                      tradeMap.set(String(ct.id), { ...existing, ...ct });
+                      changed = true;
+                    }
+                  }
+                }
+                return changed ? Array.from(tradeMap.values()) : prevTrades;
+              });
+            }
           }
         }
       } catch (e) {
@@ -1038,6 +1069,9 @@ export default function App() {
   const handleUpdateSignalPnl = async (signalId: string, pnl: number) => {
     setSignals((prev) =>
       prev.map((s) => (s.id === signalId ? { ...s, pnl, realizedProfit: pnl, accountSource: s.accountSource || 'MT5' } : s))
+    );
+    setManualTrades((prev) =>
+      prev.map((j) => (j.linkedSignalId === signalId || j.id === `sig_journal_${signalId}` ? { ...j, pnl, status: pnl > 0 ? 'WIN' : (pnl < 0 ? 'LOSS' : 'BREAKEVEN') } : j))
     );
     if (user && user.signals) {
       setUser((prev) => {
@@ -1747,38 +1781,56 @@ export default function App() {
           const isBuy = (sig.type || '').toUpperCase().includes('BUY');
           const riskDist = Math.max(0.0001, Math.abs(sig.entryPrice - sig.stopLoss));
           const dollarRisk = Math.max(10, Math.round((user?.accountBalance || 100000) * ((user?.riskSettings?.riskPerTrade ?? 1.0) / 100)));
+          const isBrokerTrade = Boolean(
+            sig.accountSource === 'MT5' ||
+            sig.accountSource === 'NINJATRADER' ||
+            sig.mt5Placed ||
+            sig.ninjaTraderPlaced ||
+            user?.mt5AccountNumber ||
+            user?.ninjaTraderAccountNumber
+          );
 
           let milestoneExit = sig.exitPrice;
-          let calculatedPnl = sig.pnl;
+          let calculatedPnl = sig.realizedProfit !== undefined ? sig.realizedProfit : sig.pnl;
           let milestoneStatus: 'WIN' | 'LOSS' | 'BREAKEVEN' | 'RUNNING' = 'RUNNING';
           let milestoneLabel = '';
 
           if (evalResult.outcomeStatus === 'TP3_HIT') {
             milestoneExit = sig.targetPrice3 || evalPrice;
             const tp3Rr = sig.targetPrice3 ? Math.round((Math.abs(sig.targetPrice3 - sig.entryPrice) / riskDist) * 10) / 10 : 3.0;
-            calculatedPnl = sig.pnl !== undefined ? sig.pnl : Math.round(dollarRisk * Math.max(3.0, tp3Rr) * 100) / 100;
+            if (calculatedPnl === undefined) {
+              calculatedPnl = isBrokerTrade ? sig.liveProfit : Math.round(dollarRisk * Math.max(3.0, tp3Rr) * 100) / 100;
+            }
             milestoneStatus = 'WIN';
-            milestoneLabel = `TP3 Max Hit (+$${calculatedPnl.toFixed(2)}) 💎`;
+            milestoneLabel = calculatedPnl !== undefined ? `TP3 Max Hit (+$${calculatedPnl.toFixed(2)}) 💎` : 'TP3 Max Hit 💎';
           } else if (evalResult.outcomeStatus === 'TP2_HIT') {
             milestoneExit = sig.targetPrice2 || evalPrice;
             const tp2Rr = sig.targetPrice2 ? Math.round((Math.abs(sig.targetPrice2 - sig.entryPrice) / riskDist) * 10) / 10 : 2.0;
-            calculatedPnl = sig.pnl !== undefined ? sig.pnl : Math.round(dollarRisk * Math.max(2.0, tp2Rr) * 100) / 100;
+            if (calculatedPnl === undefined) {
+              calculatedPnl = isBrokerTrade ? sig.liveProfit : Math.round(dollarRisk * Math.max(2.0, tp2Rr) * 100) / 100;
+            }
             milestoneStatus = 'WIN';
-            milestoneLabel = `TP2 Hit (+$${calculatedPnl.toFixed(2)}) 🚀`;
+            milestoneLabel = calculatedPnl !== undefined ? `TP2 Hit (+$${calculatedPnl.toFixed(2)}) 🚀` : 'TP2 Hit 🚀';
           } else if (evalResult.outcomeStatus === 'TP1_HIT') {
             milestoneExit = sig.targetPrice1 || evalPrice;
             const tp1Rr = sig.targetPrice1 ? Math.round((Math.abs(sig.targetPrice1 - sig.entryPrice) / riskDist) * 10) / 10 : 1.0;
-            calculatedPnl = sig.pnl !== undefined ? sig.pnl : Math.round(dollarRisk * Math.max(1.0, tp1Rr) * 100) / 100;
+            if (calculatedPnl === undefined) {
+              calculatedPnl = isBrokerTrade ? sig.liveProfit : Math.round(dollarRisk * Math.max(1.0, tp1Rr) * 100) / 100;
+            }
             milestoneStatus = 'WIN';
-            milestoneLabel = `TP1 Securizat (+$${calculatedPnl.toFixed(2)}) 🎯`;
+            milestoneLabel = calculatedPnl !== undefined ? `TP1 Securizat (+$${calculatedPnl.toFixed(2)}) 🎯` : 'TP1 Securizat 🎯';
           } else if (evalResult.outcomeStatus === 'SL_HIT') {
             milestoneExit = sig.stopLoss;
-            calculatedPnl = sig.pnl !== undefined ? sig.pnl : -dollarRisk;
+            if (calculatedPnl === undefined) {
+              calculatedPnl = isBrokerTrade ? (sig.liveProfit !== undefined ? sig.liveProfit : undefined) : -dollarRisk;
+            }
             milestoneStatus = 'LOSS';
-            milestoneLabel = `Stop Loss Hit (-$${Math.abs(calculatedPnl).toFixed(2)}) 🛑`;
+            milestoneLabel = calculatedPnl !== undefined ? `Stop Loss Hit (-$${Math.abs(calculatedPnl).toFixed(2)}) 🛑` : 'Stop Loss Hit 🛑';
           } else if (evalResult.isBeHitAfterTp1 || evalResult.isBeHitAfterTp2) {
             milestoneExit = sig.entryPrice;
-            calculatedPnl = sig.pnl !== undefined ? sig.pnl : 0;
+            if (calculatedPnl === undefined) {
+              calculatedPnl = isBrokerTrade ? (sig.liveProfit ?? 0) : 0;
+            }
             milestoneStatus = 'BREAKEVEN';
             milestoneLabel = 'Break-Even Hit 🛡️';
           }
