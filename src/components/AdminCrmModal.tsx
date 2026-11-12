@@ -18,13 +18,15 @@ import {
   AlertTriangle,
   RefreshCw,
 } from 'lucide-react';
-import { UserProfile, InviteCodeItem } from '../types';
+import { UserProfile, InviteCodeItem, SubscriptionTier } from '../types';
+import { TIER_CONFIGS } from '../utils/subscriptionTiers';
 
 interface AdminCrmModalProps {
   isOpen: boolean;
   onClose: () => void;
   authToken: string | null;
   lang: 'ro' | 'en';
+  onUserUpdated?: (user: UserProfile) => void;
 }
 
 export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
@@ -32,6 +34,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
   onClose,
   authToken,
   lang,
+  onUserUpdated,
 }) => {
   const [activeTab, setActiveTab] = useState<'users' | 'invites' | 'database'>('users');
   const [users, setUsers] = useState<UserProfile[]>([]);
@@ -112,6 +115,38 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
   const [addPassword, setAddPassword] = useState('');
   const [addDays, setAddDays] = useState(30);
   const [addInviteCode, setAddInviteCode] = useState('ADMIN_RESTORE');
+  const [addTier, setAddTier] = useState<SubscriptionTier>('diamond');
+
+  // Handle Set User Subscription Tier (Basic, Gold, Diamond)
+  const handleChangeTier = async (userId: string, newTier: SubscriptionTier) => {
+    if (!authToken) return;
+    try {
+      const res = await fetch(`/api/admin/users/${userId}/set-tier`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ tier: newTier }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setUsers((prev) =>
+          prev.map((u) => (u.id === userId ? { ...u, subscriptionTier: newTier } : u))
+        );
+        if (data.user && onUserUpdated) {
+          onUserUpdated(data.user);
+        }
+        setSuccessMsg(`Pachetul de acces a fost actualizat la ${newTier.toUpperCase()}!`);
+        setTimeout(() => setSuccessMsg(''), 3000);
+      } else {
+        const err = await res.json();
+        alert(err.error || 'Eroare la modificarea pachetului.');
+      }
+    } catch (e) {
+      alert('Eroare de rețea la actualizarea pachetului.');
+    }
+  };
 
   // Handle Create or Restore User
   const handleCreateOrRestoreUser = async (e: React.FormEvent) => {
@@ -131,6 +166,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
           password: addPassword.trim(),
           days: Number(addDays) || 30,
           inviteCode: addInviteCode.trim(),
+          tier: addTier,
         }),
       });
 
@@ -563,13 +599,14 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
                       <th className="p-3.5">Cod Invitație</th>
                       <th className="p-3.5 text-center">Zile Rămase</th>
                       <th className="p-3.5 text-center">Status Acces</th>
+                      <th className="p-3.5 text-center">Pachet Platformă</th>
                       <th className="p-3.5 text-right">Acțiuni CRM Admin</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 font-sans">
                     {filteredUsers.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="p-8 text-center text-slate-500">
+                        <td colSpan={7} className="p-8 text-center text-slate-500">
                           Nu au fost găsiți utilizatori conform căutării.
                         </td>
                       </tr>
@@ -659,6 +696,48 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
                                   <span>ACTIV 30 ZILE</span>
                                 </span>
                               )}
+                            </td>
+
+                            {/* Subscription Tier Selector */}
+                            <td className="p-3.5 text-center">
+                              <div className="inline-flex items-center p-0.5 rounded-xl bg-slate-900 border border-slate-800 shadow-inner">
+                                <button
+                                  onClick={() => handleChangeTier(u.id, 'basic')}
+                                  className={`px-2 py-1 rounded-lg text-[10px] font-bold transition flex items-center gap-1 cursor-pointer ${
+                                    (u.subscriptionTier || 'diamond') === 'basic'
+                                      ? 'bg-slate-700 text-white shadow-sm border border-slate-500 font-extrabold'
+                                      : 'text-slate-500 hover:text-slate-300'
+                                  }`}
+                                  title="Pachet Basic (Doar semnale, jurnal, cotații, știri)"
+                                >
+                                  <span>🛡️</span>
+                                  <span>Basic</span>
+                                </button>
+                                <button
+                                  onClick={() => handleChangeTier(u.id, 'gold')}
+                                  className={`px-2 py-1 rounded-lg text-[10px] font-bold transition flex items-center gap-1 cursor-pointer ${
+                                    (u.subscriptionTier || 'diamond') === 'gold'
+                                      ? 'bg-amber-500/25 text-amber-300 shadow-sm border border-amber-400/40 font-extrabold'
+                                      : 'text-slate-500 hover:text-slate-300'
+                                  }`}
+                                  title="Pachet Gold (Include MT5/Ninja EA, fără Scheduler)"
+                                >
+                                  <span>🥇</span>
+                                  <span>Gold</span>
+                                </button>
+                                <button
+                                  onClick={() => handleChangeTier(u.id, 'diamond')}
+                                  className={`px-2 py-1 rounded-lg text-[10px] font-bold transition flex items-center gap-1 cursor-pointer ${
+                                    (u.subscriptionTier || 'diamond') === 'diamond'
+                                      ? 'bg-gradient-to-r from-cyan-500/25 to-indigo-500/25 text-cyan-200 shadow-sm border border-cyan-400/40 font-black'
+                                      : 'text-slate-500 hover:text-slate-300'
+                                  }`}
+                                  title="Pachet Diamond (Acces complet la toate funcțiile)"
+                                >
+                                  <span>💎</span>
+                                  <span>Diamond</span>
+                                </button>
+                              </div>
                             </td>
 
                             {/* Actions */}
@@ -1166,6 +1245,50 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
                     onChange={(e) => setAddInviteCode(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500 uppercase"
                   />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-300 uppercase mb-1.5">
+                  Pachet Acces Platformă
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAddTier('basic')}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition flex items-center justify-center gap-1.5 ${
+                      addTier === 'basic'
+                        ? 'bg-slate-700 text-white border-slate-500 shadow-md font-black'
+                        : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
+                    }`}
+                  >
+                    <span>🛡️</span>
+                    <span>Basic</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAddTier('gold')}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition flex items-center justify-center gap-1.5 ${
+                      addTier === 'gold'
+                        ? 'bg-amber-500/20 text-amber-300 border-amber-400/50 shadow-md font-black'
+                        : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
+                    }`}
+                  >
+                    <span>🥇</span>
+                    <span>Gold</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAddTier('diamond')}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition flex items-center justify-center gap-1.5 ${
+                      addTier === 'diamond'
+                        ? 'bg-cyan-500/20 text-cyan-200 border-cyan-400/50 shadow-md font-black'
+                        : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
+                    }`}
+                  >
+                    <span>💎</span>
+                    <span>Diamond</span>
+                  </button>
                 </div>
               </div>
 

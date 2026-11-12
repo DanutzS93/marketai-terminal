@@ -25,6 +25,9 @@ import { evaluateSignalOutcome, filter30DaySignals, mergeSignals } from './utils
 import { getMarketScheduleStatus, isSignalExpiredByMarketClose } from './utils/marketSchedule';
 import { INITIAL_SAMPLE_TRADES, isDemoOrSampleTrade, getLocalDateKey, formatTimeFromDate } from './utils/tradeJournalUtils';
 import { ShieldCheck, Info, Sparkles, BarChart2, Sliders, Newspaper, LayoutGrid, AlertTriangle } from 'lucide-react';
+import { LockedFeatureCard } from './components/LockedFeatureCard';
+import { isTabLocked, canAccessEaExecution } from './utils/subscriptionTiers';
+import { SubscriptionTier } from './types';
 
 const LOCAL_STORAGE_SIGNALS_KEY = 'market_ai_signals_v2';
 const LOCAL_STORAGE_DELETED_SIGNALS_KEY = 'market_ai_deleted_signal_ids_v1';
@@ -84,7 +87,13 @@ export default function App() {
   const [user, setUser] = useState<UserProfile | null>(() => {
     try {
       const saved = localStorage.getItem('market_ai_user_profile');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && !parsed.subscriptionTier) {
+          parsed.subscriptionTier = 'diamond';
+        }
+        return parsed;
+      }
     } catch (e) {
       console.warn('Could not read user profile from localStorage:', e);
     }
@@ -2305,8 +2314,24 @@ export default function App() {
         isRefreshing={isRefreshing}
         onOpenKeysModal={() => setIsKeysModalOpen(true)}
         onOpenCalcModal={() => setIsCalcModalOpen(true)}
-        onOpenMt5Modal={() => setIsMt5ModalOpen(true)}
-        onOpenNinjaTraderModal={() => setIsNinjaTraderModalOpen(true)}
+        onOpenMt5Modal={() => {
+          const userTier = user?.subscriptionTier || 'diamond';
+          const isAdmin = user?.role === 'admin' || user?.username?.toLowerCase() === 'admin';
+          if (!canAccessEaExecution(userTier, isAdmin)) {
+            setActiveTab('risk');
+          } else {
+            setIsMt5ModalOpen(true);
+          }
+        }}
+        onOpenNinjaTraderModal={() => {
+          const userTier = user?.subscriptionTier || 'diamond';
+          const isAdmin = user?.role === 'admin' || user?.username?.toLowerCase() === 'admin';
+          if (!canAccessEaExecution(userTier, isAdmin)) {
+            setActiveTab('risk');
+          } else {
+            setIsNinjaTraderModalOpen(true);
+          }
+        }}
         onOpenAdminCrmModal={() => setIsAdminCrmModalOpen(true)}
         onOpenDailyBriefingModal={() => setIsDailyBriefingModalOpen(true)}
         lang={lang}
@@ -2350,143 +2375,157 @@ export default function App() {
 
       {/* Main Container */}
       <main className="max-w-[1720px] w-full mx-auto px-2 sm:px-4 md:px-6 py-3 sm:py-6">
-        {/* Section view rendering */}
-        {activeTab === 'overview' && (
-          <div className="space-y-6">
-            {/* Dashboard Summary Card: Historical Success Rate & Win/Loss Ratio over last 30 days */}
-            <SignalPerformanceSummaryCard
-              signals={signals}
-              lang={lang}
-              onOpenHistoryModal={() => setIsHistoryModalOpen(true)}
-            />
+        {isTabLocked(
+          activeTab,
+          user?.subscriptionTier || 'diamond',
+          user?.role === 'admin' || user?.username?.toLowerCase() === 'admin'
+        ) ? (
+          <LockedFeatureCard
+            tab={activeTab}
+            currentTier={user?.subscriptionTier || 'diamond'}
+            lang={lang}
+          />
+        ) : (
+          <>
+            {/* Section view rendering */}
+            {activeTab === 'overview' && (
+              <div className="space-y-6">
+                {/* Dashboard Summary Card: Historical Success Rate & Win/Loss Ratio over last 30 days */}
+                <SignalPerformanceSummaryCard
+                  signals={signals}
+                  lang={lang}
+                  onOpenHistoryModal={() => setIsHistoryModalOpen(true)}
+                />
 
-            {/* Bento Tiles Module: Session & Hourly Trade Profitability Statistics */}
-            <SessionProfitabilityBentoModule
-              signals={signals}
-              manualTrades={manualTrades}
-              quotes={quotes}
-              lang={lang}
-              user={user}
-              deletedJournalTradeIds={deletedJournalTradeIds}
-              onNavigateToJournal={() => setActiveTab('journal')}
-            />
+                {/* Bento Tiles Module: Session & Hourly Trade Profitability Statistics */}
+                <SessionProfitabilityBentoModule
+                  signals={signals}
+                  manualTrades={manualTrades}
+                  quotes={quotes}
+                  lang={lang}
+                  user={user}
+                  deletedJournalTradeIds={deletedJournalTradeIds}
+                  onNavigateToJournal={() => setActiveTab('journal')}
+                />
 
-            <MarketOverviewCards
-              quotes={quotes}
-              selectedInstrument={selectedInstrument}
-              onSelectInstrument={setSelectedInstrument}
-              signals={signals}
-              onOpenCalcModal={() => setIsCalcModalOpen(true)}
-              lang={lang}
-              onGenerateSignal={handleGenerateSignal}
-              onNavigateToSignals={() => setActiveTab('signals')}
-              isGeneratingSignal={isGeneratingSignal}
-            />
-          </div>
-        )}
+                <MarketOverviewCards
+                  quotes={quotes}
+                  selectedInstrument={selectedInstrument}
+                  onSelectInstrument={setSelectedInstrument}
+                  signals={signals}
+                  onOpenCalcModal={() => setIsCalcModalOpen(true)}
+                  lang={lang}
+                  onGenerateSignal={handleGenerateSignal}
+                  onNavigateToSignals={() => setActiveTab('signals')}
+                  isGeneratingSignal={isGeneratingSignal}
+                />
+              </div>
+            )}
 
-        {activeTab === 'signals' && (
-          <div>
-            <TradingSignalsSection
-              signals={signals}
-              selectedInstrument={selectedInstrument}
-              onSelectInstrument={setSelectedInstrument}
-              onGenerateSignal={handleGenerateSignal}
-              isGenerating={isGeneratingSignal}
-              onOpenCalcModal={() => setIsCalcModalOpen(true)}
-              lang={lang}
-              onUpdateSignalOutcome={handleUpdateSignalOutcome}
-              onDeleteSignal={handleDeleteSignal}
-              onCloseTrade={handleCloseTrade}
-              onCloseAllTrades={handleCloseAllTrades}
-              onDeleteAllSignals={handleDeleteAllSignals}
-              onResetSignals={handleResetSignals}
-              onUpdateSignalPnl={handleUpdateSignalPnl}
-              user={user}
-              quotes={quotes}
-            />
-          </div>
-        )}
+            {activeTab === 'signals' && (
+              <div>
+                <TradingSignalsSection
+                  signals={signals}
+                  selectedInstrument={selectedInstrument}
+                  onSelectInstrument={setSelectedInstrument}
+                  onGenerateSignal={handleGenerateSignal}
+                  isGenerating={isGeneratingSignal}
+                  onOpenCalcModal={() => setIsCalcModalOpen(true)}
+                  lang={lang}
+                  onUpdateSignalOutcome={handleUpdateSignalOutcome}
+                  onDeleteSignal={handleDeleteSignal}
+                  onCloseTrade={handleCloseTrade}
+                  onCloseAllTrades={handleCloseAllTrades}
+                  onDeleteAllSignals={handleDeleteAllSignals}
+                  onResetSignals={handleResetSignals}
+                  onUpdateSignalPnl={handleUpdateSignalPnl}
+                  user={user}
+                  quotes={quotes}
+                />
+              </div>
+            )}
 
-        {activeTab === 'scheduler' && (
-          <div>
-            <AutomatedTradeSchedulerSection
-              user={user}
-              authToken={authToken}
-              quotes={quotes}
-              lang={lang}
-              onUpdateUser={(updated) => {
-                setUser(updated);
-                try {
-                  localStorage.setItem('market_ai_user_profile', JSON.stringify(updated));
-                } catch (_) {}
-              }}
-              onNavigateToSignals={() => setActiveTab('signals')}
-            />
-          </div>
-        )}
+            {activeTab === 'scheduler' && (
+              <div>
+                <AutomatedTradeSchedulerSection
+                  user={user}
+                  authToken={authToken}
+                  quotes={quotes}
+                  lang={lang}
+                  onUpdateUser={(updated) => {
+                    setUser(updated);
+                    try {
+                      localStorage.setItem('market_ai_user_profile', JSON.stringify(updated));
+                    } catch (_) {}
+                  }}
+                  onNavigateToSignals={() => setActiveTab('signals')}
+                />
+              </div>
+            )}
 
-        {activeTab === 'rules' && (
-          <div>
-            <CustomSignalRulesSection
-              quotes={quotes}
-              selectedInstrument={selectedInstrument}
-              onSelectInstrument={setSelectedInstrument}
-              onGenerateCustomSignal={handleGenerateCustomSignal}
-              isGenerating={isGeneratingSignal}
-              lang={lang}
-            />
-          </div>
-        )}
+            {activeTab === 'rules' && (
+              <div>
+                <CustomSignalRulesSection
+                  quotes={quotes}
+                  selectedInstrument={selectedInstrument}
+                  onSelectInstrument={setSelectedInstrument}
+                  onGenerateCustomSignal={handleGenerateCustomSignal}
+                  isGenerating={isGeneratingSignal}
+                  lang={lang}
+                />
+              </div>
+            )}
 
-        {activeTab === 'risk' && (
-          <div>
-            <RiskRulesConfigurationSection
-              quotes={quotes}
-              selectedInstrument={selectedInstrument}
-              lang={lang}
-              user={user}
-              authToken={authToken}
-              onUpdateUserBalance={(bal) => {
-                if (user) {
-                  setUser({ ...user, accountBalance: bal });
-                }
-              }}
-            />
-          </div>
-        )}
+            {activeTab === 'risk' && (
+              <div>
+                <RiskRulesConfigurationSection
+                  quotes={quotes}
+                  selectedInstrument={selectedInstrument}
+                  lang={lang}
+                  user={user}
+                  authToken={authToken}
+                  onUpdateUserBalance={(bal) => {
+                    if (user) {
+                      setUser({ ...user, accountBalance: bal });
+                    }
+                  }}
+                />
+              </div>
+            )}
 
-        {activeTab === 'macro' && (
-          <div>
-            <MacroNewsSection
-              selectedInstrument={selectedInstrument}
-              lang={lang}
-              briefing={dailyBriefing}
-              isLoadingBriefing={isLoadingDailyBriefing}
-              onRefreshBriefing={() => fetchDailyBriefing(true)}
-              onOpenBriefingModal={() => setIsDailyBriefingModalOpen(true)}
-            />
-          </div>
-        )}
+            {activeTab === 'macro' && (
+              <div>
+                <MacroNewsSection
+                  selectedInstrument={selectedInstrument}
+                  lang={lang}
+                  briefing={dailyBriefing}
+                  isLoadingBriefing={isLoadingDailyBriefing}
+                  onRefreshBriefing={() => fetchDailyBriefing(true)}
+                  onOpenBriefingModal={() => setIsDailyBriefingModalOpen(true)}
+                />
+              </div>
+            )}
 
-        {activeTab === 'journal' && (
-          <div>
-            <TradeJournalSection
-              signals={signals}
-              quotes={quotes}
-              manualTrades={manualTrades}
-              deletedJournalTradeIds={deletedJournalTradeIds}
-              onSaveManualTrade={handleSaveManualTrade}
-              onDeleteManualTrade={handleDeleteManualTrade}
-              onClearAllManualTrades={handleClearAllManualTrades}
-              onViewSignalDetails={(sig) => {
-                setActiveTab('signals');
-                setSelectedInstrument(sig.instrumentId);
-              }}
-              lang={lang}
-              user={user}
-            />
-          </div>
+            {activeTab === 'journal' && (
+              <div>
+                <TradeJournalSection
+                  signals={signals}
+                  quotes={quotes}
+                  manualTrades={manualTrades}
+                  deletedJournalTradeIds={deletedJournalTradeIds}
+                  onSaveManualTrade={handleSaveManualTrade}
+                  onDeleteManualTrade={handleDeleteManualTrade}
+                  onClearAllManualTrades={handleClearAllManualTrades}
+                  onViewSignalDetails={(sig) => {
+                    setActiveTab('signals');
+                    setSelectedInstrument(sig.instrumentId);
+                  }}
+                  lang={lang}
+                  user={user}
+                />
+              </div>
+            )}
+          </>
         )}
       </main>
 
@@ -2529,6 +2568,14 @@ export default function App() {
         onClose={() => setIsAdminCrmModalOpen(false)}
         authToken={authToken}
         lang={lang}
+        onUserUpdated={(updatedUser) => {
+          if (user && user.id === updatedUser.id) {
+            setUser(updatedUser);
+            try {
+              localStorage.setItem('market_ai_user_profile', JSON.stringify(updatedUser));
+            } catch (_) {}
+          }
+        }}
       />
 
       <MarketClosedModal
@@ -2548,7 +2595,13 @@ export default function App() {
       />
 
       <Mt5IntegrationModal
-        isOpen={isMt5ModalOpen}
+        isOpen={
+          isMt5ModalOpen &&
+          canAccessEaExecution(
+            user?.subscriptionTier || 'diamond',
+            user?.role === 'admin' || user?.username?.toLowerCase() === 'admin'
+          )
+        }
         onClose={() => setIsMt5ModalOpen(false)}
         lang={lang}
         authToken={authToken}
@@ -2557,7 +2610,13 @@ export default function App() {
       />
 
       <NinjaTraderIntegrationModal
-        isOpen={isNinjaTraderModalOpen}
+        isOpen={
+          isNinjaTraderModalOpen &&
+          canAccessEaExecution(
+            user?.subscriptionTier || 'diamond',
+            user?.role === 'admin' || user?.username?.toLowerCase() === 'admin'
+          )
+        }
         onClose={() => setIsNinjaTraderModalOpen(false)}
         lang={lang}
         authToken={authToken}

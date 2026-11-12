@@ -25,8 +25,9 @@ import {
   CalendarDays,
   Wallet,
 } from 'lucide-react';
-import { MarketQuote, InstrumentId, UserProfile } from '../types';
+import { MarketQuote, InstrumentId, UserProfile, SubscriptionTier } from '../types';
 import { getMarketScheduleStatus } from '../utils/marketSchedule';
+import { isTabLocked, canAccessEaExecution, TIER_CONFIGS } from '../utils/subscriptionTiers';
 
 export type ActiveTab = 'overview' | 'signals' | 'scheduler' | 'journal' | 'rules' | 'risk' | 'macro';
 
@@ -79,6 +80,29 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const isAdmin = user?.role === 'admin' || user?.username.toLowerCase() === 'admin';
+  const userTier: SubscriptionTier = user?.subscriptionTier || 'diamond';
+  const tierConfig = TIER_CONFIGS[userTier] || TIER_CONFIGS.diamond;
+  const hasEaAccess = canAccessEaExecution(userTier, isAdmin);
+
+  const handleMt5Click = () => {
+    if (!hasEaAccess) {
+      onTabChange('risk');
+      setIsMobileMenuOpen(false);
+      return;
+    }
+    onOpenMt5Modal();
+    setIsMobileMenuOpen(false);
+  };
+
+  const handleNinjaTraderClick = () => {
+    if (!hasEaAccess) {
+      onTabChange('risk');
+      setIsMobileMenuOpen(false);
+      return;
+    }
+    if (onOpenNinjaTraderModal) onOpenNinjaTraderModal();
+    setIsMobileMenuOpen(false);
+  };
 
 
   const isMt5Linked = Boolean(user?.mt5AccountNumber);
@@ -190,6 +214,7 @@ export const Header: React.FC<HeaderProps> = ({
         <nav className="hidden lg:flex items-center gap-1 bg-slate-950/70 p-1 rounded-xl border border-white/10 backdrop-blur-xl shadow-inner">
           {navItems.map((item) => {
             const isActive = activeTab === item.id;
+            const isLocked = isTabLocked(item.id, userTier, isAdmin);
             return (
               <button
                 key={item.id}
@@ -197,11 +222,17 @@ export const Header: React.FC<HeaderProps> = ({
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
                   isActive
                     ? 'liquid-indigo text-white font-bold shadow-[0_0_15px_rgba(99,102,241,0.35)] border border-indigo-400/40'
+                    : isLocked
+                    ? 'text-slate-400/80 hover:text-slate-200 hover:bg-white/5 border border-transparent'
                     : 'text-slate-300 hover:text-white hover:bg-white/5 border border-transparent'
                 }`}
+                title={isLocked ? (lang === 'ro' ? 'Funcție Blocată în Pachetul Curent' : 'Feature Locked in Current Tier') : undefined}
               >
                 {item.icon}
                 <span>{lang === 'ro' ? item.labelRo : item.labelEn}</span>
+                {isLocked && (
+                  <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0 ml-0.5" />
+                )}
                 {item.badge !== undefined && item.badge > 0 && (
                   <span
                     className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-bold font-mono ${
@@ -289,6 +320,11 @@ export const Header: React.FC<HeaderProps> = ({
                       <span>{user.subscriptionDaysLeft ?? 30}d</span>
                     </span>
                   )}
+                  {/* Subscription Tier Badge */}
+                  <span className={`text-[9px] px-1.5 py-0.2 rounded border uppercase font-mono font-bold flex items-center gap-0.5 ${tierConfig.badgeBg} ${tierConfig.badgeText} ${tierConfig.badgeBorder}`}>
+                    <span>{tierConfig.iconText}</span>
+                    <span>{userTier.toUpperCase()}</span>
+                  </span>
                 </div>
                 <button
                   onClick={onLogout}
@@ -375,6 +411,10 @@ export const Header: React.FC<HeaderProps> = ({
                         <span>{user.subscriptionDaysLeft ?? 30}d</span>
                       </span>
                     )}
+                    <span className={`text-[9px] px-1.5 py-0.2 rounded border uppercase font-mono font-bold flex items-center gap-0.5 ${tierConfig.badgeBg} ${tierConfig.badgeText} ${tierConfig.badgeBorder}`}>
+                      <span>{tierConfig.iconText}</span>
+                      <span>{userTier.toUpperCase()}</span>
+                    </span>
                   </div>
                   <span className="text-[10px] text-slate-400">
                     {lang === 'ro' ? 'Sincronizat în Cloud' : 'Cloud Synchronized'}
@@ -487,6 +527,7 @@ export const Header: React.FC<HeaderProps> = ({
             </span>
             {navItems.map((item) => {
               const isActive = activeTab === item.id;
+              const isLocked = isTabLocked(item.id, userTier, isAdmin);
               return (
                 <button
                   key={item.id}
@@ -494,12 +535,15 @@ export const Header: React.FC<HeaderProps> = ({
                   className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs font-bold transition cursor-pointer ${
                     isActive
                       ? 'liquid-indigo text-white shadow-md border border-indigo-400/40'
+                      : isLocked
+                      ? 'text-slate-400/70 hover:bg-white/5 hover:text-white'
                       : 'text-slate-300 hover:bg-white/5 hover:text-white'
                   }`}
                 >
                   <div className="flex items-center gap-2.5">
                     {item.icon}
                     <span>{lang === 'ro' ? item.labelRo : item.labelEn}</span>
+                    {isLocked && <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0 ml-1" />}
                   </div>
                   {item.badge !== undefined && item.badge > 0 && (
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-indigo-500/30 text-indigo-300 font-bold border border-indigo-400/30">
@@ -518,26 +562,22 @@ export const Header: React.FC<HeaderProps> = ({
             </span>
             <div className="grid grid-cols-2 gap-2 text-xs">
               <button
-                onClick={() => {
-                  onOpenMt5Modal();
-                  setIsMobileMenuOpen(false);
-                }}
+                onClick={handleMt5Click}
                 className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl liquid-indigo border border-indigo-500/30 text-indigo-200 font-semibold cursor-pointer"
               >
                 <Terminal className="w-4 h-4 text-indigo-400" />
                 <span>MT5 Bridge</span>
+                {!hasEaAccess && <Lock className="w-3 h-3 text-amber-400" />}
               </button>
 
               {onOpenNinjaTraderModal && (
                 <button
-                  onClick={() => {
-                    onOpenNinjaTraderModal();
-                    setIsMobileMenuOpen(false);
-                  }}
+                  onClick={handleNinjaTraderClick}
                   className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl liquid-amber border border-orange-500/30 text-orange-200 font-semibold cursor-pointer"
                 >
                   <Cpu className="w-4 h-4 text-orange-400" />
                   <span>NinjaTrader</span>
+                  {!hasEaAccess && <Lock className="w-3 h-3 text-amber-400" />}
                 </button>
               )}
 
@@ -598,6 +638,7 @@ export const Header: React.FC<HeaderProps> = ({
       >
         {navItems.map((item) => {
           const isActive = activeTab === item.id;
+          const isLocked = isTabLocked(item.id, userTier, isAdmin);
           return (
             <button
               id={`mobile-nav-btn-${item.id}`}
@@ -606,11 +647,14 @@ export const Header: React.FC<HeaderProps> = ({
               className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all duration-150 active:scale-95 cursor-pointer ${
                 isActive
                   ? 'liquid-indigo text-white font-bold shadow-md shadow-indigo-600/30 border border-indigo-400/50 ring-1 ring-indigo-400/50'
+                  : isLocked
+                  ? 'text-slate-400/80 hover:text-white bg-slate-900/70 border border-white/5'
                   : 'text-slate-300 hover:text-white bg-slate-900/70 hover:bg-slate-800/80 border border-white/5'
               }`}
             >
               {item.icon}
               <span>{lang === 'ro' ? item.shortLabelRo || item.labelRo : item.shortLabelEn || item.labelEn}</span>
+              {isLocked && <Lock className="w-3 h-3 text-amber-400 shrink-0 ml-0.5" />}
               {item.badge !== undefined && item.badge > 0 && (
                 <span
                   className={`ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] font-bold font-mono ${
@@ -678,25 +722,33 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* MT5 Bridge Modal Button */}
         <button
-          onClick={onOpenMt5Modal}
+          onClick={handleMt5Click}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl liquid-indigo border border-indigo-500/40 hover:border-indigo-400 text-xs font-semibold text-indigo-200 hover:text-white transition-all shadow-[0_0_12px_rgba(99,102,241,0.2)] cursor-pointer"
           title="MetaTrader 5 Auto-Trading Bridge & EA Connector"
         >
           <Terminal className="w-3.5 h-3.5 text-indigo-400" />
           <span>MT5 Bridge</span>
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+          {hasEaAccess ? (
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+          ) : (
+            <Lock className="w-3 h-3 text-amber-400" />
+          )}
         </button>
 
         {/* NinjaTrader Bridge Modal Button */}
         {onOpenNinjaTraderModal && (
           <button
-            onClick={onOpenNinjaTraderModal}
+            onClick={handleNinjaTraderClick}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl liquid-amber border border-orange-500/40 hover:border-orange-400 text-xs font-semibold text-orange-200 hover:text-white transition-all shadow-[0_0_12px_rgba(249,115,22,0.2)] cursor-pointer"
             title="NinjaTrader 8 Auto-Trading Bridge (Futures & Prop Firms)"
           >
             <Cpu className="w-3.5 h-3.5 text-orange-400" />
             <span>NinjaTrader 8 Bridge</span>
-            <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse"></span>
+            {hasEaAccess ? (
+              <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse"></span>
+            ) : (
+              <Lock className="w-3 h-3 text-amber-400" />
+            )}
           </button>
         )}
 

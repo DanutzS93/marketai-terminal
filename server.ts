@@ -527,6 +527,7 @@ function formatUserForClient(u: StoredUser) {
     inviteCodeUsed: u.inviteCodeUsed,
     role: u.role || (u.username.toLowerCase() === 'admin' ? 'admin' : 'user'),
     status: u.status || 'active',
+    subscriptionTier: u.subscriptionTier || 'diamond',
     subscriptionExpiresAt: u.subscriptionExpiresAt || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
     subscriptionDaysLeft: daysLeft,
     isExpired,
@@ -1446,7 +1447,7 @@ app.post('/api/admin/users/create', async (req, res) => {
   const admin = verifyAdminToken(req);
   if (!admin) return res.status(403).json({ error: 'Acces interzis! Necesită drepturi de administrator.' });
 
-  const { username, password, days = 30, inviteCode = 'ADMIN_RESTORE' } = req.body;
+  const { username, password, days = 30, inviteCode = 'ADMIN_RESTORE', tier = 'diamond' } = req.body;
   if (!username || !password) {
     return res.status(400).json({ error: 'Numele de utilizator și parola sunt obligatorii.' });
   }
@@ -1463,6 +1464,7 @@ app.post('/api/admin/users/create', async (req, res) => {
     targetUser.passwordHash = passHash;
     targetUser.status = 'active';
     targetUser.subscriptionExpiresAt = expiresAt;
+    targetUser.subscriptionTier = tier;
     targetUser.token = `tok_${targetUser.id}_${Date.now()}`;
     await saveUsersDb(users, targetUser.id);
     return res.json({
@@ -1483,6 +1485,7 @@ app.post('/api/admin/users/create', async (req, res) => {
       token: token,
       role: lowerUser === 'admin' ? 'admin' : 'user',
       status: 'active',
+      subscriptionTier: tier,
       subscriptionExpiresAt: expiresAt,
       signals: [],
       customRules: [],
@@ -1542,6 +1545,30 @@ app.post('/api/admin/users/:userId/toggle-status', async (req, res) => {
 
   return res.json({
     success: true,
+    user: formatUserForClient(targetUser),
+  });
+});
+
+app.post('/api/admin/users/:userId/set-tier', async (req, res) => {
+  const admin = verifyAdminToken(req);
+  if (!admin) return res.status(403).json({ error: 'Acces interzis! Necesită drepturi de administrator.' });
+
+  const { userId } = req.params;
+  const { tier } = req.body;
+  if (!tier || !['basic', 'gold', 'diamond'].includes(tier)) {
+    return res.status(400).json({ error: 'Pachet invalid! Alegeți dintre: basic, gold sau diamond.' });
+  }
+
+  const users = loadUsersDb();
+  const targetUser = users[userId];
+  if (!targetUser) return res.status(404).json({ error: 'Utilizatorul nu a fost găsit.' });
+
+  targetUser.subscriptionTier = tier;
+  await saveUsersDb(users, userId);
+
+  return res.json({
+    success: true,
+    message: `Pachetul pentru ${targetUser.username} a fost actualizat la ${tier.toUpperCase()}.`,
     user: formatUserForClient(targetUser),
   });
 });

@@ -221,6 +221,8 @@ export interface BridgeAccount {
   status?: 'active' | 'inactive';
 }
 
+export type SubscriptionTier = 'basic' | 'gold' | 'diamond';
+
 export interface UserProfile {
   id: string;
   username: string;
@@ -229,6 +231,7 @@ export interface UserProfile {
   inviteCodeUsed?: string;
   role?: 'admin' | 'user';
   status?: 'active' | 'blocked';
+  subscriptionTier?: SubscriptionTier;
   subscriptionExpiresAt?: string;
   subscriptionDaysLeft?: number;
   accountBalance?: number;

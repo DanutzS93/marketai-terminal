@@ -71,6 +71,7 @@ export interface StoredUser {
   tokens?: string[];
   role?: 'admin' | 'user';
   status?: 'active' | 'blocked';
+  subscriptionTier?: 'basic' | 'gold' | 'diamond';
   subscriptionExpiresAt?: string;
   signals?: any[];
   tradeJournal?: any[];
