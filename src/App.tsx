@@ -431,7 +431,9 @@ export default function App() {
                     newOutcome = 'PENDING';
                   } else if (isMt5OpenPos) {
                     newStatus = 'RUNNING';
-                    if (!['TP1_HIT', 'TP2_HIT'].includes(s.outcomeStatus || '')) {
+                    if (['TP1_HIT', 'TP2_HIT'].includes(s.outcomeStatus || '') && (newOutcome === 'RUNNING' || newOutcome === 'PENDING' || !newOutcome)) {
+                      newOutcome = s.outcomeStatus;
+                    } else if (!['TP1_HIT', 'TP2_HIT'].includes(s.outcomeStatus || '')) {
                       newOutcome = 'RUNNING';
                     }
                   }
@@ -442,14 +444,19 @@ export default function App() {
                     srv.realizedProfit !== undefined ||
                     (typeof srv.outcomeStatus === 'string' && (
                       srv.outcomeStatus.startsWith('MANUAL_') ||
-                      ['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT', 'CANCELLED'].includes(srv.outcomeStatus)
+                      ['TP3_HIT', 'SL_HIT', 'CANCELLED'].includes(srv.outcomeStatus)
                     ));
+
+                  const isCurrentMilestone = ['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT', 'CANCELLED'].includes(s.outcomeStatus || '');
+                  const isDowngradeToRunning = isCurrentMilestone && (newOutcome === 'RUNNING' || newOutcome === 'PENDING');
 
                   // Never overwrite live streaming prices with stale server snapshots
                   // Never overwrite unactivated pending limit orders with stale server RUNNING status
+                  // Never downgrade achieved TP1/TP2 milestones back to RUNNING or PENDING
                   const canAcceptOutcome =
                     newOutcome &&
                     s.outcomeStatus !== newOutcome &&
+                    !isDowngradeToRunning &&
                     (srvIsClosed || (!(isPendingOrder && newOutcome === 'RUNNING') &&
                      s.outcomeStatus !== 'SL_HIT' &&
                      s.outcomeStatus !== 'TP3_HIT' &&
@@ -1679,7 +1686,7 @@ export default function App() {
             cancelReasonEn: evalResult.cancelReasonEn || sig.cancelReasonEn,
             exitPrice: milestoneExit,
             pnl: calculatedPnl,
-            realizedProfit: calculatedPnl,
+            realizedProfit: (evalResult.outcomeStatus === 'TP3_HIT' || evalResult.outcomeStatus === 'SL_HIT' || evalResult.isBeHitAfterTp1 || evalResult.isBeHitAfterTp2) ? calculatedPnl : sig.realizedProfit,
             closedAt: (evalResult.outcomeStatus === 'TP3_HIT' || evalResult.outcomeStatus === 'SL_HIT' || evalResult.isBeHitAfterTp1 || evalResult.isBeHitAfterTp2) ? (sig.closedAt || new Date().toISOString()) : sig.closedAt,
           };
         }

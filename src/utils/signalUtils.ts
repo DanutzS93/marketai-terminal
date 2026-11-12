@@ -1588,11 +1588,11 @@ export function calculateTradePnLMetrics(
     const rawTp1Rr = Math.max(0.5, Math.round((tp1Dist / riskDist) * 10) / 10);
     if (signal.isBeHitAfterTp1) {
       rr = Math.round(rawTp1Rr * 0.7 * 100) / 100;
-      pnl = Math.round(dollarRisk * rr * 100) / 100;
+      pnl = signal.liveProfit !== undefined ? signal.liveProfit : Math.round(dollarRisk * rr * 100) / 100;
       statusLabel = 'TP1 Securizat (BE)';
     } else {
       rr = rawTp1Rr;
-      pnl = Math.round(dollarRisk * rr * 100) / 100;
+      pnl = signal.liveProfit !== undefined ? signal.liveProfit : Math.round(dollarRisk * rr * 100) / 100;
       statusLabel = 'TP1 Atins';
     }
   } else if (status === 'TP2_HIT') {
@@ -1602,11 +1602,11 @@ export function calculateTradePnLMetrics(
     const rawTp2Rr = Math.max(1.0, Math.round((tp2Dist / riskDist) * 10) / 10);
     if (signal.isBeHitAfterTp2) {
       rr = Math.round((rawTp1Rr * 0.35 + rawTp2Rr * 0.35) * 100) / 100;
-      pnl = Math.round(dollarRisk * rr * 100) / 100;
+      pnl = signal.liveProfit !== undefined ? signal.liveProfit : Math.round(dollarRisk * rr * 100) / 100;
       statusLabel = 'TP2 Securizat (BE)';
     } else {
       rr = rawTp2Rr;
-      pnl = Math.round(dollarRisk * rr * 100) / 100;
+      pnl = signal.liveProfit !== undefined ? signal.liveProfit : Math.round(dollarRisk * rr * 100) / 100;
       statusLabel = 'TP2 Atins';
     }
   } else if (status === 'TP3_HIT') {

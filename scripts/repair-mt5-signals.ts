@@ -58,7 +58,12 @@ async function repair() {
         const p = openPosMap.get(sId);
         console.log(` [REPAIR RUNNING] Signal ${sig.id} (${sig.symbol} ${sig.executionType}) is open in MT5 (Profit: $${p.profit}). Resetting to RUNNING.`);
         sig.status = 'RUNNING';
-        if (!['TP1_HIT', 'TP2_HIT'].includes(sig.outcomeStatus || '')) {
+        const isBuy = (sig.type || '').toUpperCase().includes('BUY');
+        const isTp1Passed = sig.targetPrice1 && (isBuy ? p.currentPrice >= sig.targetPrice1 : p.currentPrice <= sig.targetPrice1);
+        if (isTp1Passed || sig.firstHitMilestone === 'TP1' || sig.outcomeStatus === 'TP1_HIT') {
+          sig.outcomeStatus = 'TP1_HIT';
+          sig.firstHitMilestone = 'TP1';
+        } else if (!['TP1_HIT', 'TP2_HIT'].includes(sig.outcomeStatus || '')) {
           sig.outcomeStatus = 'RUNNING';
         }
         sig.isEntryTriggered = true;

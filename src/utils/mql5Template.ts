@@ -1,4 +1,4 @@
-export const MT5_EA_VERSION = '4.88';
+export const MT5_EA_VERSION = '4.89';
 
 export function getMql5EaCode(
   mt5Endpoint: string,
@@ -84,6 +84,55 @@ struct TrackedTrade {
    datetime lastCloseAttempt;
 };
 TrackedTrade trackedTrades[];
+
+struct SignalTargetInfo
+{
+   string signalId;
+   string symbol;
+   double tp1;
+   double tp2;
+   double tp3;
+};
+SignalTargetInfo signalTargets[];
+
+void StoreSignalTargets(string sId, string sym, double t1, double t2, double t3)
+{
+   if(sId == "") return;
+   for(int k = 0; k < ArraySize(signalTargets); k++)
+   {
+      if(signalTargets[k].signalId == sId)
+      {
+         signalTargets[k].symbol = sym;
+         if(t1 > 0) signalTargets[k].tp1 = t1;
+         if(t2 > 0) signalTargets[k].tp2 = t2;
+         if(t3 > 0) signalTargets[k].tp3 = t3;
+         return;
+      }
+   }
+   int sz = ArraySize(signalTargets);
+   ArrayResize(signalTargets, sz + 1);
+   signalTargets[sz].signalId = sId;
+   signalTargets[sz].symbol = sym;
+   signalTargets[sz].tp1 = t1;
+   signalTargets[sz].tp2 = t2;
+   signalTargets[sz].tp3 = t3;
+}
+
+void LookupSignalTargets(string sId, double &t1, double &t2, double &t3)
+{
+   t1 = 0.0; t2 = 0.0; t3 = 0.0;
+   if(sId == "") return;
+   for(int k = 0; k < ArraySize(signalTargets); k++)
+   {
+      if(signalTargets[k].signalId == sId)
+      {
+         t1 = signalTargets[k].tp1;
+         t2 = signalTargets[k].tp2;
+         t3 = signalTargets[k].tp3;
+         return;
+      }
+   }
+}
 
 // Forward declarations
 bool SendTradeUpdate(string signalId, string status, string outcome, string milestone, double pnl = 0.0, double exitPrice = 0.0, bool isManualClose = false);
@@ -1508,7 +1557,9 @@ void RegisterOpenPositions()
             long pType = PositionGetInteger(POSITION_TYPE);
             double oPrice = PositionGetDouble(POSITION_PRICE_OPEN);
             double vol = PositionGetDouble(POSITION_VOLUME);
-            RegisterTrackedTrade(sigId, t, posId, sym, pType, oPrice, vol);
+            double sTp1 = 0, sTp2 = 0, sTp3 = 0;
+            LookupSignalTargets(sigId, sTp1, sTp2, sTp3);
+            RegisterTrackedTrade(sigId, t, posId, sym, pType, oPrice, vol, sTp1, sTp2, sTp3);
          }
       }
    }
@@ -2156,6 +2207,7 @@ void FetchAndExecuteSignals()
          double tp1   = NormalizeDouble(StringToDouble(ExtractJsonValue(sigJson, "tp1")), digits);
          double tp2   = NormalizeDouble(StringToDouble(ExtractJsonValue(sigJson, "tp2")), digits);
          double tp3   = NormalizeDouble(StringToDouble(ExtractJsonValue(sigJson, "tp3")), digits);
+         StoreSignalTargets(sigId, targetSymbol, tp1, tp2, tp3);
          
          string timeframe = ExtractJsonValue(sigJson, "timeframe");
          if(timeframe == "") timeframe = "15m";
@@ -2482,262 +2534,332 @@ double GetTrailingDistanceInPrice(string sym, int points)
 }
 
 //+------------------------------------------------------------------+
+//| Safe & Guaranteed Partial Close across any broker filling mode   |
+//+------------------------------------------------------------------+
+bool ClosePositionPartialSafe(ulong ticket, double closeVol, string sym)
+{
+   if(!PositionSelectByTicket(ticket)) return false;
+   long pType = PositionGetInteger(POSITION_TYPE);
+   double price = (pType == POSITION_TYPE_BUY) ? SymbolInfoDouble(sym, SYMBOL_BID) : SymbolInfoDouble(sym, SYMBOL_ASK);
+   if(price <= 0.0) price = PositionGetDouble(POSITION_PRICE_CURRENT);
+
+   trade.SetMarginMode();
+   SetupTradeFillingMode(sym);
+
+   // 1. Try standard CTrade PositionClosePartial first
+   if(trade.PositionClosePartial(ticket, closeVol))
+   {
+      return true;
+   }
+   uint rCode = trade.ResultRetcode();
+   if(rCode == TRADE_RETCODE_DONE || rCode == TRADE_RETCODE_PLACED)
+   {
+      return true;
+   }
+
+   // 2. Direct OrderSend fallback trying all supported filling modes
+   MqlTradeRequest req;
+   MqlTradeResult  res;
+   ZeroMemory(req);
+   ZeroMemory(res);
+
+   req.action    = TRADE_ACTION_DEAL;
+   req.position  = ticket;
+   req.symbol    = sym;
+   req.volume    = closeVol;
+   req.price     = price;
+   req.type      = (pType == POSITION_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
+   req.deviation = 50;
+   req.magic     = InpMagicNumber;
+
+   ENUM_ORDER_TYPE_FILLING fillings[3] = { ORDER_FILLING_IOC, ORDER_FILLING_FOK, ORDER_FILLING_RETURN };
+   for(int f = 0; f < 3; f++)
+   {
+      req.type_filling = fillings[f];
+      if(OrderSend(req, res))
+      {
+         if(res.retcode == TRADE_RETCODE_DONE || res.retcode == TRADE_RETCODE_PLACED)
+         {
+            Print("[MarketAI TP1 Direct Safe] PositionClosePartial reusit cu modul de umplere ", fillings[f], " pe pozitia #", ticket, " (", closeVol, " loturi)!");
+            return true;
+         }
+      }
+      Print("[MarketAI TP1 Direct Safe] OrderSend modul ", fillings[f], " pe pozitia #", ticket, " retcode: ", res.retcode, " (", res.comment, ")");
+   }
+
+   return false;
+}
+
+//+------------------------------------------------------------------+
 //| Manage Active Positions: Auto Break-Even & Smart Trailing Stop   |
 //+------------------------------------------------------------------+
 void ManageActivePositions()
 {
-   string targetSymbol = (InpBrokerSymbol != "") ? InpBrokerSymbol : _Symbol;
-   int digits = (int)SymbolInfoInteger(targetSymbol, SYMBOL_DIGITS);
-   double point = SymbolInfoDouble(targetSymbol, SYMBOL_POINT);
-   double tickSize = SymbolInfoDouble(targetSymbol, SYMBOL_TRADE_TICK_SIZE);
-   if(tickSize <= 0) tickSize = point;
-   double ask = SymbolInfoDouble(targetSymbol, SYMBOL_ASK);
-   double bid = SymbolInfoDouble(targetSymbol, SYMBOL_BID);
-
-   int stopsLevel  = (int)SymbolInfoInteger(targetSymbol, SYMBOL_TRADE_STOPS_LEVEL);
-   int freezeLevel = (int)SymbolInfoInteger(targetSymbol, SYMBOL_TRADE_FREEZE_LEVEL);
-   int spread      = (int)SymbolInfoInteger(targetSymbol, SYMBOL_SPREAD);
-   double minDistance = (MathMax((double)stopsLevel, MathMax((double)freezeLevel, (double)spread)) + 2.0) * point;
-   if(minDistance < 10.0 * point) minDistance = 10.0 * point;
-
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
       ulong ticket = PositionGetTicket(i);
-      if(ticket > 0 && PositionGetInteger(POSITION_MAGIC) == InpMagicNumber && PositionGetString(POSITION_SYMBOL) == targetSymbol)
+      if(ticket <= 0) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+
+      string posSym = PositionGetString(POSITION_SYMBOL);
+      int digits = (int)SymbolInfoInteger(posSym, SYMBOL_DIGITS);
+      if(digits <= 0) digits = _Digits;
+      double point = SymbolInfoDouble(posSym, SYMBOL_POINT);
+      if(point <= 0) point = 0.00001;
+      double tickSize = SymbolInfoDouble(posSym, SYMBOL_TRADE_TICK_SIZE);
+      if(tickSize <= 0) tickSize = point;
+
+      double ask = SymbolInfoDouble(posSym, SYMBOL_ASK);
+      double bid = SymbolInfoDouble(posSym, SYMBOL_BID);
+
+      int stopsLevel  = (int)SymbolInfoInteger(posSym, SYMBOL_TRADE_STOPS_LEVEL);
+      int freezeLevel = (int)SymbolInfoInteger(posSym, SYMBOL_TRADE_FREEZE_LEVEL);
+      int spread      = (int)SymbolInfoInteger(posSym, SYMBOL_SPREAD);
+      double minDistance = (MathMax((double)stopsLevel, MathMax((double)freezeLevel, (double)spread)) + 2.0) * point;
+      if(minDistance < 5.0 * point) minDistance = 5.0 * point;
+
+      double openPrice    = PositionGetDouble(POSITION_PRICE_OPEN);
+      double currentPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
+      double currentSL    = PositionGetDouble(POSITION_SL);
+      double currentTP    = PositionGetDouble(POSITION_TP);
+      double volume       = PositionGetDouble(POSITION_VOLUME);
+      long posType        = PositionGetInteger(POSITION_TYPE);
+      ulong posId         = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
+
+      int tIdx = FindTrackedTradeIndex(posId, ticket);
+      string thisSigId = (tIdx >= 0 && trackedTrades[tIdx].signalId != "") ? trackedTrades[tIdx].signalId : activeSignalId;
+      if(thisSigId == "") thisSigId = ExtractSignalIdFromText(PositionGetString(POSITION_COMMENT));
+
+      double thisTp1 = (tIdx >= 0 && trackedTrades[tIdx].tp1 > 0) ? trackedTrades[tIdx].tp1 : 0.0;
+      double thisTp2 = (tIdx >= 0 && trackedTrades[tIdx].tp2 > 0) ? trackedTrades[tIdx].tp2 : 0.0;
+      if(thisTp1 <= 0.0)
       {
-         double openPrice    = PositionGetDouble(POSITION_PRICE_OPEN);
-         double currentPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
-         double currentSL    = PositionGetDouble(POSITION_SL);
-         double currentTP    = PositionGetDouble(POSITION_TP);
-         double volume       = PositionGetDouble(POSITION_VOLUME);
-         long posType        = PositionGetInteger(POSITION_TYPE);
-         ulong posId         = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
+         double s1 = 0, s2 = 0, s3 = 0;
+         LookupSignalTargets(thisSigId, s1, s2, s3);
+         if(s1 > 0.0) thisTp1 = s1;
+         if(s2 > 0.0) thisTp2 = s2;
+      }
+      bool thisTp1Hit = (tIdx >= 0) ? trackedTrades[tIdx].tp1Hit : false;
+      bool thisTp2Hit = (tIdx >= 0) ? trackedTrades[tIdx].tp2Hit : false;
 
-         int tIdx = FindTrackedTradeIndex(posId, ticket);
-         string thisSigId = (tIdx >= 0 && trackedTrades[tIdx].signalId != "") ? trackedTrades[tIdx].signalId : activeSignalId;
-         double thisTp1 = (tIdx >= 0 && trackedTrades[tIdx].tp1 > 0) ? trackedTrades[tIdx].tp1 : activeTp1;
-         double thisTp2 = (tIdx >= 0 && trackedTrades[tIdx].tp2 > 0) ? trackedTrades[tIdx].tp2 : activeTp2;
-         bool thisTp1Hit = (tIdx >= 0) ? trackedTrades[tIdx].tp1Hit : tp1Hit;
-         bool thisTp2Hit = (tIdx >= 0) ? trackedTrades[tIdx].tp2Hit : tp2Hit;
+      double stepLot = SymbolInfoDouble(posSym, SYMBOL_VOLUME_STEP);
+      if(stepLot <= 0) stepLot = 0.01;
+      int volDigits = (stepLot < 0.1) ? 2 : ((stepLot < 1.0) ? 1 : 0);
 
-         double stepLot = SymbolInfoDouble(targetSymbol, SYMBOL_VOLUME_STEP);
-         if(stepLot <= 0) stepLot = 0.01;
-         int volDigits = (stepLot < 0.1) ? 2 : ((stepLot < 1.0) ? 1 : 0);
+      double origVol = (tIdx >= 0 && trackedTrades[tIdx].volume > 0.0) ? trackedTrades[tIdx].volume : volume;
+      bool hasNotClosedPartialYet = (volume >= (origVol * 0.5));
 
-         // [A] BUY POSITIONS MANAGEMENT
-         if(posType == POSITION_TYPE_BUY)
+      // [A] BUY POSITIONS MANAGEMENT
+      if(posType == POSITION_TYPE_BUY)
+      {
+         double posProfit = PositionGetDouble(POSITION_PROFIT);
+         bool isInProfit = (posProfit > 0.0) && (currentPrice > (openPrice + minDistance));
+
+         if(thisTp1 <= (openPrice + minDistance))
          {
-            double posProfit = PositionGetDouble(POSITION_PROFIT);
-            bool isInProfit = (posProfit > 0.0) && (currentPrice > (openPrice + minDistance));
+            if(currentSL > 0 && currentSL < openPrice)
+               thisTp1 = openPrice + (openPrice - currentSL) * 1.5;
+            else if(currentTP > openPrice)
+               thisTp1 = openPrice + (currentTP - openPrice) * 0.45;
+            else
+               thisTp1 = openPrice + 20 * point;
+         }
 
-            // Resolve TP1 level with fallback to 1.5x SL distance or 45% of TP if activeTp1 not set
-            if(thisTp1 <= (openPrice + minDistance))
+         bool isTp1Reached = (currentPrice >= thisTp1 && thisTp1 > (openPrice + minDistance));
+         bool isSlAlreadyBE = (currentSL >= openPrice);
+
+         // 1. AUTO BREAK-EVEN & TP1 PARTIAL CLOSE (70%)
+         if(isInProfit && isTp1Reached && (!thisTp1Hit || !isSlAlreadyBE || hasNotClosedPartialYet))
+         {
+            if(liveAutoBreakEven)
             {
-               if(currentSL > 0 && currentSL < openPrice)
-                  thisTp1 = openPrice + (openPrice - currentSL) * 1.5;
-               else if(currentTP > openPrice)
-                  thisTp1 = openPrice + (currentTP - openPrice) * 0.45;
-               else
-                  thisTp1 = openPrice + 20 * point;
-            }
-
-            bool isTp1Reached = (currentPrice >= thisTp1 && thisTp1 > (openPrice + minDistance));
-            bool isSlAlreadyBE = (currentSL >= openPrice);
-
-            // 1. AUTO BREAK-EVEN & TP1 PARTIAL CLOSE (70%) - CONTROLLED BY AUTO BREAK-EVEN TOGGLE
-            if(isInProfit && isTp1Reached && (!thisTp1Hit || !isSlAlreadyBE))
-            {
-               if(liveAutoBreakEven)
+               double minLot = SymbolInfoDouble(posSym, SYMBOL_VOLUME_MIN);
+               double targetCloseLot = NormalizeDouble(MathFloor((volume * 0.7) / stepLot) * stepLot, volDigits);
+               if((volume - targetCloseLot) < minLot && volume > minLot)
                {
-                  double minLot = SymbolInfoDouble(targetSymbol, SYMBOL_VOLUME_MIN);
-                  double targetCloseLot = NormalizeDouble(MathFloor((volume * 0.7) / stepLot) * stepLot, volDigits);
-                  if((volume - targetCloseLot) < minLot && volume > minLot)
-                  {
-                     targetCloseLot = volume - minLot;
-                  }
+                  targetCloseLot = volume - minLot;
+               }
 
-                  if(targetCloseLot >= minLot && (volume - targetCloseLot) >= minLot)
+               bool closeSuccess = false;
+               if(hasNotClosedPartialYet && targetCloseLot >= minLot && (volume - targetCloseLot) >= minLot)
+               {
+                  closeSuccess = ClosePositionPartialSafe(ticket, targetCloseLot, posSym);
+                  if(closeSuccess)
                   {
-                     if(trade.PositionClosePartial(ticket, targetCloseLot))
-                     {
-                        Print("[MarketAI TP1] TP1 atins la ", currentPrice, "! Profit: +$", posProfit, ". S-a inchis partial 70% (", targetCloseLot, " loturi din ", volume, ").");
-                     }
-                     else
-                     {
-                        Print("[MarketAI TP1 AVERTISMENT] PositionClosePartial nu a reusit: Cod ", trade.ResultRetcode(), " (", trade.ResultRetcodeDescription(), ")");
-                     }
+                     Print("[MarketAI TP1] TP1 atins la ", currentPrice, "! Profit: +$", posProfit, ". S-a inchis partial 70% (", targetCloseLot, " loturi din ", volume, ").");
                   }
                   else
                   {
-                     Print("[MarketAI TP1] TP1 atins la ", currentPrice, "! Profit: +$", posProfit, ". Volumul (", volume, ") este minim, se muta direct SL la Break-Even.");
+                     Print("[MarketAI TP1 AVERTISMENT] ClosePositionPartialSafe nu a reusit pe pozitia #", ticket, ". Se va reincerca la urmatorul tick.");
                   }
+               }
+               else if(!hasNotClosedPartialYet)
+               {
+                  closeSuccess = true;
+               }
 
-                  // Move SL to Break-Even + 2 points buffer (zero risk + covers spread/fees)
-                  double beSL = NormalizeDouble(openPrice + 2 * point, digits);
-                  if(tickSize > 0) beSL = NormalizeDouble(MathFloor(beSL / tickSize) * tickSize, digits);
-                  if(beSL > currentSL && beSL <= (bid - minDistance))
+               // Move SL to Break-Even + 2 points buffer (zero risk + covers spread/fees)
+               double beSL = NormalizeDouble(openPrice + 2 * point, digits);
+               if(tickSize > 0) beSL = NormalizeDouble(MathFloor(beSL / tickSize) * tickSize, digits);
+               if(beSL > currentSL && beSL <= (bid - minDistance))
+               {
+                  if(trade.PositionModify(ticket, beSL, currentTP))
                   {
-                     if(trade.PositionModify(ticket, beSL, currentTP))
-                     {
-                        Print("[MarketAI BE] SL mutat automat la Break-Even (+2 pct peste Entry): ", beSL, " pe pozitia #", ticket);
-                     }
-                     else
-                     {
-                        Print("[MarketAI BE AVERTISMENT] PositionModify nu a putut muta SL la BE: Cod ", trade.ResultRetcode(), " (", trade.ResultRetcodeDescription(), ")");
-                     }
+                     Print("[MarketAI BE] SL mutat automat la Break-Even (+2 pct peste Entry): ", beSL, " pe pozitia #", ticket);
                   }
+               }
 
+               if(closeSuccess || isSlAlreadyBE)
+               {
                   if(tIdx >= 0) trackedTrades[tIdx].tp1Hit = true;
                   tp1Hit = true;
                   Sleep(100);
                   double exitPr = 0.0;
                   double currentRealized = GetRealizedProfitForPosition(ticket, exitPr);
-                  SendTradeUpdate(thisSigId, "RUNNING", "PROFIT", "TP1_BREAK_EVEN", currentRealized, currentPrice);
+                  SendTradeUpdate(thisSigId, "RUNNING", "TP1_HIT", "TP1_BREAK_EVEN", currentRealized, currentPrice);
                }
             }
-            
-            // 2. TP2 PARTIAL CLOSE (10%) - STRICT PROFIT VERIFICATION
-            if(isInProfit && thisTp1Hit && !thisTp2Hit && thisTp2 > thisTp1 && currentPrice >= thisTp2)
+         }
+         
+         // 2. TP2 PARTIAL CLOSE (10%)
+         if(isInProfit && thisTp1Hit && !thisTp2Hit && thisTp2 > thisTp1 && currentPrice >= thisTp2)
+         {
+            double partialVolume = NormalizeDouble(MathFloor((volume * 0.33) / stepLot) * stepLot, volDigits);
+            if(partialVolume >= SymbolInfoDouble(posSym, SYMBOL_VOLUME_MIN))
             {
-               double partialVolume = NormalizeDouble(MathFloor((volume * 0.1) / stepLot) * stepLot, volDigits);
-               if(partialVolume >= SymbolInfoDouble(targetSymbol, SYMBOL_VOLUME_MIN))
+               if(ClosePositionPartialSafe(ticket, partialVolume, posSym))
                {
-                  if(trade.PositionClosePartial(ticket, partialVolume))
-                  {
-                     if(tIdx >= 0) trackedTrades[tIdx].tp2Hit = true;
-                     tp2Hit = true;
-                     Print("MarketAI: TP2 reached at ", currentPrice, "! Profit: +$", posProfit, ". Closed 10% partial.");
-                     SendTradeUpdate(thisSigId, "RUNNING", "PROFIT", "TP2", 0.0, currentPrice);
-                  }
+                  if(tIdx >= 0) trackedTrades[tIdx].tp2Hit = true;
+                  tp2Hit = true;
+                  Print("MarketAI: TP2 reached at ", currentPrice, "! Profit: +$", posProfit, ". Closed partial.");
+                  SendTradeUpdate(thisSigId, "RUNNING", "TP2_HIT", "TP2", 0.0, currentPrice);
                }
             }
-            
-            // 3. SMART TRAILING STOP
-            if(liveTrailingStop && isInProfit)
+         }
+         
+         // 3. SMART TRAILING STOP
+         if(liveTrailingStop && isInProfit)
+         {
+            double profitPoints = (bid - openPrice) / point;
+            if(profitPoints >= InpTrailTriggerPoints)
             {
-               double profitPoints = (bid - openPrice) / point;
-               if(profitPoints >= InpTrailTriggerPoints)
+               double proposedSL = NormalizeDouble(bid - liveTrailDistancePoints * point, digits);
+               if(proposedSL > (bid - minDistance)) proposedSL = NormalizeDouble(bid - minDistance, digits);
+               if(tickSize > 0) proposedSL = NormalizeDouble(MathFloor(proposedSL / tickSize) * tickSize, digits);
+               
+               if(proposedSL > (currentSL + InpTrailStepPoints * point) && proposedSL > openPrice && proposedSL <= (bid - minDistance))
                {
-                  double proposedSL = NormalizeDouble(bid - liveTrailDistancePoints * point, digits);
-                  if(proposedSL > (bid - minDistance)) proposedSL = NormalizeDouble(bid - minDistance, digits);
-                  if(tickSize > 0) proposedSL = NormalizeDouble(MathFloor(proposedSL / tickSize) * tickSize, digits);
-                  
-                  // Only trail forward in profit above current SL + step, respecting broker distance
-                  if(proposedSL > (currentSL + InpTrailStepPoints * point) && proposedSL > openPrice && proposedSL <= (bid - minDistance))
+                  if(trade.PositionModify(ticket, proposedSL, currentTP))
                   {
-                     if(trade.PositionModify(ticket, proposedSL, currentTP))
-                     {
-                        Print("MarketAI Smart Trailing: SL advanced to ", proposedSL, " (+", (proposedSL - openPrice) / point, " pts profit locked)");
-                     }
+                     Print("MarketAI Smart Trailing: SL advanced to ", proposedSL, " (+", (proposedSL - openPrice) / point, " pts profit locked)");
                   }
                }
             }
          }
-         // [B] SELL POSITIONS MANAGEMENT
-         else if(posType == POSITION_TYPE_SELL)
+      }
+      // [B] SELL POSITIONS MANAGEMENT
+      else if(posType == POSITION_TYPE_SELL)
+      {
+         double posProfit = PositionGetDouble(POSITION_PROFIT);
+         bool isInProfit = (posProfit > 0.0) && (currentPrice < (openPrice - minDistance));
+
+         if(thisTp1 <= 0 || thisTp1 >= (openPrice - minDistance))
          {
-            double posProfit = PositionGetDouble(POSITION_PROFIT);
-            bool isInProfit = (posProfit > 0.0) && (currentPrice < (openPrice - minDistance));
+            if(currentSL > 0 && currentSL > openPrice)
+               thisTp1 = openPrice - (currentSL - openPrice) * 1.5;
+            else if(currentTP > 0 && currentTP < openPrice)
+               thisTp1 = openPrice - (openPrice - currentTP) * 0.45;
+            else
+               thisTp1 = openPrice - 20 * point;
+         }
 
-            // Resolve TP1 level with fallback to 1.5x SL distance or 45% of TP if activeTp1 not set
-            if(thisTp1 <= 0 || thisTp1 >= (openPrice - minDistance))
+         bool isTp1Reached = (currentPrice <= thisTp1 && thisTp1 < (openPrice - minDistance));
+         bool isSlAlreadyBE = (currentSL > 0 && currentSL <= openPrice);
+
+         // 1. AUTO BREAK-EVEN & TP1 PARTIAL CLOSE (70%)
+         if(isInProfit && isTp1Reached && (!thisTp1Hit || !isSlAlreadyBE || hasNotClosedPartialYet))
+         {
+            if(liveAutoBreakEven)
             {
-               if(currentSL > 0 && currentSL > openPrice)
-                  thisTp1 = openPrice - (currentSL - openPrice) * 1.5;
-               else if(currentTP > 0 && currentTP < openPrice)
-                  thisTp1 = openPrice - (openPrice - currentTP) * 0.45;
-               else
-                  thisTp1 = openPrice - 20 * point;
-            }
-
-            bool isTp1Reached = (currentPrice <= thisTp1 && thisTp1 < (openPrice - minDistance));
-            bool isSlAlreadyBE = (currentSL > 0 && currentSL <= openPrice);
-
-            // 1. AUTO BREAK-EVEN & TP1 PARTIAL CLOSE (70%) - CONTROLLED BY AUTO BREAK-EVEN TOGGLE
-            if(isInProfit && isTp1Reached && (!thisTp1Hit || !isSlAlreadyBE))
-            {
-               if(liveAutoBreakEven)
+               double minLot = SymbolInfoDouble(posSym, SYMBOL_VOLUME_MIN);
+               double targetCloseLot = NormalizeDouble(MathFloor((volume * 0.7) / stepLot) * stepLot, volDigits);
+               if((volume - targetCloseLot) < minLot && volume > minLot)
                {
-                  double minLot = SymbolInfoDouble(targetSymbol, SYMBOL_VOLUME_MIN);
-                  double targetCloseLot = NormalizeDouble(MathFloor((volume * 0.7) / stepLot) * stepLot, volDigits);
-                  if((volume - targetCloseLot) < minLot && volume > minLot)
-                  {
-                     targetCloseLot = volume - minLot;
-                  }
+                  targetCloseLot = volume - minLot;
+               }
 
-                  if(targetCloseLot >= minLot && (volume - targetCloseLot) >= minLot)
+               bool closeSuccess = false;
+               if(hasNotClosedPartialYet && targetCloseLot >= minLot && (volume - targetCloseLot) >= minLot)
+               {
+                  closeSuccess = ClosePositionPartialSafe(ticket, targetCloseLot, posSym);
+                  if(closeSuccess)
                   {
-                     if(trade.PositionClosePartial(ticket, targetCloseLot))
-                     {
-                        Print("[MarketAI TP1] TP1 atins la ", currentPrice, "! Profit: +$", posProfit, ". S-a inchis partial 70% (", targetCloseLot, " loturi din ", volume, ").");
-                     }
-                     else
-                     {
-                        Print("[MarketAI TP1 AVERTISMENT] PositionClosePartial nu a reusit: Cod ", trade.ResultRetcode(), " (", trade.ResultRetcodeDescription(), ")");
-                     }
+                     Print("[MarketAI TP1] TP1 atins la ", currentPrice, "! Profit: +$", posProfit, ". S-a inchis partial 70% (", targetCloseLot, " loturi din ", volume, ").");
                   }
                   else
                   {
-                     Print("[MarketAI TP1] TP1 atins la ", currentPrice, "! Profit: +$", posProfit, ". Volumul (", volume, ") este minim, se muta direct SL la Break-Even.");
+                     Print("[MarketAI TP1 AVERTISMENT] ClosePositionPartialSafe nu a reusit pe pozitia #", ticket, ". Se va reincerca la urmatorul tick.");
                   }
+               }
+               else if(!hasNotClosedPartialYet)
+               {
+                  closeSuccess = true;
+               }
 
-                  // Move SL to Break-Even - 2 points buffer (zero risk + covers spread/fees)
-                  double beSL = NormalizeDouble(openPrice - 2 * point, digits);
-                  if(tickSize > 0) beSL = NormalizeDouble(MathCeil(beSL / tickSize) * tickSize, digits);
-                  if((currentSL == 0 || beSL < currentSL) && beSL >= (ask + minDistance))
+               // Move SL to Break-Even - 2 points buffer (zero risk + covers spread/fees)
+               double beSL = NormalizeDouble(openPrice - 2 * point, digits);
+               if(tickSize > 0) beSL = NormalizeDouble(MathCeil(beSL / tickSize) * tickSize, digits);
+               if((currentSL == 0 || beSL < currentSL) && beSL >= (ask + minDistance))
+               {
+                  if(trade.PositionModify(ticket, beSL, currentTP))
                   {
-                     if(trade.PositionModify(ticket, beSL, currentTP))
-                     {
-                        Print("[MarketAI BE] SL mutat automat la Break-Even (-2 pct sub Entry): ", beSL, " pe pozitia #", ticket);
-                     }
-                     else
-                     {
-                        Print("[MarketAI BE AVERTISMENT] PositionModify nu a putut muta SL la BE: Cod ", trade.ResultRetcode(), " (", trade.ResultRetcodeDescription(), ")");
-                     }
+                     Print("[MarketAI BE] SL mutat automat la Break-Even (-2 pct sub Entry): ", beSL, " pe pozitia #", ticket);
                   }
+               }
 
+               if(closeSuccess || isSlAlreadyBE)
+               {
                   if(tIdx >= 0) trackedTrades[tIdx].tp1Hit = true;
                   tp1Hit = true;
                   Sleep(100);
                   double exitPr = 0.0;
                   double currentRealized = GetRealizedProfitForPosition(ticket, exitPr);
-                  SendTradeUpdate(thisSigId, "RUNNING", "PROFIT", "TP1_BREAK_EVEN", currentRealized, currentPrice);
+                  SendTradeUpdate(thisSigId, "RUNNING", "TP1_HIT", "TP1_BREAK_EVEN", currentRealized, currentPrice);
                }
             }
-            
-            // 2. TP2 PARTIAL CLOSE (10%) - STRICT PROFIT VERIFICATION
-            if(isInProfit && thisTp1Hit && !thisTp2Hit && thisTp2 < thisTp1 && currentPrice <= thisTp2)
+         }
+         
+         // 2. TP2 PARTIAL CLOSE (10%)
+         if(isInProfit && thisTp1Hit && !thisTp2Hit && thisTp2 < thisTp1 && currentPrice <= thisTp2)
+         {
+            double partialVolume = NormalizeDouble(MathFloor((volume * 0.33) / stepLot) * stepLot, volDigits);
+            if(partialVolume >= SymbolInfoDouble(posSym, SYMBOL_VOLUME_MIN))
             {
-               double partialVolume = NormalizeDouble(MathFloor((volume * 0.1) / stepLot) * stepLot, volDigits);
-               if(partialVolume >= SymbolInfoDouble(targetSymbol, SYMBOL_VOLUME_MIN))
+               if(ClosePositionPartialSafe(ticket, partialVolume, posSym))
                {
-                  if(trade.PositionClosePartial(ticket, partialVolume))
-                  {
-                     if(tIdx >= 0) trackedTrades[tIdx].tp2Hit = true;
-                     tp2Hit = true;
-                     Print("MarketAI: TP2 reached at ", currentPrice, "! Profit: +$", posProfit, ". Closed 10% partial.");
-                     SendTradeUpdate(thisSigId, "RUNNING", "PROFIT", "TP2", 0.0, currentPrice);
-                  }
+                  if(tIdx >= 0) trackedTrades[tIdx].tp2Hit = true;
+                  tp2Hit = true;
+                  Print("MarketAI: TP2 reached at ", currentPrice, "! Profit: +$", posProfit, ". Closed partial.");
+                  SendTradeUpdate(thisSigId, "RUNNING", "TP2_HIT", "TP2", 0.0, currentPrice);
                }
             }
-            
-            // 3. SMART TRAILING STOP
-            if(liveTrailingStop && isInProfit)
+         }
+         
+         // 3. SMART TRAILING STOP
+         if(liveTrailingStop && isInProfit)
+         {
+            double profitPoints = (openPrice - ask) / point;
+            if(profitPoints >= InpTrailTriggerPoints)
             {
-               double profitPoints = (openPrice - ask) / point;
-               if(profitPoints >= InpTrailTriggerPoints)
+               double proposedSL = NormalizeDouble(ask + liveTrailDistancePoints * point, digits);
+               if(proposedSL < (ask + minDistance)) proposedSL = NormalizeDouble(ask + minDistance, digits);
+               if(tickSize > 0) proposedSL = NormalizeDouble(MathCeil(proposedSL / tickSize) * tickSize, digits);
+               
+               if((currentSL == 0 || proposedSL < (currentSL - InpTrailStepPoints * point)) && proposedSL < openPrice && proposedSL >= (ask + minDistance))
                {
-                  double proposedSL = NormalizeDouble(ask + liveTrailDistancePoints * point, digits);
-                  if(proposedSL < (ask + minDistance)) proposedSL = NormalizeDouble(ask + minDistance, digits);
-                  if(tickSize > 0) proposedSL = NormalizeDouble(MathCeil(proposedSL / tickSize) * tickSize, digits);
-                  
-                  // Only trail downwards in profit below current SL - step, respecting broker distance
-                  if((currentSL == 0 || proposedSL < (currentSL - InpTrailStepPoints * point)) && proposedSL < openPrice && proposedSL >= (ask + minDistance))
+                  if(trade.PositionModify(ticket, proposedSL, currentTP))
                   {
-                     if(trade.PositionModify(ticket, proposedSL, currentTP))
-                     {
-                        Print("MarketAI Smart Trailing: SL advanced to ", proposedSL, " (+", (openPrice - proposedSL) / point, " pts profit locked)");
-                     }
+                     Print("MarketAI Smart Trailing: SL advanced to ", proposedSL, " (+", (openPrice - proposedSL) / point, " pts profit locked)");
                   }
                }
             }

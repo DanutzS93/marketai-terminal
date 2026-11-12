@@ -7616,11 +7616,13 @@ app.all(['/api/mt5/signals', '/api/mt5/signals/poll'], (req, res) => {
         if (!isNaN(numPrice) && numPrice > 0) {
           matchedSig.currentMarketPrice = numPrice;
         }
-        if (matchedSig.status !== 'RUNNING' && matchedSig.status !== 'CLOSED' && matchedSig.outcomeStatus !== 'SL_HIT' && matchedSig.outcomeStatus !== 'TP3_HIT') {
+        if (matchedSig.status !== 'RUNNING' && matchedSig.status !== 'CLOSED') {
           matchedSig.status = 'RUNNING';
-          matchedSig.outcomeStatus = 'RUNNING';
-          matchedSig.isEntryTriggered = true;
         }
+        if (matchedSig.outcomeStatus !== 'RUNNING' && !['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT', 'CANCELLED'].includes(matchedSig.outcomeStatus)) {
+          matchedSig.outcomeStatus = 'RUNNING';
+        }
+        matchedSig.isEntryTriggered = true;
       }
     }
   }
@@ -8075,7 +8077,7 @@ app.post('/api/mt5/account', async (req, res) => {
               sig.status = 'RUNNING';
               sChanged = true;
             }
-            if (sig.outcomeStatus !== 'RUNNING' && !['TP1_HIT', 'TP2_HIT'].includes(sig.outcomeStatus)) {
+            if (sig.outcomeStatus !== 'RUNNING' && !['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT', 'CANCELLED'].includes(sig.outcomeStatus)) {
               sig.outcomeStatus = 'RUNNING';
               sChanged = true;
             }
@@ -8469,16 +8471,26 @@ app.post('/api/mt5/update', async (req, res) => {
           const isMarket = target.executionType && target.executionType.toUpperCase().includes('MARKET');
           const fallbackOutcome = (isMarket || target.isEntryTriggered) ? 'RUNNING' : 'PENDING';
           let effOutcome = outcomeStatus || target.outcomeStatus;
-          if (isTradeCancel) {
+          if (milestone === 'TP1_BREAK_EVEN' || milestone === 'TP1' || outcomeStatus === 'TP1_HIT') {
+            effOutcome = 'TP1_HIT';
+            target.firstHitMilestone = target.firstHitMilestone || 'TP1';
+          } else if (milestone === 'TP2' || outcomeStatus === 'TP2_HIT') {
+            effOutcome = 'TP2_HIT';
+            target.firstHitMilestone = target.firstHitMilestone || 'TP2';
+          } else if (isTradeCancel) {
             effOutcome = 'CANCELLED';
           } else if (isTradeManualClose) {
             effOutcome = target.pnl !== undefined && target.pnl > 0 ? 'MANUAL_PROFIT' : (target.pnl !== undefined && target.pnl < 0 ? 'MANUAL_LOSS' : 'MANUAL_BE');
           } else if (isTpOrSlOutcome) {
             effOutcome = outcomeStatus || target.outcomeStatus;
           } else if (!effOutcome || effOutcome === 'OPENED' || effOutcome === 'PROFIT') {
-            effOutcome = target.status === 'CLOSED'
-              ? (target.pnl !== undefined && target.pnl > 0 ? 'TP1_HIT' : target.pnl !== undefined && target.pnl < 0 ? 'SL_HIT' : fallbackOutcome)
-              : fallbackOutcome;
+            if (['TP1_HIT', 'TP2_HIT'].includes(target.outcomeStatus)) {
+              effOutcome = target.outcomeStatus;
+            } else {
+              effOutcome = target.status === 'CLOSED'
+                ? (target.pnl !== undefined && target.pnl > 0 ? 'TP1_HIT' : target.pnl !== undefined && target.pnl < 0 ? 'SL_HIT' : fallbackOutcome)
+                : fallbackOutcome;
+            }
           }
           if (target.outcomeStatus !== effOutcome) {
             target.outcomeStatus = effOutcome;
