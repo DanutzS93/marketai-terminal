@@ -184,9 +184,9 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <header className="sticky top-0 z-40 shadow-[0_10px_35px_rgba(0,0,0,0.6)] backdrop-blur-2xl">
+    <header className={`sticky top-0 shadow-[0_10px_35px_rgba(0,0,0,0.6)] backdrop-blur-2xl ${isMenuOpen ? 'z-50' : 'z-40'}`}>
       {/* Top Navbar in Liquid Frosted Glass */}
-      <div className="bg-[#0B1326]/75 backdrop-blur-2xl text-white px-4 sm:px-6 py-2.5 border-b border-white/10 flex items-center justify-between gap-3 shadow-2xl relative">
+      <div className="bg-[#0B1326]/75 backdrop-blur-2xl text-white px-4 sm:px-6 py-2.5 border-b border-white/10 flex items-center justify-between gap-3 shadow-2xl relative z-50">
         {/* Subtle top edge specular reflection */}
         <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none" />
 
@@ -573,7 +573,7 @@ export const Header: React.FC<HeaderProps> = ({
       <nav
         id="mobile-navigation-row"
         aria-label={lang === 'ro' ? 'Rând Navigare Mobil' : 'Mobile Navigation Bar'}
-        className="lg:hidden bg-[#070D1A]/90 backdrop-blur-xl border-b border-white/10 px-2.5 py-2 overflow-x-auto no-scrollbar flex items-center gap-1.5 shadow-inner select-none"
+        className="lg:hidden bg-[#070D1A]/90 backdrop-blur-xl border-b border-white/10 px-2.5 py-2 overflow-x-auto no-scrollbar flex items-center gap-1.5 shadow-inner select-none relative z-10"
       >
         {navItems.map((item) => {
           const isActive = activeTab === item.id;
@@ -611,7 +611,7 @@ export const Header: React.FC<HeaderProps> = ({
       {/* SECOND HEADER BAR: TRADING ACCOUNTS & AUTOMATED BRIDGES (Centered) */}
       <div
         id="trading-bridges-subbar"
-        className="bg-[#080E1E]/95 backdrop-blur-2xl border-b border-white/10 px-3 sm:px-6 py-2 shadow-[0_4px_20px_rgba(0,0,0,0.4)] flex items-center justify-center gap-2.5 sm:gap-4 flex-wrap relative z-20 select-none"
+        className="bg-[#080E1E]/95 backdrop-blur-2xl border-b border-white/10 px-3 sm:px-6 py-2 shadow-[0_4px_20px_rgba(0,0,0,0.4)] flex items-center justify-center gap-2.5 sm:gap-4 flex-wrap relative z-10 select-none"
       >
         {/* MT5 Account Pill with Live Balance & Equity */}
         <button
@@ -715,7 +715,7 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
 
       {/* Sub-Header Live Market Ticker in Frosted Liquid Glass */}
-      <div className="bg-[#070D18]/90 backdrop-blur-2xl border-b border-white/10 px-3 sm:px-4 py-1.5 text-xs flex items-center justify-between overflow-x-auto gap-4 shadow-inner text-slate-200">
+      <div className="bg-[#070D18]/90 backdrop-blur-2xl border-b border-white/10 px-3 sm:px-4 py-1.5 text-xs flex items-center justify-between overflow-x-auto no-scrollbar gap-4 shadow-inner text-slate-200 relative z-0">
         <div className="flex items-center gap-3 sm:gap-6 min-w-max">
           <div className="flex items-center gap-2 font-mono select-none">
             {/* Glowing & Pulsing Blue Dot with Ping Halo */}
