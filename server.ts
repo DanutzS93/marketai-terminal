@@ -7984,6 +7984,38 @@ app.post('/api/mt5/account', async (req, res) => {
       const currentOrderSigIds = new Set(orders.map((o: any) => String(o?.signalId || '')));
       const currentPosSigIds = new Set((positions || []).map((p: any) => String(p?.signalId || '')));
 
+      // Signals actively waiting as pending limit/stop orders in MT5
+      if (Array.isArray(matchedUser.signals)) {
+        for (const ord of orders) {
+          if (!ord || !ord.signalId) continue;
+          const s = matchedUser.signals.find((sig: any) => String(sig.id) === String(ord.signalId) || String(sig.signal_id) === String(ord.signalId));
+          if (s) {
+            let sChanged = false;
+            if (s.status !== 'ACTIVE' && s.status !== 'PENDING') {
+              s.status = 'ACTIVE';
+              sChanged = true;
+            }
+            if (s.outcomeStatus !== 'PENDING') {
+              s.outcomeStatus = 'PENDING';
+              sChanged = true;
+            }
+            if (s.isEntryTriggered) {
+              s.isEntryTriggered = false;
+              sChanged = true;
+            }
+            if (s.isManualClose || s.closedManually || s.realizedProfit !== undefined || s.closedAt || s.pnl !== undefined) {
+              delete s.isManualClose;
+              delete s.closedManually;
+              delete s.realizedProfit;
+              delete s.closedAt;
+              s.pnl = undefined;
+              sChanged = true;
+            }
+            if (sChanged) didChange = true;
+          }
+        }
+      }
+
       for (const oldO of prevOrders) {
         if (!oldO || !oldO.signalId) continue;
         const oldSigId = String(oldO.signalId);
@@ -8010,6 +8042,60 @@ app.post('/api/mt5/account', async (req, res) => {
       matchedUser.mt5OpenPositions = positions;
       didChange = true;
 
+      // Signals actively open in MT5
+      if (Array.isArray(matchedUser.signals)) {
+        for (const pos of positions) {
+          if (!pos) continue;
+          let sig: any = null;
+          if (pos.signalId) {
+            sig = matchedUser.signals.find((s: any) => 
+              String(s.id) === String(pos.signalId) || 
+              String(s.signal_id) === String(pos.signalId)
+            );
+          }
+          if (!sig && pos.symbol) {
+            sig = matchedUser.signals.find((s: any) => 
+              (s.isEntryTriggered || (s.executionType && s.executionType.toUpperCase().includes('MARKET'))) &&
+              (s.status === 'RUNNING' || s.status === 'ACTIVE' || !s.status) &&
+              symbolsMatch(s.instrumentId, s.symbol, pos.symbol)
+            );
+          }
+          if (sig) {
+            let sChanged = false;
+            const pProfit = Number(pos.profit);
+            if (!isNaN(pProfit) && sig.liveProfit !== pProfit) {
+              sig.liveProfit = pProfit;
+              sChanged = true;
+            }
+            if (pos.currentPrice && Number(pos.currentPrice) > 0 && sig.currentMarketPrice !== Number(pos.currentPrice)) {
+              sig.currentMarketPrice = Number(pos.currentPrice);
+              sChanged = true;
+            }
+            if (sig.status !== 'RUNNING') {
+              sig.status = 'RUNNING';
+              sChanged = true;
+            }
+            if (sig.outcomeStatus !== 'RUNNING' && !['TP1_HIT', 'TP2_HIT'].includes(sig.outcomeStatus)) {
+              sig.outcomeStatus = 'RUNNING';
+              sChanged = true;
+            }
+            if (!sig.isEntryTriggered) {
+              sig.isEntryTriggered = true;
+              sChanged = true;
+            }
+            if (sig.isManualClose || sig.closedManually || sig.realizedProfit !== undefined || sig.closedAt) {
+              delete sig.isManualClose;
+              delete sig.closedManually;
+              delete sig.realizedProfit;
+              delete sig.closedAt;
+              sig.pnl = undefined;
+              sChanged = true;
+            }
+            if (sChanged) didChange = true;
+          }
+        }
+      }
+
       // Detect positions that were open in the previous sync but are now closed in MT5
       const currentPosSigIds = new Set(positions.map((p: any) => String(p?.signalId || '')));
       for (const oldP of prevPositions) {
@@ -8021,12 +8107,18 @@ app.post('/api/mt5/account', async (req, res) => {
             if (closedSig && closedSig.status !== 'CLOSED') {
               closedSig.status = 'CLOSED';
               closedSig.closedAt = closedSig.closedAt || new Date().toISOString();
-              closedSig.isManualClose = true;
-              closedSig.closedManually = true;
               const pNum = Number(oldP.profit) || closedSig.liveProfit || closedSig.pnl || 0;
               closedSig.pnl = Math.round(pNum * 100) / 100;
               closedSig.realizedProfit = closedSig.pnl;
-              closedSig.outcomeStatus = closedSig.pnl > 0 ? 'MANUAL_PROFIT' : (closedSig.pnl < 0 ? 'MANUAL_LOSS' : 'MANUAL_BE');
+
+              const isAlreadyTpOrSl = ['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT'].includes(closedSig.outcomeStatus);
+              if (!isAlreadyTpOrSl) {
+                if (closedSig.isManualClose === true || closedSig.closedManually === true) {
+                  closedSig.outcomeStatus = closedSig.pnl > 0 ? 'MANUAL_PROFIT' : (closedSig.pnl < 0 ? 'MANUAL_LOSS' : 'MANUAL_BE');
+                } else {
+                  closedSig.outcomeStatus = closedSig.pnl > 0 ? 'TP1_HIT' : (closedSig.pnl < 0 ? 'SL_HIT' : 'BREAKEVEN');
+                }
+              }
               didChange = true;
 
               // Reconcile into Trade Journal
@@ -8038,20 +8130,38 @@ app.post('/api/mt5/account', async (req, res) => {
                 matchedUser.tradeJournal = matchedUser.tradeJournal || [];
                 const jEntry = matchedUser.tradeJournal.find((j: any) => j.linkedSignalId === closedSig.id || j.id === `sig_journal_${closedSig.id}`);
                 const finalJStatus: 'WIN' | 'LOSS' | 'BREAKEVEN' = closedSig.pnl > 0 ? 'WIN' : (closedSig.pnl < 0 ? 'LOSS' : 'BREAKEVEN');
-                const finalJLabel = closedSig.pnl > 0
-                  ? `Închis manual cu profit: +$${closedSig.pnl.toFixed(2)} ✋`
-                  : closedSig.pnl < 0
-                  ? `Închis manual cu pierdere: -$${Math.abs(closedSig.pnl).toFixed(2)} ✋`
-                  : 'Închis manual la BE ($0.00) ✋';
-                const finalJNotes = `Închis manual direct din MT5 (${accountNumber || matchedUser.mt5AccountNumber || ''}) cu ${closedSig.pnl >= 0 ? 'profit: +$' + closedSig.pnl.toFixed(2) : 'pierdere: -$' + Math.abs(closedSig.pnl).toFixed(2)}`;
+                const isExplicitClose = closedSig.isManualClose === true || closedSig.closedManually === true;
+                const finalJLabel = isExplicitClose
+                  ? (closedSig.pnl > 0
+                    ? `Închis manual cu profit: +$${closedSig.pnl.toFixed(2)} ✋`
+                    : closedSig.pnl < 0
+                    ? `Închis manual cu pierdere: -$${Math.abs(closedSig.pnl).toFixed(2)} ✋`
+                    : 'Închis manual la BE ($0.00) ✋')
+                  : (closedSig.outcomeStatus === 'TP3_HIT'
+                    ? `TP3 Max Hit (+$${closedSig.pnl.toFixed(2)}) 💎`
+                    : closedSig.outcomeStatus === 'TP2_HIT'
+                    ? `TP2 Hit (+$${closedSig.pnl.toFixed(2)}) 🚀`
+                    : closedSig.outcomeStatus === 'TP1_HIT'
+                    ? `TP1 Securizat (+$${closedSig.pnl.toFixed(2)}) 🎯`
+                    : closedSig.pnl > 0
+                    ? `Profit Broker (+$${closedSig.pnl.toFixed(2)})`
+                    : closedSig.pnl < 0
+                    ? `Stop Loss (-$${Math.abs(closedSig.pnl).toFixed(2)}) 🛑`
+                    : 'Break-Even ($0.00)');
+
+                const finalJNotes = isExplicitClose
+                  ? `Închis manual direct din MT5 (${accountNumber || matchedUser.mt5AccountNumber || ''}) cu ${closedSig.pnl >= 0 ? 'profit: +$' + closedSig.pnl.toFixed(2) : 'pierdere: -$' + Math.abs(closedSig.pnl).toFixed(2)}`
+                  : `Actualizat prin conexiunea MT5 (${accountNumber || matchedUser.mt5AccountNumber || ''}) | Outcome: ${closedSig.outcomeStatus}`;
 
                 if (jEntry) {
                   jEntry.pnl = closedSig.pnl;
                   jEntry.status = finalJStatus;
                   jEntry.outcomeLabel = finalJLabel;
                   jEntry.notes = finalJNotes;
-                  jEntry.isManualClose = true;
-                  jEntry.closedManually = true;
+                  if (isExplicitClose) {
+                    jEntry.isManualClose = true;
+                    jEntry.closedManually = true;
+                  }
                   jEntry.closedAt = closedSig.closedAt;
                 } else {
                   const isBuy = (closedSig.type || '').toUpperCase().includes('BUY');
@@ -8078,8 +8188,8 @@ app.post('/api/mt5/account', async (req, res) => {
                     timeframe: closedSig.timeframe,
                     linkedSignalId: closedSig.id,
                     isManual: false,
-                    isManualClose: true,
-                    closedManually: true,
+                    isManualClose: isExplicitClose,
+                    closedManually: isExplicitClose,
                     generatedAt: closedSig.createdAt,
                     closedAt: closedSig.closedAt,
                     createdAt: closedSig.createdAt,
@@ -8087,41 +8197,6 @@ app.post('/api/mt5/account', async (req, res) => {
                 }
               }
             }
-          }
-        }
-      }
-
-      if (Array.isArray(matchedUser.signals)) {
-        for (const pos of positions) {
-          if (!pos) continue;
-          let sig: any = null;
-          if (pos.signalId) {
-            sig = matchedUser.signals.find((s: any) => 
-              String(s.id) === String(pos.signalId) || 
-              String(s.signal_id) === String(pos.signalId)
-            );
-          }
-          if (!sig && pos.symbol) {
-            sig = matchedUser.signals.find((s: any) => 
-              (s.isEntryTriggered || (s.executionType && s.executionType.toUpperCase().includes('MARKET'))) &&
-              (s.status === 'RUNNING' || s.status === 'ACTIVE' || !s.status) &&
-              symbolsMatch(s.instrumentId, s.symbol, pos.symbol)
-            );
-          }
-          if (sig) {
-            const pProfit = Number(pos.profit);
-            if (!isNaN(pProfit)) {
-              sig.liveProfit = pProfit;
-            }
-            if (pos.currentPrice && Number(pos.currentPrice) > 0) {
-              sig.currentMarketPrice = Number(pos.currentPrice);
-            }
-            if (sig.status !== 'RUNNING' && sig.status !== 'CLOSED' && sig.outcomeStatus !== 'SL_HIT' && sig.outcomeStatus !== 'TP3_HIT') {
-              sig.status = 'RUNNING';
-              sig.outcomeStatus = 'RUNNING';
-              sig.isEntryTriggered = true;
-            }
-            didChange = true;
           }
         }
       }
@@ -8321,25 +8396,14 @@ app.post('/api/mt5/update', async (req, res) => {
           if (!target.mt5Placed) { target.mt5Placed = true; didChange = true; }
           target.mt5PlacedAt = target.mt5PlacedAt || new Date().toISOString();
           target.accountSource = 'MT5';
-          if (incomingPnl !== undefined && !isNaN(Number(incomingPnl))) {
-            const roundedPnl = Math.round(Number(incomingPnl) * 100) / 100;
-            if (target.pnl !== roundedPnl) {
-              target.pnl = roundedPnl;
-              target.realizedProfit = roundedPnl;
-              didChange = true;
-            }
-          }
-          if (exitPrice !== undefined && !isNaN(Number(exitPrice)) && Number(exitPrice) > 0) {
-            if (target.exitPrice !== Number(exitPrice)) {
-              target.exitPrice = Number(exitPrice);
-              didChange = true;
-            }
-          }
+          const isTpOrSlOutcome = ['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT'].includes(outcomeStatus || target.outcomeStatus);
           const isTradeCancel = status === 'CANCELLED' || milestone === 'MANUAL_CANCEL';
-          const isTradeManualClose = isManualClose === true || 
+          const isTradeManualClose = !isTpOrSlOutcome && (
+            isManualClose === true || 
             milestone === 'MANUAL_CLOSE' || 
             (typeof outcomeStatus === 'string' && outcomeStatus.startsWith('MANUAL_')) ||
-            isTradeCancel;
+            isTradeCancel
+          );
 
           if (isTradeCancel) {
             target.status = 'CANCELLED';
@@ -8369,6 +8433,39 @@ app.post('/api/mt5/update', async (req, res) => {
             target.status = status;
             didChange = true;
           }
+
+          if (outcomeStatus === 'PENDING' || milestone === 'PENDING_PLACED') {
+            target.status = 'ACTIVE';
+            target.outcomeStatus = 'PENDING';
+            target.isEntryTriggered = false;
+            delete target.realizedProfit;
+            delete target.isManualClose;
+            delete target.closedManually;
+            delete target.closedAt;
+            target.pnl = undefined;
+            didChange = true;
+          }
+
+          if (incomingPnl !== undefined && !isNaN(Number(incomingPnl))) {
+            const roundedPnl = Math.round(Number(incomingPnl) * 100) / 100;
+            if (target.status === 'CLOSED' || target.status === 'CANCELLED' || isTradeManualClose || milestone === 'POSITION_CLOSED') {
+              if (target.pnl !== roundedPnl) {
+                target.pnl = roundedPnl;
+                target.realizedProfit = roundedPnl;
+                didChange = true;
+              }
+            } else if (roundedPnl !== 0) {
+              target.liveProfit = roundedPnl;
+              didChange = true;
+            }
+          }
+          if (exitPrice !== undefined && !isNaN(Number(exitPrice)) && Number(exitPrice) > 0) {
+            if (target.exitPrice !== Number(exitPrice)) {
+              target.exitPrice = Number(exitPrice);
+              didChange = true;
+            }
+          }
+
           const isMarket = target.executionType && target.executionType.toUpperCase().includes('MARKET');
           const fallbackOutcome = (isMarket || target.isEntryTriggered) ? 'RUNNING' : 'PENDING';
           let effOutcome = outcomeStatus || target.outcomeStatus;
@@ -8376,8 +8473,12 @@ app.post('/api/mt5/update', async (req, res) => {
             effOutcome = 'CANCELLED';
           } else if (isTradeManualClose) {
             effOutcome = target.pnl !== undefined && target.pnl > 0 ? 'MANUAL_PROFIT' : (target.pnl !== undefined && target.pnl < 0 ? 'MANUAL_LOSS' : 'MANUAL_BE');
-          } else if (!effOutcome) {
-            effOutcome = (target.pnl !== undefined && target.pnl > 0 ? 'TP1_HIT' : target.pnl !== undefined && target.pnl < 0 ? 'SL_HIT' : fallbackOutcome);
+          } else if (isTpOrSlOutcome) {
+            effOutcome = outcomeStatus || target.outcomeStatus;
+          } else if (!effOutcome || effOutcome === 'OPENED' || effOutcome === 'PROFIT') {
+            effOutcome = target.status === 'CLOSED'
+              ? (target.pnl !== undefined && target.pnl > 0 ? 'TP1_HIT' : target.pnl !== undefined && target.pnl < 0 ? 'SL_HIT' : fallbackOutcome)
+              : fallbackOutcome;
           }
           if (target.outcomeStatus !== effOutcome) {
             target.outcomeStatus = effOutcome;

@@ -636,35 +636,34 @@ export function evaluateSignalOutcome(
   const currentStatus = (sig.outcomeStatus as string) || 'PENDING';
 
   // 1. Terminal states check (CANCELLED, TP3_HIT, SL_HIT, MANUAL_*, CLOSED can NEVER change back to PENDING/RUNNING)
+  const isExplicitManual = sig.isManualClose === true || sig.closedManually === true || currentStatus.startsWith('MANUAL_');
   const isTerminal =
-    sig.status === 'CLOSED' ||
-    sig.status === 'CANCELLED' ||
-    sig.isManualClose === true ||
-    sig.closedManually === true ||
-    sig.realizedProfit !== undefined ||
-    sig.closedAt !== undefined ||
     currentStatus === 'CANCELLED' ||
     currentStatus === 'TP3_HIT' ||
     currentStatus === 'SL_HIT' ||
-    currentStatus === 'CLOSED' ||
-    currentStatus.startsWith('MANUAL_');
+    currentStatus.startsWith('MANUAL_') ||
+    (sig.status === 'CANCELLED') ||
+    (isExplicitManual && (sig.status === 'CLOSED' || sig.closedAt !== undefined));
 
   if (isTerminal) {
     let finalOutcome = currentStatus;
     if (finalOutcome === 'PENDING' || finalOutcome === 'RUNNING' || finalOutcome === 'CLOSED' || !finalOutcome) {
       if (sig.status === 'CANCELLED') {
         finalOutcome = 'CANCELLED';
-      } else {
+      } else if (isExplicitManual) {
         const prof = sig.realizedProfit !== undefined ? sig.realizedProfit : sig.pnl;
         if (prof !== undefined && prof > 0) finalOutcome = 'MANUAL_PROFIT';
         else if (prof !== undefined && prof < 0) finalOutcome = 'MANUAL_LOSS';
         else if (prof !== undefined && prof === 0) finalOutcome = 'MANUAL_BE';
         else finalOutcome = 'MANUAL_CLOSED';
+      } else {
+        const prof = sig.realizedProfit !== undefined ? sig.realizedProfit : sig.pnl;
+        finalOutcome = (prof !== undefined && prof > 0) ? 'TP1_HIT' : ((prof !== undefined && prof < 0) ? 'SL_HIT' : 'CANCELLED');
       }
     }
     return {
       outcomeStatus: finalOutcome as any,
-      firstHitMilestone: sig.firstHitMilestone || (finalOutcome === 'SL_HIT' ? 'SL' : finalOutcome === 'CANCELLED' ? 'CANCELLED' : 'MANUAL_CLOSE'),
+      firstHitMilestone: sig.firstHitMilestone || (finalOutcome === 'SL_HIT' ? 'SL' : finalOutcome === 'CANCELLED' ? 'CANCELLED' : (isExplicitManual ? 'MANUAL_CLOSE' : 'TP1')),
       isEntryTriggered: sig.isEntryTriggered ?? (finalOutcome !== 'CANCELLED' && finalOutcome !== 'PENDING'),
       isBeHitAfterTp1: sig.isBeHitAfterTp1,
       isBeHitAfterTp2: sig.isBeHitAfterTp2,
@@ -898,6 +897,8 @@ export function getEffectiveOutcomeStatus(sigOrStatus?: string | Partial<Trading
   const currentOutcome = (sig.outcomeStatus as string) || '';
   const isTerminalOutcome =
     currentOutcome === 'CANCELLED' ||
+    currentOutcome === 'TP1_HIT' ||
+    currentOutcome === 'TP2_HIT' ||
     currentOutcome === 'TP3_HIT' ||
     currentOutcome === 'SL_HIT' ||
     currentOutcome.startsWith('MANUAL_');
@@ -906,15 +907,20 @@ export function getEffectiveOutcomeStatus(sigOrStatus?: string | Partial<Trading
     return currentOutcome;
   }
 
-  const isClosed =
-    sig.status === 'CLOSED' ||
-    sig.status === 'CANCELLED' ||
-    sig.isManualClose === true ||
-    sig.closedManually === true ||
-    sig.realizedProfit !== undefined ||
-    sig.closedAt !== undefined;
+  // Pending limit/stop order check (not triggered into market)
+  const isPending =
+    (currentOutcome === 'PENDING' || !currentOutcome) &&
+    !sig.isEntryTriggered &&
+    sig.status !== 'CLOSED' &&
+    sig.status !== 'CANCELLED';
 
-  if (isClosed) {
+  if (isPending) {
+    return 'PENDING';
+  }
+
+  // Explicit manual close check
+  const isExplicitManual = sig.isManualClose === true || sig.closedManually === true || currentOutcome.startsWith('MANUAL_');
+  if (isExplicitManual && (sig.status === 'CLOSED' || sig.status === 'CANCELLED' || sig.closedAt !== undefined)) {
     if (sig.status === 'CANCELLED') return 'CANCELLED';
     const prof = sig.realizedProfit !== undefined ? sig.realizedProfit : sig.pnl;
     if (prof !== undefined && prof > 0) return 'MANUAL_PROFIT';
@@ -923,7 +929,19 @@ export function getEffectiveOutcomeStatus(sigOrStatus?: string | Partial<Trading
     return 'MANUAL_CLOSED';
   }
 
-  return currentOutcome || ((sig.status as string) === 'RUNNING' || sig.status === 'ACTIVE' ? 'RUNNING' : 'PENDING');
+  const isClosed = sig.status === 'CLOSED' || sig.status === 'CANCELLED' || sig.closedAt !== undefined;
+  if (isClosed) {
+    if (sig.status === 'CANCELLED') return 'CANCELLED';
+    if (currentOutcome && currentOutcome !== 'PENDING' && currentOutcome !== 'RUNNING') {
+      return currentOutcome;
+    }
+    const prof = sig.realizedProfit !== undefined ? sig.realizedProfit : sig.pnl;
+    if (prof !== undefined && prof > 0) return 'TP1_HIT';
+    if (prof !== undefined && prof < 0) return 'SL_HIT';
+    return 'TP1_HIT';
+  }
+
+  return currentOutcome || ((sig.status as string) === 'RUNNING' || sig.status === 'ACTIVE' ? (sig.isEntryTriggered ? 'RUNNING' : 'PENDING') : 'PENDING');
 }
 
 export function getOutcomeBadgeDetails(
@@ -1278,11 +1296,11 @@ export function filter30DaySignals(signals: TradingSignal[], deletedIds?: string
       map.set(cleanS.id, cleanS);
     } else {
       let existingRank = statusRank[existing.outcomeStatus || 'PENDING'] || 1;
-      if (existing.status === 'CLOSED' || existing.realizedProfit !== undefined || existing.isManualClose || existing.closedManually) {
+      if (existing.status === 'CLOSED' || existing.isManualClose || existing.closedManually) {
         existingRank = Math.max(existingRank, 7);
       }
       let cleanRank = statusRank[cleanS.outcomeStatus || 'PENDING'] || 1;
-      if (cleanS.status === 'CLOSED' || cleanS.realizedProfit !== undefined || cleanS.isManualClose || cleanS.closedManually) {
+      if (cleanS.status === 'CLOSED' || cleanS.isManualClose || cleanS.closedManually) {
         cleanRank = Math.max(cleanRank, 7);
       }
       
@@ -1529,20 +1547,27 @@ export function calculateTradePnLMetrics(
   let statusLabel = 'În Așteptare';
   let hasPrice = true;
 
-  const isClosed =
-    signal.status === 'CLOSED' ||
-    signal.status === 'CANCELLED' ||
-    signal.isManualClose === true ||
-    signal.closedManually === true ||
-    signal.realizedProfit !== undefined ||
-    signal.closedAt !== undefined ||
+  const isExplicitManual = signal.isManualClose === true || signal.closedManually === true || status.startsWith('MANUAL_');
+  const isTerminalState =
     status === 'CANCELLED' ||
     status === 'SL_HIT' ||
     status === 'TP3_HIT' ||
     status.startsWith('MANUAL_') ||
-    ['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT', 'CLOSED'].includes(status);
+    signal.isBeHitAfterTp1 === true ||
+    signal.isBeHitAfterTp2 === true ||
+    (signal.status === 'CLOSED' && (isExplicitManual || ['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT'].includes(status)));
 
-  if (isClosed && (signal.pnl !== undefined || signal.realizedProfit !== undefined)) {
+  const isPendingOrder =
+    (!signal.isEntryTriggered && (status === 'PENDING' || !status)) ||
+    (Boolean(signal.executionType?.includes('LIMIT') || signal.executionType?.includes('STOP')) && !signal.isEntryTriggered && signal.status !== 'CLOSED');
+
+  const isClosed = !isPendingOrder && (signal.status === 'CLOSED' || isTerminalState);
+
+  if (isPendingOrder) {
+    rr = 0;
+    pnl = 0;
+    statusLabel = 'În Așteptare';
+  } else if (isClosed && (signal.pnl !== undefined || signal.realizedProfit !== undefined)) {
     const closedProfit = signal.realizedProfit !== undefined ? signal.realizedProfit : (signal.pnl as number);
     pnl = Math.round(closedProfit * 100) / 100;
     rr = dollarRisk > 0 ? Math.round((pnl / dollarRisk) * 100) / 100 : 0;

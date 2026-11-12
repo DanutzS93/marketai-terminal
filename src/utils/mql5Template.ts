@@ -1,4 +1,4 @@
-export const MT5_EA_VERSION = '4.87';
+export const MT5_EA_VERSION = '4.88';
 
 export function getMql5EaCode(
   mt5Endpoint: string,
@@ -1332,11 +1332,14 @@ double GetRealizedProfitForPosition(ulong posId, double &lastExitPrice, bool &is
 
                   long reason = HistoryDealGetInteger(dealTicket, DEAL_REASON);
                   // DEAL_REASON_CLIENT = 0, DEAL_REASON_MOBILE = 1, DEAL_REASON_WEB = 2
-                  // DEAL_REASON_SL = 4, DEAL_REASON_TP = 5
-                  // If closing deal is not triggered by SL (4) and not by TP (5), it is closed manually
-                  if(reason == 0 || reason == 1 || reason == 2 || (reason != 4 && reason != 5))
+                  // ONLY explicit manual actions by the user on the closing deal
+                  if(reason == 0 || reason == 1 || reason == 2)
                   {
                      isManualClose = true;
+                  }
+                  else
+                  {
+                     isManualClose = false;
                   }
                }
                else if(entryType == DEAL_ENTRY_IN)
@@ -1386,14 +1389,19 @@ bool SendTradeUpdate(string signalId, string status, string outcome, string mile
    {
       exitPriceJson = ",\\"exitPrice\\":" + DoubleToString(exitPrice, 5);
    }
+
+   string pnlJson = "";
+   if(status == "CLOSED" || milestone == "POSITION_CLOSED" || milestone == "MANUAL_CLOSE" || isManualClose || milestone == "TP1_BREAK_EVEN")
+   {
+      pnlJson = ",\\"pnl\\":" + DoubleToString(pnl, 2) + ",\\"profit\\":" + DoubleToString(pnl, 2);
+   }
    
    string payload = "{\\"signal_id\\":\\"" + signalId + "\\"," +
                     "\\"status\\":\\"" + status + "\\"," +
                     "\\"outcomeStatus\\":\\"" + outcome + "\\"," +
                     "\\"milestone\\":\\"" + milestone + "\\"," +
-                    "\\"isManualClose\\":" + (isManualClose ? "true" : "false") + "," +
-                    "\\"pnl\\":" + DoubleToString(pnl, 2) + "," +
-                    "\\"profit\\":" + DoubleToString(pnl, 2) + exitPriceJson + "," +
+                    "\\"isManualClose\\":" + (isManualClose ? "true" : "false") +
+                    pnlJson + exitPriceJson + "," +
                     "\\"accountNumber\\":\\"" + IntegerToString(login) + "\\"," +
                     "\\"accountServer\\":\\"" + serverName + "\\"," +
                     "\\"accountCurrency\\":\\"" + currency + "\\"," +
@@ -1546,7 +1554,19 @@ void CheckAndReportTrackedTrades()
          
          string outcome = "";
          string milestone = "";
-         if(isManualClose)
+         if(trackedTrades[i].tp2Hit && realPnl > 0.01)
+         {
+            outcome = "TP2_HIT";
+            milestone = "TP2_HIT";
+            isManualClose = false;
+         }
+         else if(trackedTrades[i].tp1Hit && realPnl > 0.01)
+         {
+            outcome = "TP1_HIT";
+            milestone = "TP1_HIT";
+            isManualClose = false;
+         }
+         else if(isManualClose)
          {
             outcome = (realPnl > 0.01) ? "MANUAL_PROFIT" : ((realPnl < -0.01) ? "MANUAL_LOSS" : "MANUAL_BE");
             milestone = "MANUAL_CLOSE";
@@ -1554,7 +1574,6 @@ void CheckAndReportTrackedTrades()
          else
          {
             outcome = (realPnl > 0.01) ? "TP1_HIT" : ((realPnl < -0.01) ? "SL_HIT" : "BREAKEVEN");
-            if(trackedTrades[i].tp2Hit && realPnl > 0.01) outcome = "TP2_HIT";
             milestone = "POSITION_CLOSED";
          }
          
@@ -2417,7 +2436,14 @@ void FetchAndExecuteSignals()
             tp2Hit = false;
             
             Print("[MarketAI SUCCES] Tranzacție executată cu succes (", action, ") Lot: ", finalLot, " (Risc: ", liveRiskPercent, "%) pe ", targetSymbol, " Signal ID: ", sigId, " SL: ", sl, " TP3: ", tp3);
-            SendStatusUpdate(sigId, "RUNNING", "OPENED", "ENTRY");
+            if(isPendingOrder)
+            {
+               SendTradeUpdate(sigId, "ACTIVE", "PENDING", "PENDING_PLACED", 0.0, 0.0, false);
+            }
+            else
+            {
+               SendTradeUpdate(sigId, "RUNNING", "OPENED", "ENTRY", 0.0, 0.0, false);
+            }
          }
          else
          {

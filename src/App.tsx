@@ -385,19 +385,26 @@ export default function App() {
                   const srv = data.user.signals.find((sig: any) => String(sig.id) === String(s.id));
                   if (!srv) return s;
 
-                  const isClosedSignal =
+                  const isMt5PendingOrder = Array.isArray(data.user.mt5OpenOrders) && data.user.mt5OpenOrders.some((o: any) =>
+                    o && (String(o.signalId) === String(s.id) || String(o.signalId) === String(s.signal_id))
+                  );
+                  const isMt5OpenPos = Array.isArray(data.user.mt5OpenPositions) && data.user.mt5OpenPositions.some((p: any) =>
+                    p && (String(p.signalId) === String(s.id) || String(p.signalId) === String(s.signal_id))
+                  );
+
+                  const isExplicitManual = s.isManualClose === true || s.closedManually === true || (typeof s.outcomeStatus === 'string' && s.outcomeStatus.startsWith('MANUAL_'));
+
+                  const isClosedSignal = !isMt5PendingOrder && !isMt5OpenPos && (
                     s.status === 'CLOSED' ||
                     s.status === 'CANCELLED' ||
-                    s.isManualClose === true ||
-                    s.closedManually === true ||
-                    s.realizedProfit !== undefined ||
-                    s.closedAt !== undefined ||
+                    (isExplicitManual && s.closedAt !== undefined) ||
                     s.outcomeStatus === 'CANCELLED' ||
                     s.outcomeStatus === 'TP3_HIT' ||
                     s.outcomeStatus === 'SL_HIT' ||
-                    (typeof s.outcomeStatus === 'string' && s.outcomeStatus.startsWith('MANUAL_'));
+                    (typeof s.outcomeStatus === 'string' && s.outcomeStatus.startsWith('MANUAL_'))
+                  );
 
-                  const isPendingOrder = (!s.outcomeStatus || s.outcomeStatus === 'PENDING') && !s.isEntryTriggered;
+                  const isPendingOrder = isMt5PendingOrder || ((!s.outcomeStatus || s.outcomeStatus === 'PENDING') && !s.isEntryTriggered && !isMt5OpenPos);
 
                   // Extract latest floating profit ONLY for active, triggered, non-closed trades
                   let posProfit: number | undefined = undefined;
@@ -415,9 +422,19 @@ export default function App() {
 
                   // Clear liveProfit if closed or pending order
                   const newLiveProfit = (isClosedSignal || isPendingOrder) ? undefined : (posProfit !== undefined ? posProfit : srv.liveProfit);
-                  const newPnl = srv.pnl;
-                  const newStatus = srv.status;
-                  const newOutcome = srv.outcomeStatus;
+                  const newPnl = (isPendingOrder || (!isClosedSignal && isMt5OpenPos)) ? undefined : srv.pnl;
+                  let newStatus = srv.status;
+                  let newOutcome = srv.outcomeStatus;
+
+                  if (isMt5PendingOrder) {
+                    newStatus = 'ACTIVE';
+                    newOutcome = 'PENDING';
+                  } else if (isMt5OpenPos) {
+                    newStatus = 'RUNNING';
+                    if (!['TP1_HIT', 'TP2_HIT'].includes(s.outcomeStatus || '')) {
+                      newOutcome = 'RUNNING';
+                    }
+                  }
 
                   const srvIsClosed =
                     srv.status === 'CLOSED' ||
@@ -1528,22 +1545,25 @@ export default function App() {
         const isClosedSignal =
           sig.status === 'CLOSED' ||
           sig.status === 'CANCELLED' ||
-          sig.isManualClose === true ||
-          sig.closedManually === true ||
-          sig.realizedProfit !== undefined ||
-          sig.closedAt !== undefined ||
           sig.outcomeStatus === 'CANCELLED' ||
           sig.outcomeStatus === 'TP3_HIT' ||
           sig.outcomeStatus === 'SL_HIT' ||
-          (typeof sig.outcomeStatus === 'string' && sig.outcomeStatus.startsWith('MANUAL_'));
+          (typeof sig.outcomeStatus === 'string' && sig.outcomeStatus.startsWith('MANUAL_')) ||
+          ((sig.isManualClose === true || sig.closedManually === true) && sig.closedAt !== undefined);
 
         if (isClosedSignal) {
           if (sig.outcomeStatus === 'PENDING' || sig.outcomeStatus === 'RUNNING' || !sig.outcomeStatus) {
             hasChanges = true;
             const effectivePnl = sig.pnl !== undefined ? sig.pnl : sig.realizedProfit;
-            const termOutcome: NonNullable<TradingSignal['outcomeStatus']> = sig.status === 'CANCELLED'
-              ? 'CANCELLED'
-              : (effectivePnl !== undefined && effectivePnl > 0 ? 'MANUAL_PROFIT' : (effectivePnl !== undefined && effectivePnl < 0 ? 'MANUAL_LOSS' : 'MANUAL_BE'));
+            const isManual = sig.isManualClose === true || sig.closedManually === true;
+            let termOutcome: NonNullable<TradingSignal['outcomeStatus']>;
+            if (sig.status === 'CANCELLED') {
+              termOutcome = 'CANCELLED';
+            } else if (isManual) {
+              termOutcome = effectivePnl !== undefined && effectivePnl > 0 ? 'MANUAL_PROFIT' : (effectivePnl !== undefined && effectivePnl < 0 ? 'MANUAL_LOSS' : 'MANUAL_BE');
+            } else {
+              termOutcome = effectivePnl !== undefined && effectivePnl > 0 ? 'TP1_HIT' : (effectivePnl !== undefined && effectivePnl < 0 ? 'SL_HIT' : 'CANCELLED');
+            }
             return {
               ...sig,
               status: (sig.status === 'CANCELLED' ? 'CANCELLED' : 'CLOSED') as TradingSignal['status'],
