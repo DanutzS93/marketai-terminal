@@ -7710,12 +7710,12 @@ app.all(['/api/mt5/signals', '/api/mt5/signals/poll'], (req, res) => {
           symbolsMatch(s.instrumentId, s.symbol, symbolParam)
         );
       }
-      if (matchedSig) {
+      if (matchedSig && matchedSig.status !== 'CLOSED' && matchedSig.status !== 'CANCELLED') {
         matchedSig.liveProfit = numProfit;
         if (!isNaN(numPrice) && numPrice > 0) {
           matchedSig.currentMarketPrice = numPrice;
         }
-        if (matchedSig.status !== 'RUNNING' && matchedSig.status !== 'CLOSED') {
+        if (matchedSig.status !== 'RUNNING') {
           matchedSig.status = 'RUNNING';
         }
         if (matchedSig.outcomeStatus !== 'RUNNING' && !['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT', 'CANCELLED'].includes(matchedSig.outcomeStatus)) {
@@ -8143,25 +8143,20 @@ app.post('/api/mt5/account', async (req, res) => {
       matchedUser.mt5OpenPositions = positions;
       didChange = true;
 
-      // Signals actively open in MT5
+      // Track which signals are actively open in MT5 during this sync
+      const claimedSignalIds = new Set<string>();
+
       if (Array.isArray(matchedUser.signals)) {
+        // Pass 1: Match by explicit signalId if present on the position
         for (const pos of positions) {
-          if (!pos) continue;
-          let sig: any = null;
-          if (pos.signalId) {
-            sig = matchedUser.signals.find((s: any) => 
-              String(s.id) === String(pos.signalId) || 
-              String(s.signal_id) === String(pos.signalId)
-            );
-          }
-          if (!sig && pos.symbol) {
-            sig = matchedUser.signals.find((s: any) => 
-              (s.isEntryTriggered || (s.executionType && s.executionType.toUpperCase().includes('MARKET'))) &&
-              (s.status === 'RUNNING' || s.status === 'ACTIVE' || !s.status) &&
-              symbolsMatch(s.instrumentId, s.symbol, pos.symbol)
-            );
-          }
+          if (!pos || !pos.signalId) continue;
+          const sig = matchedUser.signals.find((s: any) =>
+            !claimedSignalIds.has(String(s.id)) &&
+            (String(s.id) === String(pos.signalId) || String(s.signal_id) === String(pos.signalId))
+          );
           if (sig) {
+            claimedSignalIds.add(String(sig.id));
+            sig.mt5Ticket = pos.ticket;
             let sChanged = false;
             const pProfit = Number(pos.profit);
             if (!isNaN(pProfit) && sig.liveProfit !== pProfit) {
@@ -8195,70 +8190,139 @@ app.post('/api/mt5/account', async (req, res) => {
             if (sChanged) didChange = true;
           }
         }
-      }
 
-      // Detect positions that were open in the previous sync but are now closed in MT5
-      const currentPosSigIds = new Set(positions.map((p: any) => String(p?.signalId || '')));
-      for (const oldP of prevPositions) {
-        if (!oldP || !oldP.signalId) continue;
-        const oldSigId = String(oldP.signalId);
-        if (!currentPosSigIds.has(oldSigId)) {
-          if (Array.isArray(matchedUser.signals)) {
-            const closedSig = matchedUser.signals.find((s: any) => String(s.id) === oldSigId || String(s.signal_id) === oldSigId);
-            if (closedSig && closedSig.status !== 'CLOSED') {
-              closedSig.status = 'CLOSED';
-              closedSig.closedAt = closedSig.closedAt || new Date().toISOString();
-              const pNum = Number(oldP.profit) || closedSig.liveProfit || closedSig.pnl || 0;
-              closedSig.pnl = Math.round(pNum * 100) / 100;
-              closedSig.realizedProfit = closedSig.pnl;
+        // Pass 2: For positions without signalId (or whose signalId was unmatched), match by symbol
+        for (const pos of positions) {
+          if (!pos || !pos.symbol) continue;
+          if (pos.signalId && claimedSignalIds.has(String(pos.signalId))) continue;
 
-              const hasMilestoneTp = ['TP1', 'TP2', 'TP3'].includes(closedSig.firstHitMilestone || '');
-              const isAlreadyTpOrSl = ['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT'].includes(closedSig.outcomeStatus) || hasMilestoneTp;
+          // Find the best matching active signal for this symbol that is NOT yet claimed
+          const sig = matchedUser.signals.find((s: any) =>
+            !claimedSignalIds.has(String(s.id)) &&
+            s.status !== 'CLOSED' &&
+            s.status !== 'CANCELLED' &&
+            !s.closedAt &&
+            (s.isEntryTriggered || (s.executionType && s.executionType.toUpperCase().includes('MARKET')) || s.status === 'RUNNING') &&
+            symbolsMatch(s.instrumentId, s.symbol, pos.symbol)
+          );
+
+          if (sig) {
+            claimedSignalIds.add(String(sig.id));
+            pos.signalId = sig.id; // Map back to MT5 position so future syncs and frontend have signalId
+            sig.mt5Ticket = pos.ticket;
+            let sChanged = false;
+            const pProfit = Number(pos.profit);
+            if (!isNaN(pProfit) && sig.liveProfit !== pProfit) {
+              sig.liveProfit = pProfit;
+              sChanged = true;
+            }
+            if (pos.currentPrice && Number(pos.currentPrice) > 0 && sig.currentMarketPrice !== Number(pos.currentPrice)) {
+              sig.currentMarketPrice = Number(pos.currentPrice);
+              sChanged = true;
+            }
+            if (sig.status !== 'RUNNING') {
+              sig.status = 'RUNNING';
+              sChanged = true;
+            }
+            if (sig.outcomeStatus !== 'RUNNING' && !['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT', 'CANCELLED'].includes(sig.outcomeStatus)) {
+              sig.outcomeStatus = 'RUNNING';
+              sChanged = true;
+            }
+            if (!sig.isEntryTriggered) {
+              sig.isEntryTriggered = true;
+              sChanged = true;
+            }
+            if (sig.isManualClose || sig.closedManually || sig.realizedProfit !== undefined || sig.closedAt) {
+              delete sig.isManualClose;
+              delete sig.closedManually;
+              delete sig.realizedProfit;
+              delete sig.closedAt;
+              sig.pnl = undefined;
+              sChanged = true;
+            }
+            if (sChanged) didChange = true;
+          }
+        }
+
+        // Pass 3: Reconcile signals placed on MT5 that are no longer open or pending in MT5
+        const currentOrderSigIds = new Set<string>();
+        if (Array.isArray(matchedUser.mt5OpenOrders)) {
+          for (const o of matchedUser.mt5OpenOrders) {
+            if (o?.signalId) currentOrderSigIds.add(String(o.signalId));
+          }
+        }
+
+        for (const s of matchedUser.signals) {
+          const isMt5Signal = Boolean(
+            s.accountSource === 'MT5' ||
+            s.mt5Placed ||
+            (s.placedAccounts && matchedAccountId && s.placedAccounts[matchedAccountId]?.platform === 'MT5') ||
+            (s.mt5Ticket && s.mt5Ticket > 0)
+          );
+
+          // If signal was running on MT5, but is NOT in claimed positions and NOT in pending orders:
+          if (isMt5Signal && (s.status === 'RUNNING' || (s.status === 'ACTIVE' && s.isEntryTriggered))) {
+            if (!claimedSignalIds.has(String(s.id)) && !currentOrderSigIds.has(String(s.id))) {
+              s.status = 'CLOSED';
+              s.closedAt = s.closedAt || new Date().toISOString();
+              delete s.liveProfit; // No live floating profit on closed signals
+
+              // Try to find profit from prevPositions
+              const oldP = prevPositions.find((p: any) =>
+                (p && p.signalId && String(p.signalId) === String(s.id)) ||
+                (p && p.symbol && symbolsMatch(s.instrumentId, s.symbol, p.symbol))
+              );
+              const pNum = (oldP && !isNaN(Number(oldP.profit))) ? Number(oldP.profit) : (s.pnl || s.realizedProfit || 0);
+              s.pnl = Math.round(pNum * 100) / 100;
+              s.realizedProfit = s.pnl;
+
+              const hasMilestoneTp = ['TP1', 'TP2', 'TP3'].includes(s.firstHitMilestone || '');
+              const isAlreadyTpOrSl = ['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT'].includes(s.outcomeStatus) || hasMilestoneTp;
               if (!isAlreadyTpOrSl) {
-                if (closedSig.isManualClose === true || closedSig.closedManually === true) {
-                  closedSig.outcomeStatus = closedSig.pnl > 0 ? 'MANUAL_PROFIT' : (closedSig.pnl < 0 ? 'MANUAL_LOSS' : 'MANUAL_BE');
+                if (s.isManualClose === true || s.closedManually === true) {
+                  s.outcomeStatus = s.pnl > 0 ? 'MANUAL_PROFIT' : (s.pnl < 0 ? 'MANUAL_LOSS' : 'MANUAL_BE');
                 } else {
-                  closedSig.outcomeStatus = closedSig.pnl > 0 ? 'TP1_HIT' : (closedSig.pnl < 0 ? 'SL_HIT' : 'BREAKEVEN');
+                  s.outcomeStatus = s.pnl > 0 ? 'TP1_HIT' : (s.pnl < 0 ? 'SL_HIT' : 'BREAKEVEN');
                 }
-              } else if (hasMilestoneTp && !['TP1_HIT', 'TP2_HIT', 'TP3_HIT'].includes(closedSig.outcomeStatus)) {
-                closedSig.outcomeStatus = `${closedSig.firstHitMilestone}_HIT`;
+              } else if (hasMilestoneTp && !['TP1_HIT', 'TP2_HIT', 'TP3_HIT'].includes(s.outcomeStatus)) {
+                s.outcomeStatus = `${s.firstHitMilestone}_HIT`;
               }
               didChange = true;
 
               // Reconcile into Trade Journal
               const isClosedSigDeleted = (matchedUser.deletedJournalTradeIds || []).some(
-                (dId: string) => dId === closedSig.id || dId === `sig_journal_${closedSig.id}`
+                (dId: string) => dId === s.id || dId === `sig_journal_${s.id}`
               );
 
               if (!isClosedSigDeleted) {
                 matchedUser.tradeJournal = matchedUser.tradeJournal || [];
-                const jEntry = matchedUser.tradeJournal.find((j: any) => j.linkedSignalId === closedSig.id || j.id === `sig_journal_${closedSig.id}`);
-                const finalJStatus: 'WIN' | 'LOSS' | 'BREAKEVEN' = closedSig.pnl > 0 ? 'WIN' : (closedSig.pnl < 0 ? 'LOSS' : 'BREAKEVEN');
-                const isExplicitClose = closedSig.isManualClose === true || closedSig.closedManually === true;
+                const jEntry = matchedUser.tradeJournal.find((j: any) => j.linkedSignalId === s.id || j.id === `sig_journal_${s.id}`);
+                const finalJStatus: 'WIN' | 'LOSS' | 'BREAKEVEN' = s.pnl > 0 ? 'WIN' : (s.pnl < 0 ? 'LOSS' : 'BREAKEVEN');
+                const isExplicitClose = s.isManualClose === true || s.closedManually === true;
                 const finalJLabel = isExplicitClose
-                  ? (closedSig.pnl > 0
-                    ? `Închis manual cu profit: +$${closedSig.pnl.toFixed(2)} ✋`
-                    : closedSig.pnl < 0
-                    ? `Închis manual cu pierdere: -$${Math.abs(closedSig.pnl).toFixed(2)} ✋`
+                  ? (s.pnl > 0
+                    ? `Închis manual cu profit: +$${s.pnl.toFixed(2)} ✋`
+                    : s.pnl < 0
+                    ? `Închis manual cu pierdere: -$${Math.abs(s.pnl).toFixed(2)} ✋`
                     : 'Închis manual la BE ($0.00) ✋')
-                  : (closedSig.outcomeStatus === 'TP3_HIT'
-                    ? `TP3 Max Hit (+$${closedSig.pnl.toFixed(2)}) 💎`
-                    : closedSig.outcomeStatus === 'TP2_HIT'
-                    ? `TP2 Hit (+$${closedSig.pnl.toFixed(2)}) 🚀`
-                    : closedSig.outcomeStatus === 'TP1_HIT'
-                    ? `TP1 Securizat (+$${closedSig.pnl.toFixed(2)}) 🎯`
-                    : closedSig.pnl > 0
-                    ? `Profit Broker (+$${closedSig.pnl.toFixed(2)})`
-                    : closedSig.pnl < 0
-                    ? `Stop Loss (-$${Math.abs(closedSig.pnl).toFixed(2)}) 🛑`
+                  : (s.outcomeStatus === 'TP3_HIT'
+                    ? `TP3 Max Hit (+$${s.pnl.toFixed(2)}) 💎`
+                    : s.outcomeStatus === 'TP2_HIT'
+                    ? `TP2 Hit (+$${s.pnl.toFixed(2)}) 🚀`
+                    : s.outcomeStatus === 'TP1_HIT'
+                    ? `TP1 Securizat (+$${s.pnl.toFixed(2)}) 🎯`
+                    : s.pnl > 0
+                    ? `Profit Broker (+$${s.pnl.toFixed(2)})`
+                    : s.pnl < 0
+                    ? `Stop Loss (-$${Math.abs(s.pnl).toFixed(2)}) 🛑`
                     : 'Break-Even ($0.00)');
 
                 const finalJNotes = isExplicitClose
-                  ? `Închis manual direct din MT5 (${accountNumber || matchedUser.mt5AccountNumber || ''}) cu ${closedSig.pnl >= 0 ? 'profit: +$' + closedSig.pnl.toFixed(2) : 'pierdere: -$' + Math.abs(closedSig.pnl).toFixed(2)}`
-                  : `Actualizat prin conexiunea MT5 (${accountNumber || matchedUser.mt5AccountNumber || ''}) | Outcome: ${closedSig.outcomeStatus}`;
+                  ? `Închis manual direct din MT5 (${accountNumber || matchedUser.mt5AccountNumber || ''}) cu ${s.pnl >= 0 ? 'profit: +$' + s.pnl.toFixed(2) : 'pierdere: -$' + Math.abs(s.pnl).toFixed(2)}`
+                  : `Actualizat prin conexiunea MT5 (${accountNumber || matchedUser.mt5AccountNumber || ''}) | Outcome: ${s.outcomeStatus}`;
 
                 if (jEntry) {
-                  jEntry.pnl = closedSig.pnl;
+                  jEntry.pnl = s.pnl;
                   jEntry.status = finalJStatus;
                   jEntry.outcomeLabel = finalJLabel;
                   jEntry.notes = finalJNotes;
@@ -8266,40 +8330,48 @@ app.post('/api/mt5/account', async (req, res) => {
                     jEntry.isManualClose = true;
                     jEntry.closedManually = true;
                   }
-                  jEntry.closedAt = closedSig.closedAt;
+                  jEntry.closedAt = s.closedAt;
                 } else {
-                  const isBuy = (closedSig.type || '').toUpperCase().includes('BUY');
+                  const isBuy = (s.type || '').toUpperCase().includes('BUY');
                   const nowIso = new Date().toISOString();
                   matchedUser.tradeJournal.unshift({
-                    id: `sig_journal_${closedSig.id}`,
-                    date: (closedSig.createdAt || nowIso).split('T')[0],
-                    time: (closedSig.createdAt || nowIso).split('T')[1]?.substring(0, 5) || '12:00',
-                    instrumentId: closedSig.instrumentId,
-                    symbol: closedSig.symbol,
-                    instrumentName: closedSig.instrumentName,
+                    id: `sig_journal_${s.id}`,
+                    date: (s.createdAt || nowIso).split('T')[0],
+                    time: (s.createdAt || nowIso).split('T')[1]?.substring(0, 5) || '12:00',
+                    instrumentId: s.instrumentId,
+                    symbol: s.symbol,
+                    instrumentName: s.instrumentName,
                     direction: isBuy ? 'BUY' : 'SELL',
-                    executionType: closedSig.executionType || (isBuy ? 'BUY MARKET' : 'SELL MARKET'),
-                    entryPrice: closedSig.entryPrice,
-                    stopLoss: closedSig.stopLoss,
-                    takeProfit: closedSig.targetPrice3 || closedSig.targetPrice2 || closedSig.targetPrice1,
-                    exitPrice: closedSig.exitPrice || closedSig.entryPrice,
-                    rrAchieved: closedSig.pnl > 0 ? 2.0 : (closedSig.pnl < 0 ? -1.0 : 0),
-                    pnl: closedSig.pnl,
+                    executionType: s.executionType || (isBuy ? 'BUY MARKET' : 'SELL MARKET'),
+                    entryPrice: s.entryPrice,
+                    stopLoss: s.stopLoss,
+                    takeProfit: s.targetPrice3 || s.targetPrice2 || s.targetPrice1,
+                    exitPrice: s.exitPrice || s.entryPrice,
+                    rrAchieved: s.pnl > 0 ? 2.0 : (s.pnl < 0 ? -1.0 : 0),
+                    pnl: s.pnl,
                     status: finalJStatus,
                     outcomeLabel: finalJLabel,
-                    setup: closedSig.title || 'MT5 Execution',
+                    setup: s.title || 'MT5 Execution',
                     notes: finalJNotes,
-                    timeframe: closedSig.timeframe,
-                    linkedSignalId: closedSig.id,
+                    timeframe: s.timeframe,
+                    linkedSignalId: s.id,
                     isManual: false,
                     isManualClose: isExplicitClose,
                     closedManually: isExplicitClose,
-                    generatedAt: closedSig.createdAt,
-                    closedAt: closedSig.closedAt,
-                    createdAt: closedSig.createdAt,
+                    generatedAt: s.createdAt,
+                    closedAt: s.closedAt,
+                    createdAt: s.createdAt,
                   });
                 }
               }
+            }
+          }
+
+          // Safety: ensure any CLOSED/CANCELLED signal never has liveProfit attached
+          if (s.status === 'CLOSED' || s.status === 'CANCELLED') {
+            if (s.liveProfit !== undefined) {
+              delete s.liveProfit;
+              didChange = true;
             }
           }
         }

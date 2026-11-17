@@ -609,6 +609,249 @@ export function validateAndFixSignalPrices(sig: TradingSignal, liveMarketPrice?:
   return updated;
 }
 
+export function hasFuturesTag(upper: string, clean: string): boolean {
+  if (upper.includes('CASH') || upper.includes('SPOT')) return false;
+
+  // Exclude broker account type suffixes (-VIP, -PRO, -RAW, -ECN, -ZERO, -MICRO, -MINI, -STD, -STP)
+  const cleanWithoutSuffix = upper
+    .replace(/-(VIP|PRO|RAW|ECN|ZERO|MICRO|MINI|STD|STP)$/i, '')
+    .replace(/_(VIP|PRO|RAW|ECN|ZERO|MICRO|MINI|STD|STP)$/i, '');
+  const baseClean = cleanWithoutSuffix.replace(/[^A-Z0-9]/g, '');
+
+  if (/^(DJ30|US30|USA30|WS30|WALLST30|WALLSTREET|DOW30|DOW|DJI|NAS100|US100|USA100|USTEC|NDX|SPX500|US500|USA500|SP500|SPX|XAUUSD|GOLD|EURUSD|GBPUSD|USDJPY)$/i.test(baseClean)) {
+    return false;
+  }
+
+  // Definite Futures tags:
+  if (/\.(F|FT)$/i.test(cleanWithoutSuffix) ||
+      /_(F|FT)$/i.test(cleanWithoutSuffix) ||
+      /-(F|FT)$/i.test(cleanWithoutSuffix) ||
+      cleanWithoutSuffix.includes('.F.') ||
+      cleanWithoutSuffix.includes('.FT.') ||
+      cleanWithoutSuffix.includes('FT.') ||
+      cleanWithoutSuffix.includes('.FUT') ||
+      cleanWithoutSuffix.includes('FUTURES') ||
+      cleanWithoutSuffix.startsWith('@') ||
+      cleanWithoutSuffix.endsWith('-') ||
+      baseClean.endsWith('FT')) {
+    return true;
+  }
+
+  // Explicit month/year contract patterns: e.g. -DEC26, -Z26, -MAR26
+  if (/-(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\d{2}/i.test(cleanWithoutSuffix) ||
+      /-[FGHJKMNQUVXZ]\d{1,2}$/i.test(cleanWithoutSuffix)) {
+    return true;
+  }
+
+  if (/^(YM|MYM|NQ|MNQ|ENQ|ES|MES|EP|GC|MGC)[FGHJKMNQUVXZ]\d{1,2}$/i.test(baseClean)) {
+    return true;
+  }
+  if (/^(US30|DJ30|USA30|WS30|NAS100|US100|SPX500|US500|SP500)[FGHJKMNQUVXZ]\d{1,2}$/i.test(baseClean)) {
+    return true;
+  }
+
+  return false;
+}
+
+export function isGoldFutures(sym: string): boolean {
+  if (!sym) return false;
+  const upper = sym.toUpperCase().trim();
+  if (upper.includes('CASH') || upper.includes('SPOT')) return false;
+  const clean = upper.replace(/[^A-Z0-9]/g, '');
+
+  if (clean === 'GC' || clean === 'MGC') return true;
+  if (/^(GC|MGC)([FGHJKMNQUVXZ]\d{1,2}|(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\d{2}|F|FT)?$/i.test(clean)) return true;
+  if (upper.startsWith('@GC') || upper.startsWith('@MGC') || upper.startsWith('GC#') || upper.startsWith('MGC#') ||
+      (clean.startsWith('GC') && clean.length <= 6 && (hasFuturesTag(upper, clean) || clean.length >= 3)) ||
+      (clean.startsWith('MGC') && clean.length <= 6)) {
+    return true;
+  }
+
+  if ((clean.includes('GOLD') || clean.includes('XAU')) && hasFuturesTag(upper, clean)) return true;
+  return false;
+}
+
+export function isGoldSpot(sym: string): boolean {
+  if (!sym) return false;
+  if (isGoldFutures(sym)) return false;
+  const upper = sym.toUpperCase().trim();
+  const clean = upper.replace(/[^A-Z0-9]/g, '');
+  return clean.includes('XAU') || clean.includes('GOLD');
+}
+
+export function isNasdaqFutures(sym: string): boolean {
+  if (!sym) return false;
+  const upper = sym.toUpperCase().trim();
+  if (upper.includes('CASH') || upper.includes('SPOT')) return false;
+  const clean = upper.replace(/[^A-Z0-9]/g, '');
+
+  if (clean === 'NQ' || clean === 'MNQ' || clean === 'ENQ') return true;
+  if (/^(NQ|MNQ|ENQ)([FGHJKMNQUVXZ]\d{1,2}|(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\d{2}|F|FT)?$/i.test(clean)) return true;
+  if (upper.startsWith('@NQ') || upper.startsWith('@MNQ') || upper.startsWith('@ENQ') ||
+      upper.startsWith('NQ#') || upper.startsWith('MNQ#') || upper.startsWith('ENQ#') ||
+      clean.startsWith('NQ') || clean.startsWith('MNQ') || clean.startsWith('ENQ')) {
+    return true;
+  }
+
+  if ((clean.includes('NAS') || clean.includes('US100') || clean.includes('USA100') || clean.includes('USTEC') || clean.includes('NDX')) && hasFuturesTag(upper, clean)) {
+    return true;
+  }
+  return false;
+}
+
+export function isNasdaqSpot(sym: string): boolean {
+  if (!sym) return false;
+  if (isNasdaqFutures(sym)) return false;
+  const upper = sym.toUpperCase().trim();
+  const clean = upper.replace(/[^A-Z0-9]/g, '');
+  return (
+    clean.includes('NAS100') ||
+    clean.includes('NASDAQ') ||
+    clean.includes('US100') ||
+    clean.includes('USA100') ||
+    clean.includes('USTEC') ||
+    clean.includes('NDX') ||
+    clean.startsWith('NAS')
+  );
+}
+
+export function isSpxFutures(sym: string): boolean {
+  if (!sym) return false;
+  const upper = sym.toUpperCase().trim();
+  if (upper.includes('CASH') || upper.includes('SPOT')) return false;
+  const clean = upper.replace(/[^A-Z0-9]/g, '');
+
+  if (clean.startsWith('ESTX') || clean.startsWith('ESP35') || clean.startsWith('ES35')) return false;
+
+  if (clean === 'ES' || clean === 'MES' || clean === 'EP') return true;
+  if (/^(ES|MES|EP)([FGHJKMNQUVXZ]\d{1,2}|(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\d{2}|F|FT)?$/i.test(clean)) return true;
+  if (upper.startsWith('@ES') || upper.startsWith('@MES') || upper.startsWith('@EP') ||
+      upper.startsWith('ES#') || upper.startsWith('MES#') || upper.startsWith('EP#') ||
+      upper.startsWith('ES.') || upper.startsWith('ES_') || upper.startsWith('MES.') || upper.startsWith('MES_') ||
+      clean.startsWith('MES') || (clean.startsWith('EP') && clean.length <= 5) ||
+      (clean.startsWith('ES') && clean.length <= 6 && (clean.includes('500') || hasFuturesTag(upper, clean)))) {
+    return true;
+  }
+
+  if ((clean.includes('SPX') || clean.includes('US500') || clean.includes('USA500') || clean.includes('SP500')) && hasFuturesTag(upper, clean)) {
+    return true;
+  }
+  return false;
+}
+
+export function isSpxSpot(sym: string): boolean {
+  if (!sym) return false;
+  if (isSpxFutures(sym)) return false;
+  const upper = sym.toUpperCase().trim();
+  const clean = upper.replace(/[^A-Z0-9]/g, '');
+  if (clean.startsWith('ESTX') || clean.startsWith('ESP35') || clean.startsWith('ES35')) return false;
+  return (
+    clean.includes('SPX500') ||
+    clean.includes('US500') ||
+    clean.includes('USA500') ||
+    clean.includes('SP500') ||
+    clean.includes('SPX')
+  );
+}
+
+export function isDowFutures(sym: string): boolean {
+  if (!sym) return false;
+  const upper = sym.toUpperCase().trim();
+  if (upper.includes('CASH') || upper.includes('SPOT')) return false;
+  const clean = upper.replace(/[^A-Z0-9]/g, '');
+
+  if (clean === 'YM' || clean === 'MYM') return true;
+  if (/^(YM|MYM)([FGHJKMNQUVXZ]\d{1,2}|(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\d{2}|F|FT)?$/i.test(clean)) return true;
+  if (upper.startsWith('@YM') || upper.startsWith('@MYM') ||
+      upper.startsWith('YM#') || upper.startsWith('MYM#') ||
+      clean.startsWith('YM') || clean.startsWith('MYM')) {
+    return true;
+  }
+
+  if ((clean.includes('US30') || clean.includes('USA30') || clean.includes('DJ30') || clean.includes('DOW') || clean.includes('WS30') || clean.includes('WALLST') || clean.includes('DJI')) && hasFuturesTag(upper, clean)) {
+    return true;
+  }
+  return false;
+}
+
+export function isDowSpot(sym: string): boolean {
+  if (!sym) return false;
+  if (isDowFutures(sym)) return false;
+  const upper = sym.toUpperCase().trim();
+  const clean = upper.replace(/[^A-Z0-9]/g, '');
+  return (
+    clean.includes('US30') ||
+    clean.includes('USA30') ||
+    clean.includes('DJ30') ||
+    clean.includes('DOW') ||
+    clean.includes('WS30') ||
+    clean.includes('WALLST') ||
+    clean.includes('DJI') ||
+    clean === 'DJ'
+  );
+}
+
+export function symbolsMatch(instrumentId: string, signalSymbol: string, brokerSymbol: string): boolean {
+  if (!brokerSymbol || brokerSymbol === 'ALL' || brokerSymbol.trim() === '') return true;
+  const b = brokerSymbol.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const i = (instrumentId || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const s = (signalSymbol || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+  // 1. STRICT SEPARATION: Gold Spot (XAUUSD) vs Gold Futures (GC.F / XAUUSD.f / GC)
+  const sigIsGcFutures = isGoldFutures(instrumentId) || isGoldFutures(signalSymbol);
+  const sigIsGcSpot = isGoldSpot(instrumentId) || isGoldSpot(signalSymbol);
+  const brokerIsGcFutures = isGoldFutures(brokerSymbol);
+  const brokerIsGcSpot = isGoldSpot(brokerSymbol);
+
+  if (sigIsGcFutures) return brokerIsGcFutures;
+  if (sigIsGcSpot) return brokerIsGcSpot;
+
+  // 2. STRICT SEPARATION: Nasdaq Spot (NAS100) vs Nasdaq Futures (NQ.F / USTEC.f / NQ / MNQ / ENQ)
+  const sigIsNasFutures = isNasdaqFutures(instrumentId) || isNasdaqFutures(signalSymbol);
+  const sigIsNasSpot = isNasdaqSpot(instrumentId) || isNasdaqSpot(signalSymbol);
+  const brokerIsNasFutures = isNasdaqFutures(brokerSymbol);
+  const brokerIsNasSpot = isNasdaqSpot(brokerSymbol);
+
+  if (sigIsNasFutures) return brokerIsNasFutures;
+  if (sigIsNasSpot) return brokerIsNasSpot;
+
+  // 3. STRICT SEPARATION: S&P 500 Spot (SPX500) vs S&P 500 Futures (ES.F / US500.f / ES / MES / EP)
+  const sigIsSpxFutures = isSpxFutures(instrumentId) || isSpxFutures(signalSymbol);
+  const sigIsSpxSpot = isSpxSpot(instrumentId) || isSpxSpot(signalSymbol);
+  const brokerIsSpxFutures = isSpxFutures(brokerSymbol);
+  const brokerIsSpxSpot = isSpxSpot(brokerSymbol);
+
+  if (sigIsSpxFutures) return brokerIsSpxFutures;
+  if (sigIsSpxSpot) return brokerIsSpxSpot;
+
+  // 4. STRICT SEPARATION: Dow Jones Spot (US30/DJ30) vs Dow Jones Futures (YM / US30.f / MYM)
+  const sigIsDowFutures = isDowFutures(instrumentId) || isDowFutures(signalSymbol);
+  const sigIsDowSpot = isDowSpot(instrumentId) || isDowSpot(signalSymbol);
+  const brokerIsDowFutures = isDowFutures(brokerSymbol);
+  const brokerIsDowSpot = isDowSpot(brokerSymbol);
+
+  if (sigIsDowFutures) return brokerIsDowFutures;
+  if (sigIsDowSpot) return brokerIsDowSpot;
+
+  // Exact or direct match (non-separated instruments)
+  if (b === i || b === s) {
+    return true;
+  }
+  if ((b.includes(i) || i.includes(b)) && !i.includes('GOLD') && !i.includes('GC') && !i.includes('NAS') && !i.includes('NQ') && !i.includes('SPX') && !i.includes('ES') && !i.includes('US30') && !i.includes('DJ30') && !i.includes('DOW')) {
+    return true;
+  }
+  if (s && (b.includes(s) || s.includes(b)) && !s.includes('GOLD') && !s.includes('GC') && !s.includes('NAS') && !s.includes('NQ') && !s.includes('SPX') && !s.includes('ES') && !s.includes('US30') && !s.includes('DJ30') && !s.includes('DOW')) {
+    return true;
+  }
+  
+  // Forex Specific matching (e.g. EURUSD, EURUSD.pro, EURUSDmicro, EURUSD#, EURUSD_i, CME EU6, 6E, BP6, 6B, JY6, 6J)
+  if ((i.includes('EURUSD') || s.includes('EURUSD')) && (b.includes('EURUSD') || b.startsWith('EU6') || b.startsWith('6E') || b.includes('6E'))) return true;
+  if ((i.includes('GBPUSD') || s.includes('GBPUSD')) && (b.includes('GBPUSD') || b.startsWith('BP6') || b.startsWith('6B') || b.includes('6B'))) return true;
+  if ((i.includes('USDJPY') || s.includes('USDJPY')) && (b.includes('USDJPY') || b.startsWith('JY6') || b.startsWith('6J') || b.includes('6J'))) return true;
+
+  return false;
+}
+
 export function evaluateSignalOutcome(
   rawSig: TradingSignal,
   livePrice: number
@@ -643,8 +886,9 @@ export function evaluateSignalOutcome(
     currentStatus === 'TP3_HIT' ||
     currentStatus === 'SL_HIT' ||
     currentStatus.startsWith('MANUAL_') ||
-    (sig.status === 'CANCELLED') ||
-    (isExplicitManual && (sig.status === 'CLOSED' || sig.closedAt !== undefined));
+    sig.status === 'CANCELLED' ||
+    sig.status === 'CLOSED' ||
+    sig.closedAt !== undefined;
 
   if (isTerminal) {
     let finalOutcome = currentStatus;
@@ -1722,7 +1966,7 @@ export function calculateTradePnLMetrics(
     status.startsWith('MANUAL_') ||
     signal.isBeHitAfterTp1 === true ||
     signal.isBeHitAfterTp2 === true ||
-    (signal.status === 'CLOSED' && (isExplicitManual || ['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT'].includes(status)));
+    signal.status === 'CLOSED';
 
   const isPendingOrder =
     (!signal.isEntryTriggered && (status === 'PENDING' || !status)) ||
@@ -1766,11 +2010,11 @@ export function calculateTradePnLMetrics(
     const rawTp1Rr = Math.max(0.5, Math.round((tp1Dist / riskDist) * 10) / 10);
     if (signal.isBeHitAfterTp1) {
       rr = Math.round(rawTp1Rr * 0.7 * 100) / 100;
-      pnl = hasBrokerRealizedPnl ? (signal.realizedProfit ?? (signal.pnl as number)) : (signal.liveProfit !== undefined ? signal.liveProfit : Math.round(dollarRisk * rr * 100) / 100);
+      pnl = hasBrokerRealizedPnl ? (signal.realizedProfit ?? (signal.pnl as number)) : (isClosed ? Math.round(dollarRisk * rr * 100) / 100 : (signal.liveProfit !== undefined ? signal.liveProfit : Math.round(dollarRisk * rr * 100) / 100));
       statusLabel = isRo ? 'TP1 Securizat (BE)' : 'TP1 Secured (BE)';
     } else {
       rr = rawTp1Rr;
-      pnl = hasBrokerRealizedPnl ? (signal.realizedProfit ?? (signal.pnl as number)) : (signal.liveProfit !== undefined ? signal.liveProfit : Math.round(dollarRisk * rr * 100) / 100);
+      pnl = hasBrokerRealizedPnl ? (signal.realizedProfit ?? (signal.pnl as number)) : (isClosed ? Math.round(dollarRisk * rr * 100) / 100 : (signal.liveProfit !== undefined ? signal.liveProfit : Math.round(dollarRisk * rr * 100) / 100));
       statusLabel = isRo ? 'TP1 Atins' : 'TP1 Hit';
     }
   } else if (status === 'TP2_HIT') {
@@ -1780,11 +2024,11 @@ export function calculateTradePnLMetrics(
     const rawTp2Rr = Math.max(1.0, Math.round((tp2Dist / riskDist) * 10) / 10);
     if (signal.isBeHitAfterTp2) {
       rr = Math.round((rawTp1Rr * 0.35 + rawTp2Rr * 0.35) * 100) / 100;
-      pnl = hasBrokerRealizedPnl ? (signal.realizedProfit ?? (signal.pnl as number)) : (signal.liveProfit !== undefined ? signal.liveProfit : Math.round(dollarRisk * rr * 100) / 100);
+      pnl = hasBrokerRealizedPnl ? (signal.realizedProfit ?? (signal.pnl as number)) : (isClosed ? Math.round(dollarRisk * rr * 100) / 100 : (signal.liveProfit !== undefined ? signal.liveProfit : Math.round(dollarRisk * rr * 100) / 100));
       statusLabel = isRo ? 'TP2 Securizat (BE)' : 'TP2 Secured (BE)';
     } else {
       rr = rawTp2Rr;
-      pnl = hasBrokerRealizedPnl ? (signal.realizedProfit ?? (signal.pnl as number)) : (signal.liveProfit !== undefined ? signal.liveProfit : Math.round(dollarRisk * rr * 100) / 100);
+      pnl = hasBrokerRealizedPnl ? (signal.realizedProfit ?? (signal.pnl as number)) : (isClosed ? Math.round(dollarRisk * rr * 100) / 100 : (signal.liveProfit !== undefined ? signal.liveProfit : Math.round(dollarRisk * rr * 100) / 100));
       statusLabel = isRo ? 'TP2 Atins' : 'TP2 Hit';
     }
   } else if (status === 'TP3_HIT') {
@@ -1802,10 +2046,7 @@ export function calculateTradePnLMetrics(
           (pos.signalId && (String(pos.signalId) === String(signal.id) || String(pos.signalId) === String(signal.signal_id))) ||
           // ONLY match by symbol if signal is actively running / triggered
           ((signal.isEntryTriggered || status === 'RUNNING' || signal.executionType?.includes('MARKET')) &&
-            pos.symbol && signal.symbol && (
-              pos.symbol.toUpperCase().replace(/[^A-Z0-9]/g, '').includes(signal.symbol.toUpperCase().replace(/[^A-Z0-9]/g, '')) ||
-              signal.symbol.toUpperCase().replace(/[^A-Z0-9]/g, '').includes(pos.symbol.toUpperCase().replace(/[^A-Z0-9]/g, ''))
-            )
+            pos.symbol && symbolsMatch(signal.instrumentId, signal.symbol, pos.symbol)
           )
         )
       );

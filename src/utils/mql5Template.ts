@@ -1690,6 +1690,10 @@ void SyncClosedHistoricalTrades()
       long magic = HistoryDealGetInteger(dealTicket, DEAL_MAGIC);
       if(!(magic == InpMagicNumber || InpMagicNumber == 0)) continue;
 
+      // Only scan deals that actually closed or partially closed a position (never entry deals)
+      long dealEntry = HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
+      if(dealEntry != DEAL_ENTRY_OUT && dealEntry != DEAL_ENTRY_INOUT && dealEntry != DEAL_ENTRY_OUT_BY) continue;
+
       string sigId = ExtractSignalIdFromText(HistoryDealGetString(dealTicket, DEAL_COMMENT));
       if(sigId == "")
       {
@@ -1726,10 +1730,14 @@ void SyncClosedHistoricalTrades()
       for(int p = PositionsTotal() - 1; p >= 0; p--)
       {
          ulong pTicket = PositionGetTicket(p);
-         if(pTicket > 0 && (long)PositionGetInteger(POSITION_IDENTIFIER) == posId)
+         if(pTicket > 0)
          {
-            isOpen = true;
-            break;
+            ulong pId = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
+            if((long)pId == posId || (long)pTicket == posId)
+            {
+               isOpen = true;
+               break;
+            }
          }
       }
 

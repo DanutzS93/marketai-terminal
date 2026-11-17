@@ -101,7 +101,7 @@ export interface TradingSignal {
   targetPrice3: number;
   riskRewardRatio: string;
   confidencePercent: number;
-  status: 'ACTIVE' | 'TARGET_HIT' | 'EXPIRED' | 'CANCELLED' | 'CLOSED';
+  status: 'ACTIVE' | 'RUNNING' | 'TARGET_HIT' | 'EXPIRED' | 'CANCELLED' | 'CLOSED';
   outcomeStatus?:
     | 'PENDING'
     | 'RUNNING'

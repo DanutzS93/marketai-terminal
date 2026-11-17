@@ -21,7 +21,7 @@ import { UsdHighImpactWarningModal, EconomicNewsEvent } from './components/UsdHi
 import { DailyMacroBriefingModal } from './components/DailyMacroBriefingModal';
 import { SessionProfitabilityBentoModule } from './components/SessionProfitabilityBentoModule';
 import { MarketQuote, TradingSignal, InstrumentId, TimeFrame, UserApiKeys, CustomSignalRule, UserProfile, TradeJournalEntry, DailyMacroBriefing } from './types';
-import { evaluateSignalOutcome, filter30DaySignals, mergeSignals, reconcileSignalsWithJournal } from './utils/signalUtils';
+import { evaluateSignalOutcome, filter30DaySignals, mergeSignals, reconcileSignalsWithJournal, symbolsMatch } from './utils/signalUtils';
 import { getMarketScheduleStatus, isSignalExpiredByMarketClose } from './utils/marketSchedule';
 import { INITIAL_SAMPLE_TRADES, isDemoOrSampleTrade, getLocalDateKey, formatTimeFromDate } from './utils/tradeJournalUtils';
 import { ShieldCheck, Info, Sparkles, BarChart2, Sliders, Newspaper, LayoutGrid, AlertTriangle } from 'lucide-react';
@@ -403,28 +403,51 @@ export default function App() {
             if (Array.isArray(data.user.signals) && data.user.signals.length > 0) {
               setSignals((prevSignals) => {
                 let hasChanges = false;
+                const MILESTONE_RANK: Record<string, number> = {
+                  PENDING: 0,
+                  RUNNING: 1,
+                  TP1_HIT: 2,
+                  TP2_HIT: 3,
+                  TP3_HIT: 4,
+                };
+
                 const updated = prevSignals.map((s) => {
                   const srv = data.user.signals.find((sig: any) => String(sig.id) === String(s.id));
                   if (!srv) return s;
 
                   const isMt5PendingOrder = Array.isArray(data.user.mt5OpenOrders) && data.user.mt5OpenOrders.some((o: any) =>
-                    o && (String(o.signalId) === String(s.id) || String(o.signalId) === String(s.signal_id))
+                    o && (
+                      (o.signalId && (String(o.signalId) === String(s.id) || String(o.signalId) === String(s.signal_id))) ||
+                      (o.symbol && symbolsMatch(s.instrumentId, s.symbol, o.symbol))
+                    )
                   );
                   const isMt5OpenPos = Array.isArray(data.user.mt5OpenPositions) && data.user.mt5OpenPositions.some((p: any) =>
-                    p && (String(p.signalId) === String(s.id) || String(p.signalId) === String(s.signal_id))
+                    p && (
+                      (p.signalId && (String(p.signalId) === String(s.id) || String(p.signalId) === String(s.signal_id))) ||
+                      (p.symbol && (s.status === 'RUNNING' || s.isEntryTriggered) && symbolsMatch(s.instrumentId, s.symbol, p.symbol))
+                    )
                   );
 
                   const isExplicitManual = s.isManualClose === true || s.closedManually === true || (typeof s.outcomeStatus === 'string' && s.outcomeStatus.startsWith('MANUAL_'));
+                  const isMt5Signal = Boolean(s.accountSource === 'MT5' || s.mt5Placed || s.placedAccounts?.['acc_1'] || s.placedAccounts?.['acc_2']);
+                  const isMt5Connected = Boolean(data.user.mt5AccountNumber);
+                  const isConfirmedClosedInMt5 = isMt5Connected && isMt5Signal && !isMt5OpenPos && !isMt5PendingOrder;
 
-                  const isClosedSignal = !isMt5PendingOrder && !isMt5OpenPos && (
+                  const isClosedSignal =
                     s.status === 'CLOSED' ||
                     s.status === 'CANCELLED' ||
-                    (isExplicitManual && s.closedAt !== undefined) ||
-                    s.outcomeStatus === 'CANCELLED' ||
-                    s.outcomeStatus === 'TP3_HIT' ||
-                    s.outcomeStatus === 'SL_HIT' ||
-                    (typeof s.outcomeStatus === 'string' && s.outcomeStatus.startsWith('MANUAL_'))
-                  );
+                    s.closedAt !== undefined ||
+                    srv.status === 'CLOSED' ||
+                    srv.status === 'CANCELLED' ||
+                    srv.closedAt !== undefined ||
+                    (isConfirmedClosedInMt5 && (srv.status === 'CLOSED' || s.status === 'RUNNING')) ||
+                    (!isMt5OpenPos && !isMt5PendingOrder && (
+                      (isExplicitManual && s.closedAt !== undefined) ||
+                      s.outcomeStatus === 'CANCELLED' ||
+                      s.outcomeStatus === 'TP3_HIT' ||
+                      s.outcomeStatus === 'SL_HIT' ||
+                      (typeof s.outcomeStatus === 'string' && s.outcomeStatus.startsWith('MANUAL_'))
+                    ));
 
                   const isPendingOrder = isMt5PendingOrder || ((!s.outcomeStatus || s.outcomeStatus === 'PENDING') && !s.isEntryTriggered && !isMt5OpenPos);
 
@@ -434,7 +457,7 @@ export default function App() {
                     const p = data.user.mt5OpenPositions.find((pos: any) =>
                       pos && (
                         (pos.signalId && (String(pos.signalId) === String(s.id) || String(pos.signalId) === String(s.signal_id))) ||
-                        (pos.symbol && s.symbol && pos.symbol.toUpperCase().replace(/[^A-Z0-9]/g, '').includes(s.symbol.toUpperCase().replace(/[^A-Z0-9]/g, '')))
+                        (pos.symbol && symbolsMatch(s.instrumentId, s.symbol, pos.symbol))
                       )
                     );
                     if (p && typeof p.profit === 'number') {
@@ -448,7 +471,9 @@ export default function App() {
                   let newStatus = srv.status;
                   let newOutcome = srv.outcomeStatus;
 
-                  if (isMt5PendingOrder) {
+                  if (isClosedSignal || srv.status === 'CLOSED') {
+                    newStatus = 'CLOSED';
+                  } else if (isMt5PendingOrder) {
                     newStatus = 'ACTIVE';
                     newOutcome = 'PENDING';
                   } else if (isMt5OpenPos) {
@@ -461,6 +486,7 @@ export default function App() {
                   }
 
                   const srvIsClosed =
+                    newStatus === 'CLOSED' ||
                     srv.status === 'CLOSED' ||
                     srv.status === 'CANCELLED' ||
                     srv.realizedProfit !== undefined ||
@@ -472,13 +498,18 @@ export default function App() {
                   const isCurrentMilestone = ['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT', 'CANCELLED'].includes(s.outcomeStatus || '');
                   const isDowngradeToRunning = isCurrentMilestone && (newOutcome === 'RUNNING' || newOutcome === 'PENDING');
 
+                  const curRank = MILESTONE_RANK[s.outcomeStatus || ''] ?? -1;
+                  const nxtRank = MILESTONE_RANK[newOutcome || ''] ?? -1;
+                  const isMilestoneDowngrade = curRank >= 2 && nxtRank < curRank && !srvIsClosed;
+
                   // Never overwrite live streaming prices with stale server snapshots
                   // Never overwrite unactivated pending limit orders with stale server RUNNING status
-                  // Never downgrade achieved TP1/TP2 milestones back to RUNNING or PENDING
+                  // Never downgrade achieved TP1/TP2 milestones back to a lower milestone or RUNNING
                   const canAcceptOutcome =
                     newOutcome &&
                     s.outcomeStatus !== newOutcome &&
                     !isDowngradeToRunning &&
+                    !isMilestoneDowngrade &&
                     (srvIsClosed || (!(isPendingOrder && newOutcome === 'RUNNING') &&
                      s.outcomeStatus !== 'SL_HIT' &&
                      s.outcomeStatus !== 'TP3_HIT' &&
@@ -487,13 +518,14 @@ export default function App() {
                   const canAcceptStatus =
                     newStatus &&
                     s.status !== newStatus &&
-                    (srvIsClosed || !(isPendingOrder && newStatus === 'RUNNING'));
+                    (srvIsClosed || !(isPendingOrder && newStatus === 'RUNNING') || !(s.status === 'CLOSED' && newStatus === 'RUNNING'));
 
                   const triggerNeedsReset = isMt5PendingOrder && s.isEntryTriggered;
                   const triggerNeedsSet = isMt5OpenPos && !s.isEntryTriggered;
 
                   if (
                     (newLiveProfit !== undefined && s.liveProfit !== newLiveProfit) ||
+                    (newLiveProfit === undefined && s.liveProfit !== undefined) ||
                     (newPnl !== undefined && s.pnl !== newPnl) ||
                     canAcceptStatus ||
                     canAcceptOutcome ||
@@ -505,7 +537,7 @@ export default function App() {
                     hasChanges = true;
                     return {
                       ...s,
-                      liveProfit: newLiveProfit !== undefined ? newLiveProfit : s.liveProfit,
+                      liveProfit: newLiveProfit,
                       pnl: newPnl !== undefined ? newPnl : s.pnl,
                       status: canAcceptStatus ? newStatus : s.status,
                       outcomeStatus: canAcceptOutcome ? newOutcome : s.outcomeStatus,
@@ -1697,9 +1729,28 @@ export default function App() {
       const milestoneJournalEntries: TradeJournalEntry[] = [];
 
       const updated = prevSignals.map((sig) => {
+        // MT5 PENDING & RUNNING CHECK:
+        const isMt5Pending = Array.isArray(user?.mt5OpenOrders) && user.mt5OpenOrders.some((o: any) =>
+          o && (
+            (o.signalId && (String(o.signalId) === String(sig.id) || String(o.signalId) === String(sig.signal_id))) ||
+            (o.symbol && symbolsMatch(sig.instrumentId, sig.symbol, o.symbol))
+          )
+        );
+        const isMt5Running = Array.isArray(user?.mt5OpenPositions) && user.mt5OpenPositions.some((p: any) =>
+          p && (
+            (p.signalId && (String(p.signalId) === String(sig.id) || String(p.signalId) === String(sig.signal_id))) ||
+            (p.symbol && (sig.status === 'RUNNING' || sig.isEntryTriggered) && symbolsMatch(sig.instrumentId, sig.symbol, p.symbol))
+          )
+        );
+
+        const isMt5Signal = Boolean(sig.accountSource === 'MT5' || sig.mt5Placed);
+        const isConfirmedClosedInMt5 = Boolean(user?.mt5AccountNumber) && isMt5Signal && !isMt5Running && !isMt5Pending;
+
         const isClosedSignal =
           sig.status === 'CLOSED' ||
           sig.status === 'CANCELLED' ||
+          sig.closedAt !== undefined ||
+          isConfirmedClosedInMt5 ||
           sig.outcomeStatus === 'CANCELLED' ||
           sig.outcomeStatus === 'TP3_HIT' ||
           sig.outcomeStatus === 'SL_HIT' ||
@@ -1707,14 +1758,14 @@ export default function App() {
           ((sig.isManualClose === true || sig.closedManually === true) && sig.closedAt !== undefined);
 
         if (isClosedSignal) {
-          if (sig.outcomeStatus === 'PENDING' || sig.outcomeStatus === 'RUNNING' || !sig.outcomeStatus) {
+          if (sig.status !== 'CLOSED' && sig.status !== 'CANCELLED') {
             hasChanges = true;
             const effectivePnl = sig.pnl !== undefined ? sig.pnl : sig.realizedProfit;
             const isManual = sig.isManualClose === true || sig.closedManually === true;
             let termOutcome: NonNullable<TradingSignal['outcomeStatus']>;
             if (effectivePnl !== undefined && effectivePnl !== 0) {
               termOutcome = effectivePnl > 0 ? (isManual ? 'MANUAL_PROFIT' : 'TP1_HIT') : (isManual ? 'MANUAL_LOSS' : 'SL_HIT');
-            } else if (sig.status === 'CANCELLED') {
+            } else if (sig.outcomeStatus === 'CANCELLED') {
               termOutcome = 'CANCELLED';
             } else if (isManual) {
               termOutcome = 'MANUAL_BE';
@@ -1723,8 +1774,9 @@ export default function App() {
             }
             return {
               ...sig,
-              status: (sig.status === 'CANCELLED' ? 'CANCELLED' : 'CLOSED') as TradingSignal['status'],
-              outcomeStatus: termOutcome,
+              status: 'CLOSED' as const,
+              outcomeStatus: ['TP1_HIT', 'TP2_HIT', 'TP3_HIT', 'SL_HIT', 'CANCELLED'].includes(sig.outcomeStatus || '') ? sig.outcomeStatus : termOutcome,
+              liveProfit: undefined,
             };
           }
           return sig;
@@ -1733,15 +1785,6 @@ export default function App() {
         const liveQuote = quotes[sig.instrumentId];
         const evalPrice = liveQuote && liveQuote.price > 0 ? liveQuote.price : (sig.currentMarketPrice || sig.entryPrice || 0);
 
-        // MT5 PENDING ORDER CHECK:
-        // When a trade is placed in MT5 and waiting as a pending limit/stop order, its status must be taken strictly from MT5.
-        // It only becomes RUNNING when MT5 actually executes it into an open position.
-        const isMt5Pending = Array.isArray(user?.mt5OpenOrders) && user.mt5OpenOrders.some((o: any) =>
-          o && (String(o.signalId) === String(sig.id) || String(o.signalId) === String(sig.signal_id))
-        );
-        const isMt5Running = Array.isArray(user?.mt5OpenPositions) && user.mt5OpenPositions.some((p: any) =>
-          p && (String(p.signalId) === String(sig.id) || String(p.signalId) === String(sig.signal_id))
-        );
         const isPendingType = Boolean(sig.executionType?.includes('LIMIT') || sig.executionType?.includes('STOP'));
         const isWaitingMt5Entry = (isMt5Pending || ((sig.mt5Placed || sig.accountSource === 'MT5') && isPendingType && !sig.isEntryTriggered)) && !isMt5Running;
 
