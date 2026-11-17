@@ -8378,7 +8378,17 @@ app.post('/api/mt5/account', async (req, res) => {
             }
           }
 
-          // Safety: ensure any CLOSED/CANCELLED signal never has liveProfit attached
+          // Safety: ensure any signal NOT claimed as open MT5 position never has liveProfit attached
+          if (!claimedSignalIds.has(String(s.id))) {
+            if (s.liveProfit !== undefined) {
+              delete s.liveProfit;
+              didChange = true;
+            }
+            if (s.mt5Ticket !== undefined && s.status !== 'RUNNING') {
+              delete s.mt5Ticket;
+              didChange = true;
+            }
+          }
           if (s.status === 'CLOSED' || s.status === 'CANCELLED') {
             if (s.liveProfit !== undefined) {
               delete s.liveProfit;
