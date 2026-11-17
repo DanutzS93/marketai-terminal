@@ -8674,13 +8674,15 @@ app.post('/api/mt5/update', async (req, res) => {
           const isMarket = target.executionType && target.executionType.toUpperCase().includes('MARKET');
           const fallbackOutcome = (isMarket || target.isEntryTriggered) ? 'RUNNING' : 'PENDING';
           let effOutcome = outcomeStatus || target.outcomeStatus;
-          if (milestone === 'TP3' || outcomeStatus === 'TP3_HIT' || target.firstHitMilestone === 'TP3' || target.outcomeStatus === 'TP3_HIT') {
+          if (outcomeStatus === 'SL_HIT' || milestone === 'SL_HIT' || (target.status === 'CLOSED' && target.pnl !== undefined && target.pnl < 0 && !outcomeStatus?.startsWith('TP'))) {
+            effOutcome = 'SL_HIT';
+          } else if (milestone === 'TP3' || outcomeStatus === 'TP3_HIT' || target.firstHitMilestone === 'TP3') {
             effOutcome = 'TP3_HIT';
             target.firstHitMilestone = target.firstHitMilestone || 'TP3';
-          } else if (milestone === 'TP2' || outcomeStatus === 'TP2_HIT' || target.firstHitMilestone === 'TP2' || target.outcomeStatus === 'TP2_HIT') {
+          } else if (milestone === 'TP2' || outcomeStatus === 'TP2_HIT' || target.firstHitMilestone === 'TP2') {
             effOutcome = 'TP2_HIT';
             target.firstHitMilestone = target.firstHitMilestone || 'TP2';
-          } else if (milestone === 'TP1_BREAK_EVEN' || milestone === 'TP1' || outcomeStatus === 'TP1_HIT' || target.firstHitMilestone === 'TP1' || target.outcomeStatus === 'TP1_HIT') {
+          } else if (milestone === 'TP1_BREAK_EVEN' || milestone === 'TP1' || outcomeStatus === 'TP1_HIT' || target.firstHitMilestone === 'TP1') {
             effOutcome = 'TP1_HIT';
             target.firstHitMilestone = target.firstHitMilestone || 'TP1';
           } else if (isTradeCancel) {
@@ -8690,7 +8692,7 @@ app.post('/api/mt5/update', async (req, res) => {
           } else if (isTpOrSlOutcome) {
             effOutcome = outcomeStatus || target.outcomeStatus;
           } else if (!effOutcome || effOutcome === 'OPENED' || effOutcome === 'PROFIT') {
-            if (['TP1_HIT', 'TP2_HIT', 'TP3_HIT'].includes(target.outcomeStatus)) {
+            if (['TP1_HIT', 'TP2_HIT', 'TP3_HIT'].includes(target.outcomeStatus) && (target.pnl === undefined || target.pnl >= 0)) {
               effOutcome = target.outcomeStatus;
             } else {
               effOutcome = target.status === 'CLOSED'
@@ -8918,6 +8920,132 @@ app.post('/api/mt5/update', async (req, res) => {
   } else {
     return res.status(401).json({ error: 'Unauthorized MT5 API Token' });
   }
+});
+
+app.post('/api/mt5/historical-deals-batch', async (req, res) => {
+  const token = extractMt5Token(req);
+  if (!token) {
+    return res.status(401).json({ error: 'Unauthorized MT5 API Token' });
+  }
+
+  const { user: matchedUser, allUsers: users } = resolveUserByMt5Token(token);
+  if (!matchedUser) {
+    return res.status(401).json({ error: 'Unauthorized MT5 API Token' });
+  }
+
+  let body = req.body;
+  if (typeof body === 'string') {
+    try {
+      body = JSON.parse(body.replace(/\0/g, ''));
+    } catch (e) {}
+  }
+  if (!body || typeof body !== 'object') body = {};
+
+  let deals = body.deals;
+  if (typeof deals === 'string') {
+    try { deals = JSON.parse(deals); } catch (_) {}
+  }
+  if (!Array.isArray(deals)) {
+    return res.status(400).json({ error: 'Missing deals array' });
+  }
+
+  console.log(`[MT5 Historical Batch] Received ${deals.length} deals for user ${matchedUser.username}`);
+  let updatedCount = 0;
+  let didChange = false;
+
+  if (Array.isArray(matchedUser.signals)) {
+    for (const d of deals) {
+      if (!d || d.posId === undefined) continue;
+      const netProfit = typeof d.netProfit === 'number' ? Math.round(d.netProfit * 100) / 100 : parseFloat(d.netProfit);
+      if (isNaN(netProfit)) continue;
+
+      let matchedSig: any = null;
+      if (d.signalId) {
+        matchedSig = matchedUser.signals.find((s: any) =>
+          String(s.id) === String(d.signalId) || String(s.signal_id) === String(d.signalId)
+        );
+      }
+      if (!matchedSig && d.posId) {
+        matchedSig = matchedUser.signals.find((s: any) =>
+          Number(s.mt5Ticket) === Number(d.posId)
+        );
+      }
+      if (!matchedSig && d.symbol && d.openTime) {
+        const dOpenMs = Number(d.openTime) * 1000;
+        const candidates = matchedUser.signals.filter((s: any) =>
+          symbolsMatch(s.instrumentId, s.symbol, d.symbol)
+        );
+        let bestDist = Infinity;
+        let bestCandidate: any = null;
+        for (const cand of candidates) {
+          const candCreatedMs = cand.createdAt ? new Date(cand.createdAt).getTime() : 0;
+          if (candCreatedMs > 0) {
+            const dist = Math.abs(candCreatedMs - dOpenMs);
+            if (dist < 4 * 3600 * 1000 && dist < bestDist) {
+              bestDist = dist;
+              bestCandidate = cand;
+            }
+          }
+        }
+        matchedSig = bestCandidate;
+      }
+
+      if (matchedSig) {
+        let changed = false;
+        if (matchedSig.pnl !== netProfit) {
+          matchedSig.pnl = netProfit;
+          matchedSig.realizedProfit = netProfit;
+          changed = true;
+        }
+        if (matchedSig.status !== 'CLOSED') {
+          matchedSig.status = 'CLOSED';
+          changed = true;
+        }
+        if (matchedSig.liveProfit !== undefined) {
+          delete matchedSig.liveProfit;
+          changed = true;
+        }
+        if (d.exitPrice && Number(d.exitPrice) > 0 && matchedSig.exitPrice !== Number(d.exitPrice)) {
+          matchedSig.exitPrice = Number(d.exitPrice);
+          changed = true;
+        }
+        if (d.closeTime && Number(d.closeTime) > 0) {
+          const closeIso = new Date(Number(d.closeTime) * 1000).toISOString();
+          matchedSig.closedAt = closeIso;
+          changed = true;
+        }
+
+        const isManual = d.isManual === true || d.isManual === 'true';
+        if (isManual) {
+          matchedSig.outcomeStatus = netProfit > 0 ? 'MANUAL_PROFIT' : (netProfit < 0 ? 'MANUAL_LOSS' : 'MANUAL_BE');
+          matchedSig.isManualClose = true;
+          matchedSig.closedManually = true;
+          changed = true;
+        } else if (netProfit < 0) {
+          matchedSig.outcomeStatus = 'SL_HIT';
+          changed = true;
+        } else if (netProfit > 0) {
+          if (!['TP2_HIT', 'TP3_HIT'].includes(matchedSig.outcomeStatus)) {
+            matchedSig.outcomeStatus = 'TP1_HIT';
+          }
+          changed = true;
+        }
+
+        if (changed) {
+          updatedCount++;
+          didChange = true;
+        }
+      }
+    }
+  }
+
+  if (didChange) {
+    await saveUsersDb(users, matchedUser.id);
+    invalidateMt5SignalsCache(matchedUser.id);
+    console.log(`[MT5 Historical Batch] Reconciled ${updatedCount} signals with real broker PnL for ${matchedUser.username}`);
+  }
+
+  return res.json({ success: true, updatedCount });
 });
 
 // =========================================================================================

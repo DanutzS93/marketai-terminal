@@ -928,6 +928,7 @@ int OnInit()
    // Register any existing open positions and sync historical closed trades from MT5
    RegisterOpenPositions();
    SyncClosedHistoricalTrades();
+   ExportAllClosedPositionsDump();
    
    // Send immediate initial sync on startup
    SendAccountSync();
@@ -1079,9 +1080,10 @@ void OnTimer()
    CheckCancelledOrdersInHistory();
 
    // Sync historical closed trades periodically every ~3 minutes (every 90 timer ticks = 180s when interval=2)
-   if(syncCounter % 90 == 0)
+   if(syncCounter % 15 == 0)
    {
       SyncClosedHistoricalTrades();
+      ExportAllClosedPositionsDump();
    }
 
    // Sync account and open positions:
@@ -1677,83 +1679,118 @@ void SyncClosedHistoricalTrades()
 {
    static long g_syncedClosedPosIds[];
 
-   // Phase 1: collect candidate (signalId, positionId) pairs from the last 30 days.
-   // We must NOT call GetRealizedProfitForPosition() inside this loop, because it
-   // changes the history selection and would corrupt the deal indexes being iterated.
-   string candSig[];
-   long   candPos[];
-   datetime fromTime = TimeCurrent() - (30 * 86400);
+   datetime fromTime = TimeCurrent() - (60 * 86400);
    if(!HistorySelect(fromTime, TimeCurrent() + 86400)) return;
 
    int dealsTotal = HistoryDealsTotal();
-   for(int i = dealsTotal - 1; i >= 0; i--)
+   if(dealsTotal <= 0) return;
+
+   ulong posIds[];
+   ArrayResize(posIds, 0);
+
+   for(int i = 0; i < dealsTotal; i++)
    {
-      ulong dealTicket = HistoryDealGetTicket(i);
-      if(dealTicket == 0) continue;
-
-      long magic = HistoryDealGetInteger(dealTicket, DEAL_MAGIC);
-      if(!(magic == InpMagicNumber || InpMagicNumber == 0)) continue;
-
-      // Only scan deals that actually closed or partially closed a position (never entry deals)
-      long dealEntry = HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
-      if(dealEntry != DEAL_ENTRY_OUT && dealEntry != DEAL_ENTRY_INOUT && dealEntry != DEAL_ENTRY_OUT_BY) continue;
-
-      string sigId = ExtractSignalIdFromText(HistoryDealGetString(dealTicket, DEAL_COMMENT));
-      if(sigId == "")
-      {
-         ulong ordTicket = (ulong)HistoryDealGetInteger(dealTicket, DEAL_ORDER);
-         if(HistoryOrderSelect(ordTicket))
-            sigId = ExtractSignalIdFromText(HistoryOrderGetString(ordTicket, ORDER_COMMENT));
-      }
-
-      long posId = HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
-      if(sigId == "" || posId <= 0) continue;
+      ulong t = HistoryDealGetTicket(i);
+      if(t == 0) continue;
+      long pId = HistoryDealGetInteger(t, DEAL_POSITION_ID);
+      if(pId <= 0) continue;
 
       bool known = false;
       for(int k = 0; k < ArraySize(g_syncedClosedPosIds); k++)
-         if(g_syncedClosedPosIds[k] == posId) { known = true; break; }
-      for(int c = 0; !known && c < ArraySize(candPos); c++)
-         if(candPos[c] == posId) known = true;
+      {
+         if(g_syncedClosedPosIds[k] == pId) { known = true; break; }
+      }
       if(known) continue;
 
-      int n = ArraySize(candPos);
-      ArrayResize(candPos, n + 1);
-      ArrayResize(candSig, n + 1);
-      candPos[n] = posId;
-      candSig[n] = sigId;
+      bool inArray = false;
+      for(int k = 0; k < ArraySize(posIds); k++)
+      {
+         if((long)posIds[k] == pId) { inArray = true; break; }
+      }
+      if(!inArray)
+      {
+         int sz = ArraySize(posIds);
+         ArrayResize(posIds, sz + 1);
+         posIds[sz] = (ulong)pId;
+      }
    }
 
-   // Phase 2: report each closed position; remember it only after the server confirmed
-   // Throttle: max 1 historical closed deal sync per run to avoid socket exhaustion (err 5203)
    int syncedCount = 0;
-   for(int c = 0; c < ArraySize(candPos); c++)
+   for(int p = 0; p < ArraySize(posIds); p++)
    {
-      long posId = candPos[c];
+      ulong pId = posIds[p];
 
+      // Check if position is currently open
       bool isOpen = false;
-      for(int p = PositionsTotal() - 1; p >= 0; p--)
+      for(int op = PositionsTotal() - 1; op >= 0; op--)
       {
-         ulong pTicket = PositionGetTicket(p);
-         if(pTicket > 0)
+         ulong curT = PositionGetTicket(op);
+         if(curT > 0 && ((ulong)PositionGetInteger(POSITION_IDENTIFIER) == pId || curT == pId))
          {
-            ulong pId = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
-            if((long)pId == posId || (long)pTicket == posId)
+            isOpen = true;
+            break;
+         }
+      }
+      if(isOpen) continue;
+
+      string sigId = "";
+      double totalProfit = 0.0;
+      double lastExitPrice = 0.0;
+      bool isManual = false;
+      int closeCount = 0;
+
+      if(HistorySelectByPosition((long)pId))
+      {
+         int pDeals = HistoryDealsTotal();
+         for(int d = 0; d < pDeals; d++)
+         {
+            ulong dt = HistoryDealGetTicket(d);
+            if(dt == 0) continue;
+            if((ulong)HistoryDealGetInteger(dt, DEAL_POSITION_ID) != pId) continue;
+
+            long entry = HistoryDealGetInteger(dt, DEAL_ENTRY);
+
+            totalProfit += HistoryDealGetDouble(dt, DEAL_PROFIT);
+            totalProfit += HistoryDealGetDouble(dt, DEAL_SWAP);
+            totalProfit += HistoryDealGetDouble(dt, DEAL_COMMISSION);
+            totalProfit += HistoryDealGetDouble(dt, DEAL_FEE);
+
+            if(sigId == "")
             {
-               isOpen = true;
-               break;
+               sigId = ExtractSignalIdFromText(HistoryDealGetString(dt, DEAL_COMMENT));
+               if(sigId == "")
+               {
+                  ulong ord = (ulong)HistoryDealGetInteger(dt, DEAL_ORDER);
+                  if(HistoryOrderSelect(ord))
+                     sigId = ExtractSignalIdFromText(HistoryOrderGetString(ord, ORDER_COMMENT));
+               }
+            }
+
+            if(entry == DEAL_ENTRY_OUT || entry == DEAL_ENTRY_INOUT || entry == DEAL_ENTRY_OUT_BY)
+            {
+               lastExitPrice = HistoryDealGetDouble(dt, DEAL_PRICE);
+               closeCount++;
+               long reason = HistoryDealGetInteger(dt, DEAL_REASON);
+               if(reason == 0 || reason == 1 || reason == 2) isManual = true;
             }
          }
       }
 
-      bool done = true;
-      if(!isOpen)
+      if(closeCount <= 0) continue;
+
+      if(sigId == "")
       {
-         double exitPrice = 0.0;
-         bool isManualClose = false;
-         double realPnl = GetRealizedProfitForPosition((ulong)posId, exitPrice, isManualClose);
+         int tIdx = FindTrackedTradeIndex(pId, 0);
+         if(tIdx >= 0 && trackedTrades[tIdx].signalId != "")
+            sigId = trackedTrades[tIdx].signalId;
+      }
+
+      if(sigId != "")
+      {
+         double realPnl = NormalizeDouble(totalProfit, 2);
          string outcome = "";
          string milestone = "";
-         if(isManualClose)
+         if(isManual)
          {
             outcome = (realPnl > 0.01) ? "MANUAL_PROFIT" : ((realPnl < -0.01) ? "MANUAL_LOSS" : "MANUAL_BE");
             milestone = "MANUAL_CLOSE";
@@ -1763,23 +1800,195 @@ void SyncClosedHistoricalTrades()
             outcome = (realPnl > 0.01) ? "TP1_HIT" : ((realPnl < -0.01) ? "SL_HIT" : "BREAKEVEN");
             milestone = "HISTORICAL_SYNC";
          }
-         done = SendTradeUpdate(candSig[c], "CLOSED", outcome, milestone, realPnl, exitPrice, isManualClose);
-      }
-
-      if(done)
-      {
-         int sz = ArraySize(g_syncedClosedPosIds);
-         ArrayResize(g_syncedClosedPosIds, sz + 1);
-         g_syncedClosedPosIds[sz] = posId;
-         syncedCount++;
-         if(syncedCount >= 1) break;
-      }
-      else
-      {
-         // If update failed (e.g. timeout / network), abort remaining candidates this cycle
-         break;
+         bool done = SendTradeUpdate(sigId, "CLOSED", outcome, milestone, realPnl, lastExitPrice, isManual);
+         if(done)
+         {
+            int sz = ArraySize(g_syncedClosedPosIds);
+            ArrayResize(g_syncedClosedPosIds, sz + 1);
+            g_syncedClosedPosIds[sz] = (long)pId;
+            syncedCount++;
+            if(syncedCount >= 5) break;
+         }
       }
    }
+}
+
+//+------------------------------------------------------------------+
+//| Export and sync ALL closed positions to Common/Files & Server    |
+//+------------------------------------------------------------------+
+void ExportAllClosedPositionsDump()
+{
+   static datetime lastDumpTime = 0;
+   if(TimeCurrent() - lastDumpTime < 15) return;
+   lastDumpTime = TimeCurrent();
+
+   datetime fromTime = TimeCurrent() - (60 * 86400);
+   if(!HistorySelect(fromTime, TimeCurrent() + 86400)) return;
+
+   int dealsTotal = HistoryDealsTotal();
+   if(dealsTotal <= 0) return;
+
+   ulong posIds[];
+   ArrayResize(posIds, 0);
+
+   for(int i = 0; i < dealsTotal; i++)
+   {
+      ulong t = HistoryDealGetTicket(i);
+      if(t == 0) continue;
+      long pId = HistoryDealGetInteger(t, DEAL_POSITION_ID);
+      if(pId <= 0) continue;
+
+      bool inArray = false;
+      for(int k = 0; k < ArraySize(posIds); k++)
+      {
+         if((long)posIds[k] == pId) { inArray = true; break; }
+      }
+      if(!inArray)
+      {
+         int sz = ArraySize(posIds);
+         ArrayResize(posIds, sz + 1);
+         posIds[sz] = (ulong)pId;
+      }
+   }
+
+   string q = CharToString(34);
+   string json = "[";
+   int addedCount = 0;
+
+   for(int p = 0; p < ArraySize(posIds); p++)
+   {
+      ulong pId = posIds[p];
+
+      bool isOpen = false;
+      for(int op = PositionsTotal() - 1; op >= 0; op--)
+      {
+         ulong curT = PositionGetTicket(op);
+         if(curT > 0 && ((ulong)PositionGetInteger(POSITION_IDENTIFIER) == pId || curT == pId))
+         {
+            isOpen = true;
+            break;
+         }
+      }
+
+      double totalProfit = 0.0;
+      double lastExitPrice = 0.0;
+      double openPrice = 0.0;
+      double vol = 0.0;
+      string sym = "";
+      string sigId = "";
+      datetime openTime = 0;
+      datetime closeTime = 0;
+      long dealType = -1;
+      bool isManual = false;
+      int closeDealCount = 0;
+
+      if(HistorySelectByPosition((long)pId))
+      {
+         int pDeals = HistoryDealsTotal();
+         for(int d = 0; d < pDeals; d++)
+         {
+            ulong dt = HistoryDealGetTicket(d);
+            if(dt == 0) continue;
+            if((ulong)HistoryDealGetInteger(dt, DEAL_POSITION_ID) != pId) continue;
+
+            sym = HistoryDealGetString(dt, DEAL_SYMBOL);
+            long entry = HistoryDealGetInteger(dt, DEAL_ENTRY);
+            datetime dTime = (datetime)HistoryDealGetInteger(dt, DEAL_TIME);
+
+            totalProfit += HistoryDealGetDouble(dt, DEAL_PROFIT);
+            totalProfit += HistoryDealGetDouble(dt, DEAL_SWAP);
+            totalProfit += HistoryDealGetDouble(dt, DEAL_COMMISSION);
+            totalProfit += HistoryDealGetDouble(dt, DEAL_FEE);
+
+            if(sigId == "")
+            {
+               sigId = ExtractSignalIdFromText(HistoryDealGetString(dt, DEAL_COMMENT));
+               if(sigId == "")
+               {
+                  ulong ord = (ulong)HistoryDealGetInteger(dt, DEAL_ORDER);
+                  if(HistoryOrderSelect(ord))
+                     sigId = ExtractSignalIdFromText(HistoryOrderGetString(ord, ORDER_COMMENT));
+               }
+            }
+
+            if(entry == DEAL_ENTRY_IN)
+            {
+               openPrice = HistoryDealGetDouble(dt, DEAL_PRICE);
+               vol += HistoryDealGetDouble(dt, DEAL_VOLUME);
+               openTime = dTime;
+               dealType = HistoryDealGetInteger(dt, DEAL_TYPE);
+            }
+            else if(entry == DEAL_ENTRY_OUT || entry == DEAL_ENTRY_INOUT || entry == DEAL_ENTRY_OUT_BY)
+            {
+               lastExitPrice = HistoryDealGetDouble(dt, DEAL_PRICE);
+               closeTime = dTime;
+               closeDealCount++;
+               long reason = HistoryDealGetInteger(dt, DEAL_REASON);
+               if(reason == 0 || reason == 1 || reason == 2) isManual = true;
+            }
+         }
+      }
+
+      if(sigId == "")
+      {
+         int tIdx = FindTrackedTradeIndex(pId, 0);
+         if(tIdx >= 0 && trackedTrades[tIdx].signalId != "")
+            sigId = trackedTrades[tIdx].signalId;
+      }
+
+      if(closeDealCount > 0 && !isOpen)
+      {
+         if(addedCount > 0) json += ",";
+         json += "{" + q + "posId" + q + ":" + IntegerToString((long)pId) +
+                 "," + q + "symbol" + q + ":" + q + sym + q +
+                 "," + q + "signalId" + q + ":" + q + sigId + q +
+                 "," + q + "netProfit" + q + ":" + DoubleToString(NormalizeDouble(totalProfit, 2), 2) +
+                 "," + q + "openPrice" + q + ":" + DoubleToString(openPrice, 5) +
+                 "," + q + "exitPrice" + q + ":" + DoubleToString(lastExitPrice, 5) +
+                 "," + q + "volume" + q + ":" + DoubleToString(vol, 2) +
+                 "," + q + "type" + q + ":" + q + (dealType == DEAL_TYPE_BUY ? "BUY" : (dealType == DEAL_TYPE_SELL ? "SELL" : "UNKNOWN")) + q +
+                 "," + q + "openTime" + q + ":" + IntegerToString((long)openTime) +
+                 "," + q + "closeTime" + q + ":" + IntegerToString((long)closeTime) +
+                 "," + q + "isManual" + q + ":" + (isManual ? "true" : "false") + "}";
+         addedCount++;
+      }
+   }
+
+   json += "]";
+
+   // Write to Common/Files/mt5_closed_deals_dump.json
+   int hCommon = FileOpen("mt5_closed_deals_dump.json", FILE_WRITE|FILE_TXT|FILE_COMMON|FILE_ANSI);
+   if(hCommon != INVALID_HANDLE)
+   {
+      FileWriteString(hCommon, json);
+      FileClose(hCommon);
+      Print("[MarketAI] Istoric salvat in Common/Files/mt5_closed_deals_dump.json: ", addedCount, " pozitii inchise");
+   }
+
+   // Also write to local MQL5/Files/mt5_closed_deals_dump.json
+   int hLocal = FileOpen("mt5_closed_deals_dump.json", FILE_WRITE|FILE_TXT|FILE_ANSI);
+   if(hLocal != INVALID_HANDLE)
+   {
+      FileWriteString(hLocal, json);
+      FileClose(hLocal);
+   }
+
+   // Send batch via WebRequest
+   string cleanKey = GetCleanApiKey();
+   string origin = ForceHttps("${currentOrigin}");
+   string syncBatchUrl = origin + "/api/mt5/historical-deals-batch";
+   string headers = "Authorization: Bearer " + cleanKey + "\\r\\n" +
+                    "Content-Type: application/json\\r\\n" +
+                    "User-Agent: Mozilla/5.0 MarketAI-Bridge/${MT5_EA_VERSION}\\r\\n" +
+                    "Connection: close\\r\\n";
+   string postPayload = "{" + q + "apiKey" + q + ":" + q + cleanKey + q + "," + q + "deals" + q + ":" + json + "}";
+   char data[];
+   char result[];
+   string result_headers;
+   int copied = StringToCharArray(postPayload, data, 0, WHOLE_ARRAY, CP_UTF8);
+   if(copied > 0 && data[copied - 1] == 0) ArrayResize(data, copied - 1);
+   ResetLastError();
+   WebRequest("POST", syncBatchUrl, headers, 10000, data, result, result_headers);
 }
 
 //+------------------------------------------------------------------+
