@@ -1235,16 +1235,17 @@ void SendAccountSync()
       {
          string comm = PositionGetString(POSITION_COMMENT);
          string sigId = ExtractSignalIdFromText(comm);
+         string sym = PositionGetString(POSITION_SYMBOL);
+         string chartTargetSym = (InpBrokerSymbol != "") ? InpBrokerSymbol : _Symbol;
          ulong posId = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
          if(sigId == "")
          {
             int tIdx = FindTrackedTradeIndex(posId, t);
             if(tIdx >= 0 && trackedTrades[tIdx].signalId != "")
                sigId = trackedTrades[tIdx].signalId;
-            else if(activeSignalId != "")
+            else if(activeSignalId != "" && (DoSymbolsMatch(sym, chartTargetSym) || DoSymbolsMatch(sym, _Symbol)))
                sigId = activeSignalId;
          }
-         string sym = PositionGetString(POSITION_SYMBOL);
          long pType = PositionGetInteger(POSITION_TYPE);
          double oPrice = PositionGetDouble(POSITION_PRICE_OPEN);
          double cPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
@@ -1461,7 +1462,9 @@ bool SendTradeUpdate(string signalId, string status, string outcome, string mile
    // Always send exact broker realized PnL / profit extracted directly from MT5
    string pnlJson = ",\\"pnl\\":" + DoubleToString(pnl, 2) + ",\\"profit\\":" + DoubleToString(pnl, 2);
    
+   string targetSymbol = (InpBrokerSymbol != "") ? InpBrokerSymbol : _Symbol;
    string payload = "{\\"signal_id\\":\\"" + signalId + "\\"," +
+                    "\\"symbol\\":\\"" + targetSymbol + "\\",\\"" +
                     "\\"status\\":\\"" + status + "\\"," +
                     "\\"outcomeStatus\\":\\"" + outcome + "\\"," +
                     "\\"milestone\\":\\"" + milestone + "\\"," +
@@ -1566,18 +1569,19 @@ void RegisterOpenPositions()
       {
          string comm = PositionGetString(POSITION_COMMENT);
          string sigId = ExtractSignalIdFromText(comm);
+         string sym = PositionGetString(POSITION_SYMBOL);
+         string chartTargetSym = (InpBrokerSymbol != "") ? InpBrokerSymbol : _Symbol;
          ulong posId = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
          if(sigId == "")
          {
             int tIdx = FindTrackedTradeIndex(posId, t);
             if(tIdx >= 0 && trackedTrades[tIdx].signalId != "")
                sigId = trackedTrades[tIdx].signalId;
-            else if(activeSignalId != "")
+            else if(activeSignalId != "" && (DoSymbolsMatch(sym, chartTargetSym) || DoSymbolsMatch(sym, _Symbol)))
                sigId = activeSignalId;
          }
          if(sigId != "")
          {
-            string sym = PositionGetString(POSITION_SYMBOL);
             long pType = PositionGetInteger(POSITION_TYPE);
             double oPrice = PositionGetDouble(POSITION_PRICE_OPEN);
             double vol = PositionGetDouble(POSITION_VOLUME);

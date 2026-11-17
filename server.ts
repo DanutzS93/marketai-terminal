@@ -7699,13 +7699,14 @@ app.all(['/api/mt5/signals', '/api/mt5/signals/poll'], (req, res) => {
       let matchedSig: any = null;
       if (rawSigId) {
         matchedSig = matchedUser.signals.find((s: any) =>
-          String(s.id) === String(rawSigId) || String(s.signal_id) === String(rawSigId)
+          (String(s.id) === String(rawSigId) || String(s.signal_id) === String(rawSigId)) &&
+          (!symbolParam || symbolsMatch(s.instrumentId, s.symbol, symbolParam))
         );
       }
       if (!matchedSig && symbolParam) {
         // Only match signals that are already confirmed entered or market orders (NEVER falsely trigger a pending limit order!)
         matchedSig = matchedUser.signals.find((s: any) =>
-          (s.isEntryTriggered || (s.executionType && s.executionType.toUpperCase().includes('MARKET'))) &&
+          (s.isEntryTriggered || (s.executionType && s.executionType.toUpperCase().includes('MARKET')) || s.status === 'RUNNING') &&
           (s.status === 'RUNNING' || s.status === 'ACTIVE' || !s.status) &&
           symbolsMatch(s.instrumentId, s.symbol, symbolParam)
         );
@@ -8143,19 +8144,22 @@ app.post('/api/mt5/account', async (req, res) => {
       matchedUser.mt5OpenPositions = positions;
       didChange = true;
 
-      // Track which signals are actively open in MT5 during this sync
+      // Track which signals and position tickets are actively matched in MT5 during this sync
       const claimedSignalIds = new Set<string>();
+      const matchedPosTickets = new Set<number>();
 
       if (Array.isArray(matchedUser.signals)) {
-        // Pass 1: Match by explicit signalId if present on the position
+        // Pass 1: Match by explicit signalId if present on the position AND symbol matches
         for (const pos of positions) {
           if (!pos || !pos.signalId) continue;
           const sig = matchedUser.signals.find((s: any) =>
             !claimedSignalIds.has(String(s.id)) &&
-            (String(s.id) === String(pos.signalId) || String(s.signal_id) === String(pos.signalId))
+            (String(s.id) === String(pos.signalId) || String(s.signal_id) === String(pos.signalId)) &&
+            (!pos.symbol || symbolsMatch(s.instrumentId, s.symbol, pos.symbol))
           );
           if (sig) {
             claimedSignalIds.add(String(sig.id));
+            if (pos.ticket) matchedPosTickets.add(Number(pos.ticket));
             sig.mt5Ticket = pos.ticket;
             let sChanged = false;
             const pProfit = Number(pos.profit);
@@ -8194,20 +8198,27 @@ app.post('/api/mt5/account', async (req, res) => {
         // Pass 2: For positions without signalId (or whose signalId was unmatched), match by symbol
         for (const pos of positions) {
           if (!pos || !pos.symbol) continue;
-          if (pos.signalId && claimedSignalIds.has(String(pos.signalId))) continue;
+          if (pos.ticket && matchedPosTickets.has(Number(pos.ticket))) continue;
 
           // Find the best matching active signal for this symbol that is NOT yet claimed
-          const sig = matchedUser.signals.find((s: any) =>
+          const candidates = matchedUser.signals.filter((s: any) =>
             !claimedSignalIds.has(String(s.id)) &&
             s.status !== 'CLOSED' &&
             s.status !== 'CANCELLED' &&
             !s.closedAt &&
-            (s.isEntryTriggered || (s.executionType && s.executionType.toUpperCase().includes('MARKET')) || s.status === 'RUNNING') &&
             symbolsMatch(s.instrumentId, s.symbol, pos.symbol)
           );
+          candidates.sort((a: any, b: any) => {
+            const aRun = (a.status === 'RUNNING' || a.isEntryTriggered) ? 1 : 0;
+            const bRun = (b.status === 'RUNNING' || b.isEntryTriggered) ? 1 : 0;
+            if (aRun !== bRun) return bRun - aRun;
+            return (b.createdAt || '').localeCompare(a.createdAt || '');
+          });
+          const sig = candidates[0];
 
           if (sig) {
             claimedSignalIds.add(String(sig.id));
+            if (pos.ticket) matchedPosTickets.add(Number(pos.ticket));
             pos.signalId = sig.id; // Map back to MT5 position so future syncs and frontend have signalId
             sig.mt5Ticket = pos.ticket;
             let sChanged = false;
@@ -8481,7 +8492,7 @@ app.post('/api/mt5/update', async (req, res) => {
   }
   if (!body || typeof body !== 'object') body = {};
 
-  const { signal_id, status, outcomeStatus, milestone, accountBalance, equity, accountNumber, accountServer, accountCurrency, accountCompany, pnl, profit, exitPrice, isManualClose } = body;
+  const { signal_id, symbol, status, outcomeStatus, milestone, accountBalance, equity, accountNumber, accountServer, accountCurrency, accountCompany, pnl, profit, exitPrice, isManualClose } = body;
   const incomingPnl = pnl !== undefined ? pnl : profit;
 
   // Instant response for duplicate historical sync deals ONLY if already closed with same PnL
@@ -8560,8 +8571,8 @@ app.post('/api/mt5/update', async (req, res) => {
 
       if (matchedUser.signals) {
         const target = matchedUser.signals.find((s: any) => 
-          s.id === signal_id || 
-          s.signal_id === signal_id
+          (s.id === signal_id || s.signal_id === signal_id) &&
+          (!symbol || symbolsMatch(s.instrumentId, s.symbol, symbol))
         );
         if (target) {
           target.placedAccounts = target.placedAccounts || {};
