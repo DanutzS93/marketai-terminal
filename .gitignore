@@ -22,3 +22,4 @@ invite_codes_db.json
 *.bak
 *_db.json.bak
 fly.toml
+data/daily_macro_briefing_cache.json
