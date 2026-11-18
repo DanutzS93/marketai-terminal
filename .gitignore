@@ -14,3 +14,11 @@ invite_codes_db.json
 .env*
 !.env.example
 
+
+# Local MT5 EA copies / AI assistant caches (never commit: they can contain API keys)
+/*.mq5
+/*.ex5
+.aider*
+*.bak
+*_db.json.bak
+fly.toml

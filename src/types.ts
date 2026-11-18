@@ -363,6 +363,7 @@ export interface InviteCodeItem {
   expiresAt?: string;
   isActive?: boolean;
   note?: string;
+  tier?: SubscriptionTier; // pachetul primit de utilizatorii care se inregistreaza cu acest cod
 }
 
 export interface AuthState {

@@ -130,11 +130,60 @@ app.use(compression({
   }
 }));
 
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+// Body size limits: small for everyone (protects the event loop against huge unauthenticated payloads that
+// block the server and cause MT5 WebRequest 1003 timeouts). Larger bodies are accepted only on
+// /api/user/sync-data and only for an authenticated session token.
+const smallJsonParser = express.json({ limit: '5mb' });
+const largeJsonParser = express.json({ limit: '25mb' });
+const LARGE_BODY_PATHS = new Set(['/api/user/sync-data']);
+app.use((req, res, next) => {
+  if (LARGE_BODY_PATHS.has(req.path)) {
+    const t = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    if (t && findUserByAuthToken(t, loadUsersDb())) return largeJsonParser(req, res, next);
+  }
+  return smallJsonParser(req, res, next);
+});
+app.use(express.urlencoded({ limit: '5mb', extended: true }));
+
+// Bridge (MT5 / NinjaTrader) access guard: blocked accounts, Basic tier and expired subscriptions.
+// Expired subscriptions may still REPORT closes/account state (so history stays correct) but receive no new signals.
+const BRIDGE_SIGNAL_PATHS = new Set([
+  '/api/mt5/signals',
+  '/api/mt5/signals/poll',
+  '/api/ninjatrader/signals',
+  '/api/nt8/signals',
+]);
+app.use((req, res, next) => {
+  const p = req.path;
+  const isMt5 = p.startsWith('/api/mt5/');
+  const isNt8 = p.startsWith('/api/ninjatrader/') || p.startsWith('/api/nt8/');
+  if (!isMt5 && !isNt8) return next();
+  const token = isMt5 ? extractMt5Token(req) : extractNinjaTraderToken(req);
+  if (!token) return next(); // route itself answers 401
+  const { user } = isMt5 ? resolveUserByMt5Token(token) : resolveUserByNinjaTraderToken(token);
+  if (!user) return next(); // route itself answers 401
+  res.setHeader('Connection', 'close');
+  if (user.status === 'blocked') {
+    return res.status(403).json({ error: 'Contul MarketAI este blocat de administrator.' });
+  }
+  if (!tierAllowsEaExecution(user)) {
+    return res.status(403).json({ error: TIER_EA_DENIED_MSG });
+  }
+  if (BRIDGE_SIGNAL_PATHS.has(p) && !isSubscriptionActive(user)) {
+    return res.status(403).json({
+      error: 'Abonamentul MarketAI a expirat. EA-ul nu mai primeste semnale noi pana la reinnoirea abonamentului.',
+      isExpired: true,
+    });
+  }
+  return next();
+});
 
 // Handle premature client disconnection / body abort gracefully (common when MT5 charts reload)
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err && err.type === 'entity.too.large') {
+    if (!res.headersSent) res.status(413).json({ error: 'Cererea este prea mare.' });
+    return;
+  }
   if (err && (err.type === 'request.aborted' || (err.status === 400 && err.message && err.message.includes('request aborted')))) {
     if (!res.headersSent) {
       res.setHeader('Connection', 'close');
@@ -222,27 +271,61 @@ function getDaysLeft(expiresAtIso?: string, role?: string): number {
   return Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24));
 }
 
+// Bridge keys that were published (hard-coded in the public git history) or are generic defaults.
+// They are permanently rejected and automatically replaced with a fresh random key.
+const REVOKED_BRIDGE_KEYS = new Set<string>([
+  'mt5_live_admin001_wdyjbn7o',
+  'mt5_live_token_marketai2026',
+]);
+
+function isRevokedBridgeKey(key?: string | null): boolean {
+  return !!key && REVOKED_BRIDGE_KEYS.has(String(key).trim());
+}
+
+// Cryptographically secure bridge key (128-bit random part)
+function generateBridgeKey(prefix: 'mt5_live' | 'nt8_live', userId: string, slotTag = ''): string {
+  const cleanId = (userId || '').replace(/[^a-zA-Z0-9]/g, '').slice(-8) || 'user';
+  const randPart = crypto.randomBytes(16).toString('hex');
+  return slotTag ? `${prefix}_${cleanId}_${slotTag}_${randPart}` : `${prefix}_${cleanId}_${randPart}`;
+}
+
+let warnedAboutRevokedAdminEnvKey = false;
+
 // Helper to get or create user MT5 API key (Permanent & unique per account)
 function ensureUserMt5ApiKey(user: StoredUser): string {
   if (!user.apiKeys) user.apiKeys = {};
   const currentKey = user.apiKeys.mt5ApiKey || user.mt5ApiKey;
   const isAdmin = user.id === 'usr_admin_001' || user.username?.toLowerCase() === 'admin' || user.role === 'admin';
   if (isAdmin) {
-    const adminKey = process.env.ADMIN_MT5_API_KEY || currentKey || `mt5_live_admin_${crypto.randomBytes(8).toString('hex')}`;
+    const envKey = String(process.env.ADMIN_MT5_API_KEY || '').trim();
+    const envOk = envKey.startsWith('mt5_live_') && envKey.length >= 16 && !isRevokedBridgeKey(envKey);
+    if (envKey && !envOk && !warnedAboutRevokedAdminEnvKey) {
+      warnedAboutRevokedAdminEnvKey = true;
+      console.warn('[Security] ADMIN_MT5_API_KEY is revoked/invalid and is ignored. Set a new random value or remove it.');
+    }
+    const currentOk =
+      typeof currentKey === 'string' && currentKey.startsWith('mt5_live_') && currentKey.length >= 16 && !isRevokedBridgeKey(currentKey);
+    const adminKey = envOk ? envKey : currentOk ? (currentKey as string) : generateBridgeKey('mt5_live', 'admin');
     user.apiKeys.mt5ApiKey = adminKey;
     user.mt5ApiKey = adminKey;
+    if (adminKey !== currentKey) {
+      const users = loadUsersDb();
+      if (users[user.id]) {
+        users[user.id].apiKeys = { ...(users[user.id].apiKeys || {}), mt5ApiKey: adminKey };
+        users[user.id].mt5ApiKey = adminKey;
+        saveUsersDb(users, user.id).catch((err) => console.warn('Failed to save rotated admin MT5 API key:', err));
+      }
+    }
     return adminKey;
   }
   if (
     !currentKey ||
     typeof currentKey !== 'string' ||
     !currentKey.startsWith('mt5_live_') ||
-    currentKey === 'mt5_live_token_marketai2026' ||
+    isRevokedBridgeKey(currentKey) ||
     currentKey.length < 16
   ) {
-    const cleanId = (user.id || '').replace(/[^a-zA-Z0-9]/g, '').slice(-8) || 'user';
-    const randPart = crypto.randomBytes(6).toString('hex');
-    const generatedKey = `mt5_live_${cleanId}_${randPart}`;
+    const generatedKey = generateBridgeKey('mt5_live', user.id);
     user.apiKeys.mt5ApiKey = generatedKey;
     user.mt5ApiKey = generatedKey;
     const users = loadUsersDb();
@@ -261,10 +344,8 @@ function ensureUserMt5ApiKey(user: StoredUser): string {
 // Helper to get or create user NinjaTrader API key (Permanent & unique per account)
 function ensureUserNinjaTraderApiKey(user: StoredUser): string {
   if (!user.apiKeys) user.apiKeys = {};
-  if (!user.apiKeys.ninjaTraderApiKey || typeof user.apiKeys.ninjaTraderApiKey !== 'string' || !user.apiKeys.ninjaTraderApiKey.startsWith('nt8_live_')) {
-    const cleanId = (user.id || '').replace(/[^a-zA-Z0-9]/g, '').slice(-8) || 'user';
-    const randPart = crypto.randomBytes(6).toString('hex');
-    const generatedKey = `nt8_live_${cleanId}_${randPart}`;
+  if (!user.apiKeys.ninjaTraderApiKey || typeof user.apiKeys.ninjaTraderApiKey !== 'string' || !user.apiKeys.ninjaTraderApiKey.startsWith('nt8_live_') || isRevokedBridgeKey(user.apiKeys.ninjaTraderApiKey)) {
+    const generatedKey = generateBridgeKey('nt8_live', user.id);
     user.apiKeys.ninjaTraderApiKey = generatedKey;
     user.ninjaTraderApiKey = generatedKey;
     const users = loadUsersDb();
@@ -324,7 +405,7 @@ function ensureUserBridgeAccounts(user: StoredUser): BridgeAccount[] {
       if (!existing.name) { existing.name = defaultName; didChange = true; }
       if (!existing.platform) { existing.platform = defaultPlatform; didChange = true; }
       if (!existing.status) { existing.status = 'active'; didChange = true; }
-      if (!existing.apiKey || existing.apiKey.length < 16) {
+      if (!existing.apiKey || existing.apiKey.length < 16 || isRevokedBridgeKey(existing.apiKey)) {
         existing.apiKey = defaultKey;
         didChange = true;
       }
@@ -350,13 +431,11 @@ function ensureUserBridgeAccounts(user: StoredUser): BridgeAccount[] {
   }
 
   // Slot 2: Cont 2 (MT5 Secundar by default)
-  const randAcc2 = crypto.randomBytes(6).toString('hex');
-  const defaultKey2 = `mt5_live_${cleanId}_acc2_${randAcc2}`;
+  const defaultKey2 = generateBridgeKey('mt5_live', user.id, 'acc2');
   getOrCreateSlot(2, 'Cont 2 (MT5 Secundar)', 'MT5', defaultKey2);
 
   // Slot 3: Cont 3 (NinjaTrader 8 by default)
-  const randAcc3 = crypto.randomBytes(6).toString('hex');
-  const defaultKey3 = primaryNtKey || `nt8_live_${cleanId}_acc3_${randAcc3}`;
+  const defaultKey3 = primaryNtKey || generateBridgeKey('nt8_live', user.id, 'acc3');
   const acc3 = getOrCreateSlot(3, 'Cont 3 (NinjaTrader 8)', 'NINJATRADER', defaultKey3);
   if (acc3.platform === 'NINJATRADER' && !acc3.accountNumber && user.ninjaTraderAccountNumber) {
     acc3.accountNumber = user.ninjaTraderAccountNumber;
@@ -605,6 +684,31 @@ function isSubscriptionActive(u: StoredUser): boolean {
   return new Date(u.subscriptionExpiresAt).getTime() > Date.now();
 }
 
+// ---- Subscription tier enforcement (server-side; the client-side checks alone can be bypassed) ----
+type ServerTier = 'basic' | 'gold' | 'diamond';
+function isAdminUser(u: StoredUser | null | undefined): boolean {
+  return !!u && (u.role === 'admin' || u.username?.toLowerCase() === 'admin' || u.id === 'usr_admin_001');
+}
+// Accounts created before tiers existed have no subscriptionTier and keep full access (same as the UI shows).
+function getEffectiveTier(u: StoredUser): ServerTier {
+  if (isAdminUser(u)) return 'diamond';
+  const t = String(u.subscriptionTier || 'diamond').toLowerCase();
+  return t === 'basic' || t === 'gold' ? (t as ServerTier) : 'diamond';
+}
+function tierAllowsEaExecution(u: StoredUser): boolean {
+  const t = getEffectiveTier(u);
+  return t === 'gold' || t === 'diamond';
+}
+function tierAllowsScheduler(u: StoredUser): boolean {
+  return getEffectiveTier(u) === 'diamond';
+}
+const TIER_EA_DENIED_MSG =
+  'Pachetul Basic nu include executia automata MT5 / NinjaTrader. Este necesar pachetul Gold sau Diamond.';
+const TIER_SCHEDULER_DENIED_MSG =
+  'Programarea automata a trade-urilor (Scheduler) este disponibila doar in pachetul Diamond.';
+const TIER_RULES_DENIED_MSG =
+  'Regulile personalizate sunt disponibile doar in pachetele Gold si Diamond.';
+
 // Login rate limiting (Brute-force protection: max 5 failed attempts per IP or username per 15 minutes)
 interface FailedLoginRecord {
   count: number;
@@ -671,6 +775,14 @@ app.post('/api/auth/register', async (req, res) => {
 
   const cleanCode = inviteCode.trim().toUpperCase();
   const isUserAdmin = lowerUser === 'admin';
+  // New accounts get an explicit package: the one attached to the custom invite code, otherwise Basic.
+  // (Before, no tier was stored and everybody received Diamond by default.)
+  const inviteItem = loadInviteCodesDb()[cleanCode];
+  const signupTier: 'basic' | 'gold' | 'diamond' = isUserAdmin
+    ? 'diamond'
+    : inviteItem && ['basic', 'gold', 'diamond'].includes(String(inviteItem.tier))
+      ? (inviteItem.tier as 'basic' | 'gold' | 'diamond')
+      : 'basic';
   const expiresAt = isUserAdmin
     ? '2099-12-31T23:59:59.000Z'
     : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
@@ -688,6 +800,7 @@ app.post('/api/auth/register', async (req, res) => {
     role: isUserAdmin ? 'admin' : 'user',
     status: 'active',
     subscriptionExpiresAt: expiresAt,
+    subscriptionTier: signupTier,
     signals: [],
     customRules: [],
     apiKeys: {},
@@ -1014,6 +1127,14 @@ app.post('/api/user/sync-data', async (req, res) => {
       }
       return clientEntry;
     });
+    // Keep server-side entries missing from the client payload (e.g. created by MT5/NT8 while this browser tab
+    // was stale). Entries the user deleted are tracked in deletedJournalTradeIds and stay deleted.
+    const clientIds = new Set(user.tradeJournal.map((t: any) => String(t.id)));
+    for (const [id, srvEntry] of existingJournalMap) {
+      if (clientIds.has(id) || isDemoOrSampleTrade(srvEntry)) continue;
+      if (delSet.has(srvEntry.id) || (srvEntry.linkedSignalId && delSet.has(srvEntry.linkedSignalId)) || delSet.has(`sig_journal_${srvEntry.id}`)) continue;
+      user.tradeJournal.push(srvEntry);
+    }
   }
   
   // Ensure user MT5 & NinjaTrader API keys are permanently preserved and never wiped
@@ -1406,7 +1527,8 @@ app.post('/api/admin/invite-codes', async (req, res) => {
   const admin = verifyAdminToken(req);
   if (!admin) return res.status(403).json({ error: 'Acces interzis! Necesită drepturi de administrator.' });
 
-  const { code, maxUses, validityDays, note } = req.body;
+  const { code, maxUses, validityDays, note, tier } = req.body;
+  const codeTier: 'basic' | 'gold' | 'diamond' = ['basic', 'gold', 'diamond'].includes(tier) ? tier : 'basic';
   if (!code || !code.trim()) {
     return res.status(400).json({ error: 'Codul de invitație este obligatoriu.' });
   }
@@ -1441,6 +1563,7 @@ app.post('/api/admin/invite-codes', async (req, res) => {
     expiresAt,
     isActive: true,
     note: note ? note.trim() : undefined,
+    tier: codeTier,
   };
 
   await saveInviteCodesDb(codes, cleanCode);
@@ -1511,7 +1634,7 @@ app.post('/api/admin/users/create', async (req, res) => {
     });
   } else {
     // Create new user
-    const userId = `usr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const userId = `usr_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
     const token = `tok_${userId}_${Date.now()}`;
     const newUser: StoredUser = {
       id: userId,
@@ -2774,7 +2897,8 @@ function initLseWebSocket(apiKey?: string, force = false) {
 }
 
 // Authentic London Strategic Edge REST API Configuration
-const LSE_REST_ANON_KEY = '71f880e1d2ef471664f3b6c04c6dc1e618f94e51f68c87522bc6dcbc0ca173a5';
+// Public LSE REST anon key; can be overridden via LSE_REST_ANON_KEY env var in Coolify.
+const LSE_REST_ANON_KEY = process.env.LSE_REST_ANON_KEY || '71f880e1d2ef471664f3b6c04c6dc1e618f94e51f68c87522bc6dcbc0ca173a5';
 
 // Configuration for the 3 CFD Indices (NASDAQ CFD, SPX500 CFD, US30 CFD)
 // Primary provider: Twelve Data (using user API key)
@@ -3405,10 +3529,8 @@ async function getRealLiveMarketData(
 app.get('/api/market-data', async (req, res) => {
   try {
     const customLseKey = (req.query.lseKey as string) || process.env.LSE_API_KEY;
-    const customTwelveDataKey = (req.query.twelveDataKey as string) || process.env.TWELVE_DATA_API_KEY;
-    if (customTwelveDataKey && customTwelveDataKey.trim()) {
-      process.env.TWELVE_DATA_API_KEY = customTwelveDataKey.trim();
-    }
+    // NOTE: the twelveDataKey query parameter is intentionally ignored. Previously any anonymous visitor could
+    // overwrite process.env.TWELVE_DATA_API_KEY for the whole server through this public endpoint.
     const forceRefresh = req.query.force === 'true' || req.query.refresh === 'true';
 
     const { nasdaq, spx500, dow, gold, nq_f, es_f, ym_f, gc_f, eurusd, gbpusd, usdjpy, apiErrors } = await getRealLiveMarketData(
@@ -6423,6 +6545,12 @@ app.post('/api/generate-custom-rule-signal', async (req, res) => {
             : 'Abonamentul tău a expirat. Te rugăm să reînnoiești abonamentul pentru a genera semnale AI.',
         });
       }
+      if (getEffectiveTier(requestingUser) === 'basic') {
+        return res.status(403).json({
+          error: 'TIER_NOT_ALLOWED',
+          message: isEn ? 'Custom rules are available only in the Gold and Diamond packages.' : TIER_RULES_DENIED_MSG,
+        });
+      }
     }
 
     // 2. AI Request Rate Limiting (max 15 requests/min)
@@ -6969,9 +7097,7 @@ app.post('/api/user/regenerate-mt5-key', async (req, res) => {
   if (!user) return res.status(401).json({ error: 'Sesiune nevalidă.' });
 
   if (!user.apiKeys) user.apiKeys = {};
-  const cleanId = (user.id || '').replace(/[^a-zA-Z0-9]/g, '').slice(-8) || 'user';
-  const randPart = Math.random().toString(36).substring(2, 10);
-  const newKey = `mt5_live_${cleanId}_${randPart}`;
+  const newKey = generateBridgeKey('mt5_live', user.id);
   user.apiKeys.mt5ApiKey = newKey;
   user.mt5ApiKey = newKey;
   const accounts = ensureUserBridgeAccounts(user);
@@ -6994,9 +7120,7 @@ app.post('/api/user/regenerate-ninjatrader-key', async (req, res) => {
   if (!user) return res.status(401).json({ error: 'Sesiune nevalidă.' });
 
   if (!user.apiKeys) user.apiKeys = {};
-  const cleanId = (user.id || '').replace(/[^a-zA-Z0-9]/g, '').slice(-8) || 'user';
-  const randPart = Math.random().toString(36).substring(2, 10);
-  const newKey = `nt8_live_${cleanId}_${randPart}`;
+  const newKey = generateBridgeKey('nt8_live', user.id);
   user.apiKeys.ninjaTraderApiKey = newKey;
   user.ninjaTraderApiKey = newKey;
   const accounts = ensureUserBridgeAccounts(user);
@@ -7049,10 +7173,8 @@ app.post('/api/user/bridge-accounts', async (req, res) => {
         // If platform changed and key prefix doesn't match, regenerate proper key prefix
         if (targetSlot.platform !== incoming.platform) {
           targetSlot.platform = incoming.platform;
-          const cleanId = (user.id || '').replace(/[^a-zA-Z0-9]/g, '').slice(-8) || 'usr';
-          const randPart = crypto.randomBytes(6).toString('hex');
           const prefix = incoming.platform === 'NINJATRADER' ? 'nt8_live' : 'mt5_live';
-          targetSlot.apiKey = `${prefix}_${cleanId}_${targetSlot.id}_${randPart}`;
+          targetSlot.apiKey = generateBridgeKey(prefix, user.id, targetSlot.id);
         }
       }
       if (incoming.status === 'active' || incoming.status === 'inactive') {
@@ -7083,10 +7205,8 @@ app.post('/api/user/regenerate-bridge-key', async (req, res) => {
     return res.status(404).json({ error: 'Account slot not found' });
   }
 
-  const cleanId = (user.id || '').replace(/[^a-zA-Z0-9]/g, '').slice(-8) || 'usr';
-  const randPart = crypto.randomBytes(6).toString('hex');
   const prefix = targetAcc.platform === 'NINJATRADER' ? 'nt8_live' : 'mt5_live';
-  const newKey = `${prefix}_${cleanId}_${targetAcc.id}_${randPart}`;
+  const newKey = generateBridgeKey(prefix, user.id, targetAcc.id);
 
   targetAcc.apiKey = newKey;
   if (targetAcc.id === 'acc_1' && targetAcc.platform === 'MT5') {
@@ -7142,6 +7262,8 @@ app.post('/api/user/trade-schedule', async (req, res) => {
   const users = loadUsersDb();
   const user = findUserByAuthToken(token, users);
   if (!user) return res.status(401).json({ error: 'User not found' });
+
+  if (!tierAllowsScheduler(user)) return res.status(403).json({ error: TIER_SCHEDULER_DENIED_MSG });
 
   const { schedule } = req.body;
   if (!schedule || typeof schedule !== 'object') {
@@ -7223,6 +7345,9 @@ app.post('/api/user/trade-schedule/test-trigger', async (req, res) => {
   const users = loadUsersDb();
   const user = findUserByAuthToken(token, users);
   if (!user) return res.status(401).json({ error: 'User not found' });
+
+  if (!tierAllowsScheduler(user)) return res.status(403).json({ error: TIER_SCHEDULER_DENIED_MSG });
+  if (!isSubscriptionActive(user)) return res.status(403).json({ error: 'Abonamentul a expirat.', isExpired: true });
 
   const { instrumentId = 'GOLD', timeframe = '1h', strategy = 'Auto Smart Structure', targetAccounts = ['all'] } = req.body;
 
@@ -7322,7 +7447,7 @@ function resolveUserByMt5Token(token: string | null): {
   if (
     !cleanToken ||
     cleanToken === 'default' ||
-    cleanToken === 'mt5_live_token_marketai2026' ||
+    isRevokedBridgeKey(cleanToken) ||
     cleanToken.length < 15
   ) {
     return { user: null, accountId: 'acc_1', account: null, allUsers: users };
@@ -8970,24 +9095,11 @@ app.post('/api/mt5/historical-deals-batch', async (req, res) => {
           Number(s.mt5Ticket) === Number(d.posId)
         );
       }
-      if (!matchedSig && d.symbol && d.openTime) {
-        const dOpenMs = Number(d.openTime) * 1000;
-        const candidates = matchedUser.signals.filter((s: any) =>
-          symbolsMatch(s.instrumentId, s.symbol, d.symbol)
-        );
-        let bestDist = Infinity;
-        let bestCandidate: any = null;
-        for (const cand of candidates) {
-          const candCreatedMs = cand.createdAt ? new Date(cand.createdAt).getTime() : 0;
-          if (candCreatedMs > 0) {
-            const dist = Math.abs(candCreatedMs - dOpenMs);
-            if (dist < 4 * 3600 * 1000 && dist < bestDist) {
-              bestDist = dist;
-              bestCandidate = cand;
-            }
-          }
-        }
-        matchedSig = bestCandidate;
+      // NOTE: the old fallback "same symbol, created within +/-4h" was removed. It attached manual trades or
+      // trades of other EAs to unrelated MarketAI signals (wrong CLOSED status / wrong PnL, status oscillation).
+      // A deal is reconciled only when it carries the exact signal ID or the exact MT5 position ticket.
+      if (matchedSig && d.symbol && !symbolsMatch(matchedSig.instrumentId, matchedSig.symbol, String(d.symbol))) {
+        matchedSig = null;
       }
 
       if (matchedSig) {
@@ -9011,24 +9123,33 @@ app.post('/api/mt5/historical-deals-batch', async (req, res) => {
         }
         if (d.closeTime && Number(d.closeTime) > 0) {
           const closeIso = new Date(Number(d.closeTime) * 1000).toISOString();
-          matchedSig.closedAt = closeIso;
-          changed = true;
+          if (matchedSig.closedAt !== closeIso) {
+            matchedSig.closedAt = closeIso;
+            changed = true;
+          }
         }
 
+        // Only write fields when they really change (before, every batch rewrote the whole user record)
+        const setField = (key: string, value: any) => {
+          if (matchedSig[key] !== value) {
+            matchedSig[key] = value;
+            changed = true;
+          }
+        };
         const isManual = d.isManual === true || d.isManual === 'true';
         if (isManual) {
-          matchedSig.outcomeStatus = netProfit > 0 ? 'MANUAL_PROFIT' : (netProfit < 0 ? 'MANUAL_LOSS' : 'MANUAL_BE');
-          matchedSig.isManualClose = true;
-          matchedSig.closedManually = true;
-          changed = true;
+          setField('outcomeStatus', netProfit > 0 ? 'MANUAL_PROFIT' : (netProfit < 0 ? 'MANUAL_LOSS' : 'MANUAL_BE'));
+          setField('isManualClose', true);
+          setField('closedManually', true);
         } else if (netProfit < 0) {
-          matchedSig.outcomeStatus = 'SL_HIT';
-          changed = true;
+          setField('outcomeStatus', 'SL_HIT');
         } else if (netProfit > 0) {
           if (!['TP2_HIT', 'TP3_HIT'].includes(matchedSig.outcomeStatus)) {
-            matchedSig.outcomeStatus = 'TP1_HIT';
+            setField('outcomeStatus', 'TP1_HIT');
           }
-          changed = true;
+        } else if (!matchedSig.outcomeStatus || matchedSig.outcomeStatus === 'PENDING' || matchedSig.outcomeStatus === 'RUNNING') {
+          // Closed at exactly 0.00 -> break-even (before, the outcome remained PENDING on a CLOSED signal)
+          setField('outcomeStatus', 'BREAKEVEN');
         }
 
         if (changed) {
@@ -9085,7 +9206,7 @@ function resolveUserByNinjaTraderToken(token: string | null): {
   if (!token) return { user: null, accountId: 'acc_3', account: null, allUsers: users };
 
   const cleanToken = token.trim();
-  if (!cleanToken || cleanToken === 'default' || cleanToken.length < 15) {
+  if (!cleanToken || cleanToken === 'default' || isRevokedBridgeKey(cleanToken) || cleanToken.length < 15) {
     return { user: null, accountId: 'acc_3', account: null, allUsers: users };
   }
   const userList = Object.values(users);
@@ -9840,8 +9961,9 @@ async function startServer() {
     } catch (e) {}
   }, 30000);
 
-  // Deduplication cache for scheduled trade executions (prevents duplicate triggers in the same minute)
-  const scheduledExecutedKeys = new Set<string>();
+  // Deduplication cache for scheduled trade executions (prevents duplicate triggers in the same minute).
+  // Entries expire after 10 minutes (before, the whole Set was cleared at 5000 entries -> possible double triggers).
+  const scheduledExecutedKeys = new Map<string, number>();
 
   // Automated Trade Scheduler background worker (runs every 20 seconds to catch scheduled minutes accurately)
   setInterval(async () => {
@@ -9851,14 +9973,16 @@ async function startServer() {
       const roTimeStr = now.toLocaleTimeString('ro-RO', { timeZone: 'Europe/Bucharest', hour12: false, hour: '2-digit', minute: '2-digit' });
       const roDateStr = now.toLocaleDateString('ro-RO', { timeZone: 'Europe/Bucharest', year: 'numeric', month: '2-digit', day: '2-digit' });
 
-      // Prune keys if large
-      if (scheduledExecutedKeys.size > 5000) {
-        scheduledExecutedKeys.clear();
+      // Prune expired dedup keys
+      const pruneBefore = Date.now() - 10 * 60 * 1000;
+      for (const [k, ts] of scheduledExecutedKeys) {
+        if (ts < pruneBefore) scheduledExecutedKeys.delete(k);
       }
 
       const users = loadUsersDb();
       for (const user of Object.values(users)) {
         if (!user || user.status === 'blocked' || !isSubscriptionActive(user)) continue;
+        if (!tierAllowsScheduler(user)) continue; // Scheduler = Diamond only (server-side enforcement)
         const scheduler = ensureUserTradeScheduler(user);
         if (!scheduler || scheduler.enabled === false) continue;
 
@@ -9879,7 +10003,14 @@ async function startServer() {
             if (matchesScheduledTime(targetTime, roTimeStr)) {
               const execKey = `${user.id}_${item.instrumentId}_${roDateStr}_${roTimeStr}_slot${s.slot}`;
               if (scheduledExecutedKeys.has(execKey)) continue;
-              scheduledExecutedKeys.add(execKey);
+              // Persistent guard (survives server restarts / redeploys): same instrument + time slot already
+              // logged in the last 3 minutes -> do not trigger again.
+              const recentlyLogged = (scheduler.logs || []).some((l: any) =>
+                l && l.instrumentId === item.instrumentId && l.timeSlot === s.time &&
+                l.timestamp && Date.now() - new Date(l.timestamp).getTime() < 3 * 60 * 1000
+              );
+              scheduledExecutedKeys.set(execKey, Date.now());
+              if (recentlyLogged) continue;
 
               console.log(`[Trade Scheduler] ⏰ Triggering scheduled trade for ${user.username} on ${item.instrumentId} (Slot ${s.slot}: ${s.time} EET)...`);
 

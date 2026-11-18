@@ -1,4 +1,4 @@
-export const MT5_EA_VERSION = '4.89';
+export const MT5_EA_VERSION = '4.90';
 
 export function getMql5EaCode(
   mt5Endpoint: string,
@@ -1045,8 +1045,8 @@ void OnTick()
    {
       static ulong lastTickSyncTime = 0;
       ulong nowTick = GetTickCount64();
-      // Sync live floating PnL on price ticks at most once per second
-      if(nowTick - lastTickSyncTime >= 1000)
+      // Sync live floating PnL on price ticks at most once every 2 seconds
+      if(nowTick - lastTickSyncTime >= 2000)
       {
          lastTickSyncTime = nowTick;
          SendAccountSync();
@@ -1200,25 +1200,25 @@ void SendAccountSync()
 
    if(PositionsTotal() > 0)
    {
-      // Allow syncing at most once every 1000ms
-      if(nowTick - lastAccSyncTick < 1000)
+      // v4.90: cel mult o sincronizare la 2s (inainte 1s) -> mai putin trafic, mai putine erori 1003
+      if(nowTick - lastAccSyncTick < 2000)
       {
          return;
       }
-      // If equity & balance haven't changed at all, throttle to once every 3000ms
-      if(nowTick - lastAccSyncTick < 3000 && MathAbs(equity - lastSyncedEquity) < 0.01 && MathAbs(balance - lastSyncedBalance) < 0.01)
+      // If equity & balance haven't changed at all, throttle to once every 5000ms
+      if(nowTick - lastAccSyncTick < 5000 && MathAbs(equity - lastSyncedEquity) < 0.01 && MathAbs(balance - lastSyncedBalance) < 0.01)
       {
          return;
       }
    }
    else
    {
-      // Idle mode: throttle to once every 10 seconds if balance and equity are unchanged
-      if(nowTick - lastAccSyncTick < 3000)
+      // Idle mode: throttle to once every 15 seconds if balance and equity are unchanged
+      if(nowTick - lastAccSyncTick < 5000)
       {
          return;
       }
-      if(nowTick - lastAccSyncTick < 10000 && MathAbs(balance - lastSyncedBalance) < 0.01 && MathAbs(equity - lastSyncedEquity) < 0.01)
+      if(nowTick - lastAccSyncTick < 15000 && MathAbs(balance - lastSyncedBalance) < 0.01 && MathAbs(equity - lastSyncedEquity) < 0.01)
       {
          return;
       }
@@ -1818,8 +1818,12 @@ void SyncClosedHistoricalTrades()
 //+------------------------------------------------------------------+
 void ExportAllClosedPositionsDump()
 {
+   // v4.90: trimis cel mult o data la 5 minute (inainte: la ~30s), si doar daca s-a schimbat ceva
    static datetime lastDumpTime = 0;
-   if(TimeCurrent() - lastDumpTime < 15) return;
+   static string lastSentDumpJson = "";
+   static datetime lastSentDumpTime = 0;
+   static datetime lastDumpErrorLog = 0;
+   if(lastDumpTime > 0 && TimeCurrent() - lastDumpTime < 300) return;
    lastDumpTime = TimeCurrent();
 
    datetime fromTime = TimeCurrent() - (60 * 86400);
@@ -1881,6 +1885,7 @@ void ExportAllClosedPositionsDump()
       long dealType = -1;
       bool isManual = false;
       int closeDealCount = 0;
+      long posMagic = -1;
 
       if(HistorySelectByPosition((long)pId))
       {
@@ -1913,6 +1918,7 @@ void ExportAllClosedPositionsDump()
 
             if(entry == DEAL_ENTRY_IN)
             {
+               posMagic = HistoryDealGetInteger(dt, DEAL_MAGIC);
                openPrice = HistoryDealGetDouble(dt, DEAL_PRICE);
                vol += HistoryDealGetDouble(dt, DEAL_VOLUME);
                openTime = dTime;
@@ -1936,7 +1942,10 @@ void ExportAllClosedPositionsDump()
             sigId = trackedTrades[tIdx].signalId;
       }
 
-      if(closeDealCount > 0 && !isOpen)
+      // v4.90: trimitem DOAR pozitiile deschise de acest EA (Magic Number) sau care au un ID de semnal MarketAI.
+      // Tranzactiile manuale / ale altor EA-uri nu mai sunt trimise (inainte inchideau semnale gresite).
+      bool belongsToMarketAI = (sigId != "") || (InpMagicNumber != 0 && posMagic == InpMagicNumber);
+      if(closeDealCount > 0 && !isOpen && belongsToMarketAI)
       {
          if(addedCount > 0) json += ",";
          json += "{" + q + "posId" + q + ":" + IntegerToString((long)pId) +
@@ -1956,16 +1965,11 @@ void ExportAllClosedPositionsDump()
 
    json += "]";
 
-   // Write to Common/Files/mt5_closed_deals_dump.json
-   int hCommon = FileOpen("mt5_closed_deals_dump.json", FILE_WRITE|FILE_TXT|FILE_COMMON|FILE_ANSI);
-   if(hCommon != INVALID_HANDLE)
-   {
-      FileWriteString(hCommon, json);
-      FileClose(hCommon);
-      Print("[MarketAI] Istoric salvat in Common/Files/mt5_closed_deals_dump.json: ", addedCount, " pozitii inchise");
-   }
+   // Nimic nou fata de ultima trimitere reusita -> nu mai trimitem (retrimitere de siguranta o data pe ora)
+   if(json == lastSentDumpJson && TimeCurrent() - lastSentDumpTime < 3600) return;
+   if(addedCount == 0 && lastSentDumpJson == "") { lastSentDumpJson = json; lastSentDumpTime = TimeCurrent(); return; }
 
-   // Also write to local MQL5/Files/mt5_closed_deals_dump.json
+   // Copie locala (MQL5/Files/mt5_closed_deals_dump.json) - o singura scriere, fara mesaje repetate in Experts
    int hLocal = FileOpen("mt5_closed_deals_dump.json", FILE_WRITE|FILE_TXT|FILE_ANSI);
    if(hLocal != INVALID_HANDLE)
    {
@@ -1981,14 +1985,26 @@ void ExportAllClosedPositionsDump()
                     "Content-Type: application/json\\r\\n" +
                     "User-Agent: Mozilla/5.0 MarketAI-Bridge/${MT5_EA_VERSION}\\r\\n" +
                     "Connection: close\\r\\n";
-   string postPayload = "{" + q + "apiKey" + q + ":" + q + cleanKey + q + "," + q + "deals" + q + ":" + json + "}";
+   string postPayload = "{" + q + "deals" + q + ":" + json + "}";
    char data[];
    char result[];
    string result_headers;
    int copied = StringToCharArray(postPayload, data, 0, WHOLE_ARRAY, CP_UTF8);
    if(copied > 0 && data[copied - 1] == 0) ArrayResize(data, copied - 1);
    ResetLastError();
-   WebRequest("POST", syncBatchUrl, headers, 10000, data, result, result_headers);
+   int res = WebRequest("POST", syncBatchUrl, headers, 15000, data, result, result_headers);
+   if(res == 200)
+   {
+      lastSentDumpJson = json;
+      lastSentDumpTime = TimeCurrent();
+   }
+   else if(TimeCurrent() - lastDumpErrorLog > 600)
+   {
+      int err = GetLastError();
+      lastDumpErrorLog = TimeCurrent();
+      Print("[MarketAI MT5 ", res, " / err ", err, "] Sincronizarea istoricului inchis nu a reusit (", DescribeWebRequestError(err), "). Se reincearca automat peste 5 minute.");
+      lastDumpTime = TimeCurrent();
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -2139,7 +2155,7 @@ void FetchAndExecuteSignals()
          {
             string errBody = (ArraySize(result) > 0) ? CharArrayToString(result) : "";
             if(res == 401)
-               Print("[MarketAI HTTP 401] Cheia API este invalida sau a expirat! Verificati InpApiKey: '", cleanKey, "'");
+               Print("[MarketAI HTTP 401] Cheia API este invalida sau a expirat! Verificati InpApiKey (incepe cu '", StringSubstr(cleanKey, 0, 12), "...'). Copiati cheia noua din fereastra MT5 Bridge a platformei.");
             else if(res >= 1000)
                Print("[MarketAI MT5 ", res, " / err ", lastErr, "] Raspunsul serverului nu a sosit la timp (", DescribeWebRequestError(lastErr), "). Nu este o eroare HTTP a serverului; se reincearca automat. (Server: '", origin, "')");
             else
@@ -2157,9 +2173,9 @@ void FetchAndExecuteSignals()
    }
    consecutiveFailures = 0;
 
-   // Periodic heartbeat in Experts tab every 60s
+   // Periodic heartbeat in Experts tab every 5 minutes (v4.90: inainte la 60s)
    static datetime lastHeartbeat = 0;
-   if(TimeCurrent() - lastHeartbeat > 60)
+   if(TimeCurrent() - lastHeartbeat > 300)
    {
       Print("[MarketAI OK] Bridge conectat cu succes la server. Monitorizeaza semnale pentru ", targetSymbol, "... (HTTP 200)");
       lastHeartbeat = TimeCurrent();

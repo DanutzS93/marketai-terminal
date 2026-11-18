@@ -94,7 +94,7 @@ export function updateMt5Ea(): void {
         if (fs.existsSync(dbPath)) {
           const dbData = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
           const admin = Object.values(dbData).find((u: any) => u.role === 'admin' || u.username === 'admin') as any;
-          if (admin?.mt5ApiKey) apiKey = admin.mt5ApiKey;
+          if (admin?.mt5ApiKey && admin.mt5ApiKey !== 'mt5_live_admin001_wdyjbn7o') apiKey = admin.mt5ApiKey;
         }
       } catch (_) {}
     }
@@ -106,7 +106,9 @@ export function updateMt5Ea(): void {
     if (fs.existsSync(bridgeFile)) {
       const existing = fs.readFileSync(bridgeFile, 'utf8');
       const keyMatch = existing.match(/InpApiKey\s*=\s*"([^"]+)"/);
-      if (keyMatch && keyMatch[1]) apiKey = keyMatch[1];
+      // Cheia veche publicata in istoricul git (revocata pe server) nu se mai pastreaza
+      const REVOKED_KEYS = ['mt5_live_admin001_wdyjbn7o', 'mt5_live_token_marketai2026'];
+      if (keyMatch && keyMatch[1] && !REVOKED_KEYS.includes(keyMatch[1])) apiKey = keyMatch[1];
     }
 
     const mqlCode = getMql5EaCode(

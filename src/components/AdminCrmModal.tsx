@@ -108,6 +108,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
   const [validityType, setValidityType] = useState<'1use' | '5days' | '10days' | '30days' | 'unlimited' | 'custom'>('30days');
   const [customDays, setCustomDays] = useState('');
   const [maxUses, setMaxUses] = useState('');
+  const [codeTier, setCodeTier] = useState<SubscriptionTier>('basic');
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
 
   // Form state for adding / restoring user account manually
@@ -352,6 +353,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
           note: codeNote.trim(),
           maxUses: computedMaxUses,
           validityDays: computedValidityDays,
+          tier: codeTier,
         }),
       });
 
@@ -829,7 +831,7 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
               </h3>
 
               <form onSubmit={handleCreateInviteCode} className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-300 mb-1">
                       {isRo ? 'Cod Invitație (Ex: ION2026):' : 'Invite Code (e.g. VIP2026):'}
@@ -872,6 +874,21 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
                       <option value="1use">{isRo ? '⚡ O Singură Folosire (Devine Inactiv Imediat)' : '⚡ Single Use (Expires Immediately)'}</option>
                       <option value="unlimited">{isRo ? 'Fără Expirare (Nelimitat)' : 'No Expiration (Unlimited)'}</option>
                       <option value="custom">{isRo ? 'Personalizat (Setează Zile / Utilizări)' : 'Custom (Set Days / Uses)'}</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                      {isRo ? 'Pachet acordat la înregistrare:' : 'Package granted on sign-up:'}
+                    </label>
+                    <select
+                      value={codeTier}
+                      onChange={(e) => setCodeTier(e.target.value as SubscriptionTier)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-amber-400 font-semibold text-xs focus:outline-none focus:border-indigo-500"
+                    >
+                      <option value="basic">Basic</option>
+                      <option value="gold">Gold</option>
+                      <option value="diamond">Diamond</option>
                     </select>
                   </div>
                 </div>
@@ -1000,6 +1017,11 @@ export const AdminCrmModal: React.FC<AdminCrmModalProps> = ({
                             {item.usesCount} / {item.maxUses ? item.maxUses : '∞'}
                             {item.maxUses === 1 && (isRo ? ' (O singură folosire)' : ' (Single use)')}
                           </span>
+                        </div>
+
+                        <div className="flex justify-between items-center">
+                          <span className="text-slate-500">{isRo ? 'Pachet:' : 'Package:'}</span>
+                          <span className="text-amber-300 font-bold uppercase">{item.tier || 'basic'}</span>
                         </div>
 
                         {item.validityDays && (

@@ -117,6 +117,7 @@ export interface StoredInviteCode {
   expiresAt?: string;
   isActive?: boolean;
   note?: string;
+  tier?: 'basic' | 'gold' | 'diamond';
 }
 
 const DB_FILE = path.join(process.cwd(), 'users_cloud_db.json');
