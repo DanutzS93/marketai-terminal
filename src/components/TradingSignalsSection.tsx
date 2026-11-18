@@ -1593,7 +1593,14 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
                           .replace(' (+TP1)', '')
                           .replace(' (+TP2)', '')
                           .replace(' (+TP3 Max)', '')
-                          .replace(' (SL)', '');
+                          .replace(' (SL)', '')
+                          // Etichete scurte pentru inchiderile manuale (textul complet ramane in tooltip)
+                          .replace('Închis Manual (Profit)', 'Manual Profit')
+                          .replace('Închis Manual (Pierdere)', 'Manual Pierdere')
+                          .replace('Închis Manual din MT5', 'Manual MT5')
+                          .replace('Closed Manually (Profit)', 'Manual Profit')
+                          .replace('Closed Manually (Loss)', 'Manual Loss')
+                          .replace('Closed Manually in MT5', 'Manual MT5');
 
                         const fullCancelReason = getCancellationReason(sig, lang);
                         const isManual =
@@ -1612,9 +1619,9 @@ export const TradingSignalsSection: React.FC<TradingSignalsSectionProps> = ({
                           : (lang === 'ro' ? 'Neactivat' : 'Unfilled');
 
                         return (
-                          <div className="flex flex-col gap-0.5 max-w-[110px]">
+                          <div className="flex flex-col gap-0.5 w-[128px]">
                             <span
-                              className={`px-1.5 py-0.5 rounded text-[10px] border whitespace-nowrap inline-block font-mono font-bold text-center ${badge.badgeClass}`}
+                              className={`px-1.5 py-0.5 rounded text-[10px] border whitespace-normal break-words leading-tight block w-full font-mono font-bold text-center ${badge.badgeClass}`}
                               title={badge.label}
                             >
                               {compactLabel}

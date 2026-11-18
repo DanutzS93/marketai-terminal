@@ -676,9 +676,14 @@ export default function App() {
     }
   }, []);
 
-  // First-time daily pop-up logic: triggers once per calendar day
   useEffect(() => {
     fetchDailyBriefing();
+  }, [fetchDailyBriefing]);
+
+  // First-time daily pop-up logic: triggers once per calendar day, ONLY after the user is logged in
+  // (before, it opened on page load on top of the login screen)
+  useEffect(() => {
+    if (!user || !authToken || isAuthModalOpen) return;
 
     try {
       const todayKey = new Date().toISOString().split('T')[0];
@@ -695,7 +700,7 @@ export default function App() {
     } catch (e) {
       // localStorage may fail in restricted sandbox
     }
-  }, [fetchDailyBriefing]);
+  }, [user?.id, authToken, isAuthModalOpen]);
 
   const handleCloseDailyBriefingModal = () => {
     try {
@@ -2776,7 +2781,7 @@ export default function App() {
       />
 
       <DailyMacroBriefingModal
-        isOpen={isDailyBriefingModalOpen}
+        isOpen={isDailyBriefingModalOpen && !!user && !!authToken && !isAuthModalOpen}
         onClose={handleCloseDailyBriefingModal}
         lang={lang}
         briefing={dailyBriefing}
